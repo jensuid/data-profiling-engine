@@ -15,14 +15,17 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 
 ```text
 Milestone : M0 — Desktop Spike
-Task      : M0-T2 DONE (macOS bridge echo verified 2026-10-24, 20/20 pytest green)
-NEXT      : M0-T3 worker process — open CONTRACTS §6 + ARCHITECTURE ADR-006,
-            add multiprocessing spawn worker under data_profiling_engine/bridge/worker/,
-            echo-a-job via BridgeFacade, thread-safe status slot,
-            `freeze_support()` at top of main.py, add pytest for start/progress/cancel
+Task      : M0-T3 DONE (spawn worker + echo job + progress/cancel/crash/timeout
+          verified via facade, macOS smoke round-trip OK, 35/35 pytest ×3 runs)
+NEXT      : M0-T4 PyInstaller — open SECURITY §6.2 + ADR-009,
+            write pyinstaller spec collecting duckdb native lib + frontend/dist,
+            build on macOS, run packaged binary and verify M0-T1..T3 behaviours
+            (window/file://, bridge echo, worker job) inside the frozen app
 Blocked by: none
-Session notes: bridge facade (typed pydantic envelope) in data_profiling_engine/bridge/;
-               only `echo` command registered — real MVP commands land in M5-T1.
+Session notes: worker spike lives in bridge/worker/ (process.py = spawned entry,
+               manager.py = JobManager + status slot, models.py = §6 state enum);
+               facade commands: worker_echo_job / job.get_status / job.cancel.
+               Folded into orchestration/ + SQLite status when M5-T2 lands.
                Run: uv run -p .venv python -m data_profiling_engine.main --smoke
                Test: .venv/bin/python -m pytest data_profiling_engine/tests -q
 ```
@@ -39,13 +42,23 @@ Session notes: bridge facade (typed pydantic envelope) in data_profiling_engine/
   and poll from Python instead of expecting an awaited return (M0-T2 gotcha).
 - Bridge spike introduced code `BRIDGE_REQUEST_INVALID` (see bridge/errors.py) not yet in
   CONTRACTS §8; M1-T6 promotes it into the formal error-code registry module + doc row.
+  Same promotion applies to `JOB_NOT_FOUND` (added M0-T3).
+- `multiprocessing.context` has NO `BaseEvent` — import `from multiprocessing.synchronize
+  import Event`; only `SpawnContext`/`get_context` live in `multiprocessing.context`.
+- A handler result dict containing a `job_id` key must NOT be used to detect
+  "start accepted" (status polls carry job_id too) — facade uses the private
+  `__start_accepted__` sentinel key instead; it is stripped before responding.
+- Worker exit after confirmed CANCELLED is async (feeder joins it); tests must poll
+  `is_alive()` to false, not assert it immediately after the terminal status appears.
+- `freeze_support()` is the first statement of `main()` (module-level `__main__` guard
+  alone is not enough for the packaged entry point, ADR-006/009).
 ```
 
 ## M0 — Desktop Spike (gate: BLUEPRINT §5 Phase 0; acceptance: TESTING §5.2)
 
 - [x] **M0-T1** Scaffold: repo layout per ARCHITECTURE §3; pywebview shell loading React **HashRouter** build from local files (ADR-003/010/013). *Spec: ARCHITECTURE §2–3; ADR-013.* ✅ macOS smoke 2026-10-24 (Windows re-verify folds into M0-T5) — commit `5b3d4a0`
 - [x] **M0-T2** Bridge hello-world: typed facade stub with one echo command; pydantic request validation (ADR-005). *Spec: CONTRACTS §5.1–5.3; SECURITY §3.* ✅ macOS round-trip via `--smoke` + 20/20 pytest (validation, allow-list, 1 MiB cap, no input echo) 2026-10-24 — commit `a4ef86f`
-- [ ] **M0-T3** Worker process: `multiprocessing` spawn + echo job + progress via status; `freeze_support()`. *Spec: CONTRACTS §6; ARCHITECTURE ADR-006.*
+- [x] **M0-T3** Worker process: `multiprocessing` spawn + echo job + progress via status; `freeze_support()`. *Spec: CONTRACTS §6; ARCHITECTURE ADR-006.* ✅ macOS: facade worker round-trip via `--smoke` (SUCCEEDED, 4/4 steps) + 35/35 pytest ×3 (start/progress/cancel/crash→WORKER_CRASHED/timeout→JOB_TIMEOUT, §6.1 states, accepted+job_id envelope) 2026-10-24 — Windows re-verify folds into M0-T5
 - [ ] **M0-T4** PyInstaller: macOS build passes M0-T1..T3 in packaged form; DuckDB native lib collected. *Spec: SECURITY §6.2; ADR-009.*
 - [ ] **M0-T5** Windows build (native env): same gate incl. WebView2 detection. **→ GATE M0: all five green on both OS; else revise ADRs, do not proceed.**
 

@@ -36,8 +36,8 @@ class BridgeErrorObject(BaseModel):
 class BridgeResponse(BaseModel):
     """Envelope returned to JS. One of ``result`` or ``error`` is populated.
 
-    ``job_id`` exists for the async commands defined in CONTRACTS §5.2 but is
-    not produced by any M0-T2 spike command.
+    ``job_id`` exists for the async commands defined in CONTRACTS §5.2; the
+    M0-T3 spike job commands emit it ahead of the real ``profile.start``.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -59,3 +59,24 @@ class EchoPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     message: str = Field(min_length=0)
+
+
+class WorkerEchoJobPayload(BaseModel):
+    """Payload for the ``worker_echo_job`` spike command (M0-T3 only).
+
+    Submits a bounded echo job to the worker process; spike stand-in for the
+    async ``profile.start`` shape of CONTRACTS §5.2 (accepted + ``job_id``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(min_length=0, max_length=8192)
+    total_steps: int = Field(default=5, ge=1, le=200)
+
+
+class JobIdPayload(BaseModel):
+    """Payload for ``job.get_status`` / ``job.cancel`` spike commands (M0-T3)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str = Field(min_length=1, max_length=128)

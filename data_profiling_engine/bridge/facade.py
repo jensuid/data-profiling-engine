@@ -8,8 +8,10 @@ matching :class:`BridgeResponse`. The facade never raises into the WebView;
 unknown input, oversized messages, or handler exceptions come back as typed
 error objects.
 
-Spike scope (M0-T2): the only registered command is ``echo``. The real MVP
-commands from CONTRACTS §5.2 land in M5-T1.
+Spike scope (M0-T2/T3): registered commands are ``echo`` plus the worker-job
+trio (``worker_echo_job`` / ``job.get_status`` / ``job.cancel``) that proves
+the bridge→spawn-worker→status-slot pathway. The real MVP commands from
+CONTRACTS §5.2 land in M5-T1.
 """
 from __future__ import annotations
 
@@ -18,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from . import errors
 from .envelope import (
@@ -26,7 +28,10 @@ from .envelope import (
     BridgeRequest,
     BridgeResponse,
     EchoPayload,
+    JobIdPayload,
+    WorkerEchoJobPayload,
 )
+from .worker import default_manager
 
 # CONTRACTS §5.4 — 1 MiB per serialised message.
 PAYLOAD_CAP_BYTES = 1 * 1024 * 1024
@@ -35,12 +40,23 @@ PAYLOAD_CAP_BYTES = 1 * 1024 * 1024
 Handler = Callable[[dict[str, Any]], dict[str, Any]]
 
 
+class _JobIdResult(BaseModel):
+    """Internal handler signal: respond ``accepted`` + ``job_id`` (§5.3)."""
+
+    job_id: str
+
+
+# Private key a start-handler sets to request the §5.3 ``accepted`` envelope;
+# status payloads also carry ``job_id`` but must stay plain ``ok`` responses.
+_ACCEPTED_SENTINEL = "__start_accepted__"
+
+
 @dataclass(frozen=True)
 class CommandSpec:
     """Registry entry binding a command name to its schema + handler."""
 
     name: str
-    payload_model: type[EchoPayload] | None
+    payload_model: type[BaseModel] | None
     handler: Handler
 
 
@@ -49,8 +65,48 @@ def _echo_handler(payload: dict[str, Any]) -> dict[str, Any]:
     return {"message": payload["message"], "echoed_by": "bridge"}
 
 
+def _worker_start_handler(payload: dict[str, Any]) -> dict[str, Any]:
+    """Submit the spike echo job to the worker process (M0-T3)."""
+    job_id = default_manager().start_job(
+        message=payload["message"], total_steps=payload["total_steps"]
+    )
+    return {_ACCEPTED_SENTINEL: True, "job_id": job_id}
+
+
+def _job_status_handler(payload: dict[str, Any]) -> dict[str, Any]:
+    """Poll the thread-safe status slot (CONTRACTS §5.3/§5.5 shape)."""
+    status = default_manager().get_status(payload["job_id"])
+    if status is None:
+        return _error_result(payload["job_id"], errors.JOB_NOT_FOUND, "unknown job id")
+    result = status.model_dump(mode="json", exclude_none=True)
+    result.pop("job_id", None)  # envelope already identifies the job
+    return result
+
+
+def _job_cancel_handler(payload: dict[str, Any]) -> dict[str, Any]:
+    """Request cancellation; terminal CANCELLED comes from the worker (§6.5)."""
+    if not default_manager().cancel_job(payload["job_id"]):
+        return _error_result(payload["job_id"], errors.JOB_NOT_FOUND, "unknown job id")
+    return {"cancelled": True}
+
+
 COMMANDS: dict[str, CommandSpec] = {
     "echo": CommandSpec(name="echo", payload_model=EchoPayload, handler=_echo_handler),
+    "worker_echo_job": CommandSpec(
+        name="worker_echo_job",
+        payload_model=WorkerEchoJobPayload,
+        handler=_worker_start_handler,
+    ),
+    "job.get_status": CommandSpec(
+        name="job.get_status",
+        payload_model=JobIdPayload,
+        handler=_job_status_handler,
+    ),
+    "job.cancel": CommandSpec(
+        name="job.cancel",
+        payload_model=JobIdPayload,
+        handler=_job_cancel_handler,
+    ),
 }
 
 
@@ -62,6 +118,11 @@ class BridgeFacade:
     Everything else on this class is underscore-private and therefore not
     reachable from the WebView.
     """
+
+    def __init__(self) -> None:
+        # Spike jobs live in the process-wide default manager; the real
+        # M5-T2 manager will be owned by the application host.
+        pass
 
     def bridge_send(self, request: Any) -> dict[str, Any]:
         """Single allow-listed entry point from JS. Never raises."""
@@ -138,6 +199,19 @@ class BridgeFacade:
                 f"handler failed: {type(exc).__name__}",
             )
 
+        # 7. Async-command envelope: a handler that started a job answers
+        #    ``accepted`` + ``job_id`` instead of ``ok`` + ``result`` (§5.3).
+        job_id = _extract_job_id(result)
+        if job_id is not None:
+            return BridgeResponse(
+                request_id=req.request_id, status="accepted", job_id=job_id
+            ).model_dump(exclude_none=True)
+
+        if isinstance(result, dict) and result.get("__bridge_error__"):
+            return _error(
+                req.request_id, str(result["code"]), str(result["message"])
+            )
+
         return BridgeResponse(
             request_id=req.request_id, status="ok", result=result
         ).model_dump(exclude_none=True)
@@ -152,6 +226,29 @@ def _error(request_id: str, code: str, message: str) -> dict[str, Any]:
         status="error",
         error=BridgeErrorObject(code=code, message=message[:512], retryable=False),
     ).model_dump(exclude_none=True)
+
+
+def _error_result(context_id: str, code: str, message: str) -> dict[str, Any]:
+    """Handler-level typed error; facade re-wraps it into the envelope."""
+    return {"__bridge_error__": True, "code": code, "message": message}
+
+
+def _extract_job_id(result: dict[str, Any]) -> str | None:
+    """Coerce a start-handler ``job_id`` via the internal model (caps apply).
+
+    Strips the private sentinel and the job id from the dict — an accepted
+    envelope carries ``job_id`` at top level, not a ``result`` (§5.3).
+    """
+    if not isinstance(result, dict) or not result.get(_ACCEPTED_SENTINEL):
+        return None
+    result.pop(_ACCEPTED_SENTINEL, None)
+    job_id = result.pop("job_id", None)
+    if not isinstance(job_id, str):
+        return None
+    try:
+        return _JobIdResult(job_id=job_id).job_id
+    except ValidationError:
+        return None
 
 
 def _safe_request_id(parsed: Any) -> str:
