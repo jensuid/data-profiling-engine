@@ -15,13 +15,16 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 
 ```text
 Milestone : M0 — Desktop Spike
-Task      : M0-T1 DONE (macOS smoke verified 2026-10-24)
-NEXT      : M0-T2 bridge echo — open CONTRACTS §5.1–5.3 + SECURITY §3,
-            implement typed facade + one echo command in data_profiling_engine/bridge/,
-            wire into main.py create_window(js_api=...), add pytest for validation
+Task      : M0-T2 DONE (macOS bridge echo verified 2026-10-24, 20/20 pytest green)
+NEXT      : M0-T3 worker process — open CONTRACTS §6 + ARCHITECTURE ADR-006,
+            add multiprocessing spawn worker under data_profiling_engine/bridge/worker/,
+            echo-a-job via BridgeFacade, thread-safe status slot,
+            `freeze_support()` at top of main.py, add pytest for start/progress/cancel
 Blocked by: none
-Session notes: repo scaffold exists (backend pkg per ARCHITECTURE §3, frontend vite+HashRouter).
+Session notes: bridge facade (typed pydantic envelope) in data_profiling_engine/bridge/;
+               only `echo` command registered — real MVP commands land in M5-T1.
                Run: uv run -p .venv python -m data_profiling_engine.main --smoke
+               Test: .venv/bin/python -m pytest data_profiling_engine/tests -q
 ```
 
 ## ✔ GOTCHAS ( discoveries every future session must know )
@@ -31,13 +34,17 @@ Session notes: repo scaffold exists (backend pkg per ARCHITECTURE §3, frontend 
 - pywebview: `webview` module has no __version__ attr; don't probe it in tests.
 - macOS zsh has no `timeout` cmd; use the runner's own timeout for smoke runs.
 - vite `base:'./'` is mandatory — absolute asset paths break under file:// (verified via smoke).
-- Smoke entry: `python -m data_profiling_engine.main --smoke` (opens window, auto-closes 3s).
+- Smoke entry: `python -m data_profiling_engine.main --smoke` (opens window, auto-closes).
+- pywebview `evaluate_js` serialises a JS Promise as `{}` — stash the resolution on `window`
+  and poll from Python instead of expecting an awaited return (M0-T2 gotcha).
+- Bridge spike introduced code `BRIDGE_REQUEST_INVALID` (see bridge/errors.py) not yet in
+  CONTRACTS §8; M1-T6 promotes it into the formal error-code registry module + doc row.
 ```
 
 ## M0 — Desktop Spike (gate: BLUEPRINT §5 Phase 0; acceptance: TESTING §5.2)
 
-- [x] **M0-T1** Scaffold: repo layout per ARCHITECTURE §3; pywebview shell loading React **HashRouter** build from local files (ADR-003/010/013). *Spec: ARCHITECTURE §2–3; ADR-013.* ✅ macOS smoke 2026-10-24 (Windows re-verify folds into M0-T5)
-- [ ] **M0-T2** Bridge hello-world: typed facade stub with one echo command; pydantic request validation (ADR-005). *Spec: CONTRACTS §5.1–5.3; SECURITY §3.*
+- [x] **M0-T1** Scaffold: repo layout per ARCHITECTURE §3; pywebview shell loading React **HashRouter** build from local files (ADR-003/010/013). *Spec: ARCHITECTURE §2–3; ADR-013.* ✅ macOS smoke 2026-10-24 (Windows re-verify folds into M0-T5) — commit `5b3d4a0`
+- [x] **M0-T2** Bridge hello-world: typed facade stub with one echo command; pydantic request validation (ADR-005). *Spec: CONTRACTS §5.1–5.3; SECURITY §3.* ✅ macOS round-trip via `--smoke` + 20/20 pytest (validation, allow-list, 1 MiB cap, no input echo) 2026-10-24
 - [ ] **M0-T3** Worker process: `multiprocessing` spawn + echo job + progress via status; `freeze_support()`. *Spec: CONTRACTS §6; ARCHITECTURE ADR-006.*
 - [ ] **M0-T4** PyInstaller: macOS build passes M0-T1..T3 in packaged form; DuckDB native lib collected. *Spec: SECURITY §6.2; ADR-009.*
 - [ ] **M0-T5** Windows build (native env): same gate incl. WebView2 detection. **→ GATE M0: all five green on both OS; else revise ADRs, do not proceed.**
