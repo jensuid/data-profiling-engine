@@ -26,11 +26,19 @@ import webview
 from data_profiling_engine.bridge import BridgeFacade
 
 # frontend/dist is resolved relative to the repo root (dev) or the bundled
-# app directory (packaged — PyInstaller spec lands in M0-T4).
+# app directory (packaged). Under a PyInstaller freeze the bundle's read-only
+# data tree lives under ``sys._MEIPASS`` (onefile) or the exe dir (onedir);
+# ADR-009/SECURITY §6.2 — the spec stages ``frontend/dist`` there.
 REPO_ROOT = Path(__file__).resolve().parent.parent
-FRONTEND_INDEX = REPO_ROOT / "frontend" / "dist" / "index.html"
 
 APP_TITLE = "Data Profiling Engine"
+
+
+def _bundle_root() -> Path:
+    """Directory holding the bundled ``frontend/dist`` for this run mode."""
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    return REPO_ROOT
 
 # JS probes used by ``--smoke`` to exercise the ADR-005 pathway end-to-end.
 # ``pywebview.api.<method>`` returns a Promise; ``evaluate_js`` serialises a
@@ -47,12 +55,29 @@ _BRIDGE_SMOKE_POLL_JS = "JSON.stringify(window.__smoke || {done: false, result: 
 
 
 def resolve_index() -> Path:
-    if not FRONTEND_INDEX.is_file():
+    index = _bundle_root() / "frontend" / "dist" / "index.html"
+    if not index.is_file():
         raise SystemExit(
-            f"Frontend build not found at {FRONTEND_INDEX}. "
+            f"Frontend build not found at {index}. "
             "Run `npm run build` inside frontend/ first."
         )
-    return FRONTEND_INDEX
+    return index
+
+
+def _run_duckdb_smoke() -> None:
+    """M0-T4: validate DuckDB native-lib collection inside the frozen build.
+
+    ADR-009 / SECURITY §6.2 flags ``.dylib``/``.so`` collection as the top
+    packaging risk; running a real query through the bundled extension is the
+    Phase-0 smoke that proves PyInstaller shipped it (no engine code yet).
+    """
+    try:
+        import duckdb
+
+        rows = duckdb.sql("SELECT 40 + 2 AS answer").fetchall()
+        print(f"DUCKDB_SMOKE_RESULT: version={duckdb.__version__} rows={rows}")
+    except Exception as exc:  # noqa: BLE001 — spike diagnostic
+        print(f"DUCKDB_SMOKE_FAILED: {type(exc).__name__}: {exc}")
 
 
 def _unwrap_js_result(value: object) -> object:
@@ -80,6 +105,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     index = resolve_index()
+    if args.smoke:
+        # Native-lib check runs first, before the WebView, so a DuckDB
+        # collection failure is visible even if the GUI path stalls.
+        _run_duckdb_smoke()
     facade = BridgeFacade()
     window = webview.create_window(APP_TITLE, str(index), js_api=facade)
 

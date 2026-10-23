@@ -13,6 +13,10 @@ frontend/node_modules/
 frontend/dist/
 *.tsbuildinfo
 
+# PyInstaller build output (ADR-009 / M0-T4) — never commit frozen bundles
+/build/
+/dist/
+
 # App data / artifacts (user data belongs in OS app-data dir, never in repo)
 artifacts/
 *.sqlite

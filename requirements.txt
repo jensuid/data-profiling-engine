@@ -6,3 +6,6 @@ polars>=1.5        # independent reference computations for correctness tests on
 
 # Test tooling (AGENTS §9: pytest tests are part of every task)
 pytest>=8.0
+
+# Packaging / build tooling (ADR-009 PyInstaller spike, M0-T4; SECURITY §6)
+pyinstaller>=6.10

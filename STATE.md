@@ -15,19 +15,22 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 
 ```text
 Milestone : M0 — Desktop Spike
-Task      : M0-T3 DONE (spawn worker + echo job + progress/cancel/crash/timeout
-          verified via facade, macOS smoke round-trip OK, 35/35 pytest ×3 runs)
-NEXT      : M0-T4 PyInstaller — open SECURITY §6.2 + ADR-009,
-            write pyinstaller spec collecting duckdb native lib + frontend/dist,
-            build on macOS, run packaged binary and verify M0-T1..T3 behaviours
-            (window/file://, bridge echo, worker job) inside the frozen app
-Blocked by: none
-Session notes: worker spike lives in bridge/worker/ (process.py = spawned entry,
-               manager.py = JobManager + status slot, models.py = §6 state enum);
-               facade commands: worker_echo_job / job.get_status / job.cancel.
-               Folded into orchestration/ + SQLite status when M5-T2 lands.
-               Run: uv run -p .venv python -m data_profiling_engine.main --smoke
-               Test: .venv/bin/python -m pytest data_profiling_engine/tests -q
+Task      : M0-T4 DONE (PyInstaller onefile build on macOS; frozen
+          ./dist/DataProfilerEngine --smoke verified all four spike behaviours:
+          window+file:// from _MEIPASS, bridge echo, spawn worker SUCCEEDED 4/4,
+          DuckDB native ext collected — SELECT 40+2 → [(42,)])
+NEXT      : M0-T5 — Windows native-env build: same smoke on Windows +
+            WebView2-runtime detection (SECURITY §6.4, ADR-009 Win risks).
+            **→ GATE M0: M0-T1..T4 green on BOTH OS; else revise ADRs.**
+Blocked by: none (needs a native Windows machine/VM)
+Session notes: packaging spec = data_profiling_engine.spec (repo root);
+               onefile+console for Phase-0 diagnostics; frontend/dist +
+               duckdb (_duckdb.abi3.so) + webview js assets collected via
+               collect_data_files/dynamic_libs; main.py resolve_index is
+               freeze-aware (sys._MEIPASS when frozen).
+               Build: .venv/bin/python -m PyInstaller --clean --noconfirm data_profiling_engine.spec
+               Run:   ./dist/DataProfilerEngine --smoke
+               Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
 ```
 
 ## ✔ GOTCHAS ( discoveries every future session must know )
@@ -52,6 +55,13 @@ Session notes: worker spike lives in bridge/worker/ (process.py = spawned entry,
   `is_alive()` to false, not assert it immediately after the terminal status appears.
 - `freeze_support()` is the first statement of `main()` (module-level `__main__` guard
   alone is not enough for the packaged entry point, ADR-006/009).
+- PyInstaller **onedir vs onefile** is decided by presence of `COLLECT()`: passing
+  `a.binaries`/`a.datas` straight to `EXE()` (no COLLECT) yields a **onefile** exe that
+  extracts to `sys._MEIPASS` at runtime — `main._bundle_root()` reads that when frozen.
+- Frozen `spawn` worker works once `data_profiling_engine.bridge.worker.process` is an
+  explicit `hiddenimport` (the child re-imports the target module fresh; static analysis
+  from the lazy `main→facade→manager→process` chain is not enough). DuckDB ext
+  `_duckdb.abi3.so` needs `hiddenimports=['duckdb','_duckdb']` + `collect_dynamic_libs`.
 ```
 
 ## M0 — Desktop Spike (gate: BLUEPRINT §5 Phase 0; acceptance: TESTING §5.2)
@@ -59,7 +69,7 @@ Session notes: worker spike lives in bridge/worker/ (process.py = spawned entry,
 - [x] **M0-T1** Scaffold: repo layout per ARCHITECTURE §3; pywebview shell loading React **HashRouter** build from local files (ADR-003/010/013). *Spec: ARCHITECTURE §2–3; ADR-013.* ✅ macOS smoke 2026-10-24 (Windows re-verify folds into M0-T5) — commit `5b3d4a0`
 - [x] **M0-T2** Bridge hello-world: typed facade stub with one echo command; pydantic request validation (ADR-005). *Spec: CONTRACTS §5.1–5.3; SECURITY §3.* ✅ macOS round-trip via `--smoke` + 20/20 pytest (validation, allow-list, 1 MiB cap, no input echo) 2026-10-24 — commit `a4ef86f`
 - [x] **M0-T3** Worker process: `multiprocessing` spawn + echo job + progress via status; `freeze_support()`. *Spec: CONTRACTS §6; ARCHITECTURE ADR-006.* ✅ macOS: facade worker round-trip via `--smoke` (SUCCEEDED, 4/4 steps) + 35/35 pytest ×3 (start/progress/cancel/crash→WORKER_CRASHED/timeout→JOB_TIMEOUT, §6.1 states, accepted+job_id envelope) 2026-10-24 — Windows re-verify folds into M0-T5
-- [ ] **M0-T4** PyInstaller: macOS build passes M0-T1..T3 in packaged form; DuckDB native lib collected. *Spec: SECURITY §6.2; ADR-009.*
+- [x] **M0-T4** PyInstaller: macOS build passes M0-T1..T3 in packaged form; DuckDB native lib collected. *Spec: SECURITY §6.2; ADR-009.* ✅ macOS onefile `./dist/DataProfilerEngine --smoke` (2026-10-24): window+`file://` from `_MEIPASS`, bridge echo round-trip, spawn worker `SUCCEEDED 4/4`, DuckDB `SELECT 40+2 → [(42,)]`; 35/35 pytest still green. Spec=`data_profiling_engine.spec`; `build//dist/` gitignored. — Windows re-verify folds into M0-T5
 - [ ] **M0-T5** Windows build (native env): same gate incl. WebView2 detection. **→ GATE M0: all five green on both OS; else revise ADRs, do not proceed.**
 
 ## M1 — Contracts Freeze
