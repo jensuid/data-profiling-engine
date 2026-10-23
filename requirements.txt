@@ -1,0 +1,5 @@
+# Runtime dependencies (MVP baseline — keep minimal per ADR-012: no YData/GX/Soda)
+pywebview>=5.1
+duckdb>=1.1
+pydantic>=2.8
+polars>=1.5        # independent reference computations for correctness tests only
