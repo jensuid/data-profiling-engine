@@ -17,31 +17,137 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 Milestone : M2 — Engine CLI (spine; no UI)   (GATE M1 CONTRACTS FREEZE PASSED
           2026-10-24: M1-T1..T6 green; 9 result + 4 envelope schemas frozen,
           pydantic + TS mirrors in parity, §8 registry formalised)
-Task      : none in progress — M2-T4 done, start M2-T5 next.
-NEXT      : M2-T5 — Profilers: uniqueness + categorical (+ reference tests;
-            HLL provenance). Open docs/ENGINE_SPEC.md §3 (Uniqueness +
-            Categorical rows) + §2.2 (HLL / sampling) and
-            docs/TESTING_BENCHMARKS.md §3.1. M2-T4 landed the runner pattern in
-            engine/metrics/profiler.py (execute_stat_and_missingness) — add a
-            second family pass (same module or sibling uniqueness.py /
-            categorical.py) consuming the ExecutionPlan decisions the M2-T3
-            registry already emits for uniqueness.{distinct_count (HLL approx
-            template, expensive_exact → approximate at >LARGE_ROW_LIMIT or
-            quick, algorithm duckdb HLL), is_unique_candidate (distinct==
-            non-null), duplicate_groups} → ColumnProfile.uniqueness
-            (MetricValue distinct_count + is_unique_candidate bool) and
-            categorical.{frequencies,rare_categories,label_inconsistencies}
-            (all sql_template=None → the profiler BUILDS the GROUP BY SQL; §4
-            gate-1 low-cardinality trigger reads uniqueness.distinct_count)
-            → ColumnProfile.categorical. Reuse the _not_computed_value /
-            _metric_value honesty helpers + §6.4 per-task error policy +
-            render_sql(params=…). Reference-test distinct (exact vs HLL within
-            error bounds + labeled approximate) and frequencies vs
-            Polars/hand. NOTE: the M2-T4 runner SKIPS non-{statistical,
-            missingness} families by design (EXECUTED_FAMILIES); M2-T5 EXECUTES
-            the families it owns.
+Task      : none in progress — M2-T6 done, start M2-T7 next.
+NEXT      : M2-T7 — Rule registry + compiler → one SQL per rule;
+            statuses PASS/FAIL/WARN/ERROR. Open docs/ENGINE_SPEC.md §5.1–5.3
+            (rule catalog + semantics) and docs/CONTRACTS.md §4.1
+            (QualityCheckResult shape + FAIL≠ERROR). This is the first task on
+            the QUALITY side (not a ColumnProfile metric family): consume the
+            frozen `dataset_config.quality_checks[]` rules (§9 ConfigRule),
+            compile each rule to ONE DuckDB SQL statement against the bound
+            relation (mirror render_sql's single-materialisation + bound-input
+            discipline — no user value interpolated), execute it, and emit a
+            QualityCheckResult{status∈{pass,fail,warn,error}, ...} per rule.
+            A rule whose SQL cannot execute is ERROR, never FAIL (§6.4
+            per-task isolation reused from M2-T4..T6). Reuse the
+            RelationHandle/_scalar/_relation_row_count helpers. NO new Column-
+            Profile block — results feed the dataset-level quality layer.
+            Reference tests: each §5.1 rule type vs an independent hand-
+            computed pass/fail on a fixture + one broken-SQL→ERROR case.
             Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
-Blocked by: none (M2-T1..T4 accepted).
+Blocked by: none (M2-T1..T6 accepted).
+Session notes: M2-T6 delivered the third-family pass in
+               engine/metrics/profiler.py —
+               execute_distribution_and_temporal(con, handle, report, plan,
+               config, registry) consumes the M2-T3 ExecutionPlan and stamps
+               ColumnProfile.distribution / .temporal as contract blocks
+               (Distribution/Histogram/OutlierCandidates + Temporal/
+               TemporalRange), reusing the M2-T4/T5 honesty + §6.4 per-task
+               error policy + render_sql + family-skip discipline
+               (DISTRIBUTION_TEMPORAL_FAMILIES).
+               **Distribution**: histogram BUILT here via a width_bucket
+               EMULATION (DuckDB 2.0 has no width_bucket scalar — STATE
+               gotcha): edges span [min,max] over HISTOGRAM_BIN_COUNT=10 fixed
+               bins, `CAST(LEAST(nb, FLOOR((col-lo)/(hi-lo)*nb)+1) AS INTEGER)`
+               bucket ids, counts aligned to bins; top edge folds into the last
+               bin; a constant column collapses to a single [lo] bin; an empty
+               column is honest not_computed (bins/counts present but []); the
+               bin_strategy/lower_edge/upper_edge ride in method_params
+               (§2.2). skewness renders the templated `skewness(col)` (DuckDB
+               returns adjusted Fisher–Pearson **G1**, NOT Polars' biased g1 —
+               gotcha); undefined (<3 rows / zero variance) → not_computed +
+               reason, value key ABSENT. outlier_candidates BUILT here via
+               Tukey IQR/1.5 fences (`_build_numeric_summary_sql` reuses one
+               quantile_cont q1/q3 pass): emits
+               OutlierCandidates{count, method='iqr_1_5', provenance,
+               sample_row_refs=[f'row:{id}']} — row *references*, never raw
+               values (SECURITY §4); refs omitted when count==0.
+               **Temporal**: range_min/max via render_sql (cast_varchar_on_fetch
+               → CAST AS VARCHAR, TZ-safe, no pytz); volume_per_granularity
+               BUILT here (date_trunc + auto granularity from the span via
+               _pick_granularity — ≤_GRANULARITY_DAY_SPAN days→'day',
+               ≤_GRANULARITY_MONTH_SPAN→'month', bounded VOLUME_MAX_BUCKETS);
+               gaps = expected-minus-observed period series (generate_series
+               INTERVAL, GAPS_MAX_PERIODS bound); out_of_expected_range honestly
+               not_computed (no MVP dataset-config expected-range bound exists —
+               never fabricate); timezone_source naive/utc derived from the
+               physical type. Volume/gaps embed a Provenance inside an OPEN
+               dict, so it MUST be `.model_dump(mode='json')` (a raw Provenance
+               object is not JSON-serialisable — gotcha). Section gating: a
+               disabled `distributions`/`temporal` section ⇒ the whole block is
+               structurally OMITTED (dist_active/temporal_active flags), never
+               zeroed. Approximate-without-approx-template (quick-mode
+               histogram/skewness) falls back to exact SQL keeping the
+               planner's approximate+algorithm label. +
+               tests/test_profilers_distribution_temporal.py (28 tests:
+               histogram bin-count + non-null sum invariant vs Polars
+               drop_nulls, edges/strategy recorded, top-edge folds to last bin,
+               constant single bin, empty not_computed; skewness == adjusted G1
+               reference + explicit test it DIFFERS from Polars biased g1 +
+               constant not_computed; outlier IQR count vs hand Tukey + refs
+               are 'row:N' not values + no-outliers omit + seeded fixture
+               count=2; temporal range varchar / month granularity volume /
+               missing-month gap / day-granularity short-span gap /
+               out_of_expected_range not_computed / naive-vs-utc timezone;
+               section-gating distributions-off & temporal-off omit the block;
+               quick approximate label+algorithm; sampled gaps seed+bounded+
+               deterministic; §6.4 broken-skewness isolated from siblings;
+               every profile §3.2 schema-valid across STANDARD/QUICK/DEEP +
+               byte-stable rerun + numeric-has-no-temporal-and-vice-versa).
+               430/430 pytest green, tsc clean 2026-10-24.
+Session notes: M2-T5 delivered the uniqueness + categorical pass in
+               engine/metrics/profiler.py —
+               execute_uniqueness_and_categorical(con, handle, report, plan,
+               config, registry) consumes the M2-T3 ExecutionPlan, executes
+               uniqueness.distinct_count via render_sql (exact template OR
+               HLL approx_sql_template chosen by the planner's method label,
+               §2.2 — algorithm=HLL stamped via decision.provenance_kwargs()),
+               derives uniqueness.is_unique_candidate from distinct_count.value
+               == count(col) on the SAME scanned relation (boolean contract
+               field has no provenance carrier — honesty rides on the paired
+               MetricValue), builds uniqueness.duplicate_groups SQL inline
+               (contract_target=None → auxiliary dict
+               ProfilerResult.duplicate_group_counts for M2-T8 findings),
+               and executes categorical.{frequencies,rare_categories,
+               label_inconsistencies} via profiler-built GROUP BY SQL
+               (§4 low-cardinality gate reads slot.distinct_count and refuses
+               above CATEGORICAL_MAX_DISTINCT=1_000, block ABSENT — never a
+               truncated top-K masquerading as the full enumeration).
+               Constants CATEGORICAL_TOP_K=50, RARE_FREQUENCY_SHARE=0.001
+               documented inline (MVP heuristic; no per-domain code path,
+               AGENTS §5). Sampled decisions reuse the M2-T4 one shared
+               bounded sample relation (md5 seed ORDER + LIMIT, reservoir
+               finalised M2-T10); approximate decisions with no approx
+               template (is_unique_candidate under STANDARD-large, label_
+               inconsistencies) fall back to EXACT SQL while keeping the
+               planner's approximate label — same M2-T3 delegation M2-T4
+               established for stddev/quick. §6.4 per-metric duckdb.Error →
+               RunErrorEntry(METRIC_NOT_COMPUTED) + honest absence
+               (not_computed MetricValue for distinct_count; boolean defaults
+               False; categorical arrays stay unset ⇒ block omitted via the
+               pydantic null-rejection policy — keys are DROPPED, never
+               silently nulled). Section gating: when §4 gate 2 disables the
+               uniqueness section, all three uniqueness decisions become
+               not_computed and the ColumnProfile.uniqueness block is
+               structurally OMITTED (tracked via _UniCatSlot.uniqueness_executed),
+               never fabricated with is_unique_candidate=False. +
+               tests/test_profilers_uniqueness_categorical.py (27 tests:
+               distinct_count vs Polars n_unique + hand, is_unique_candidate
+               identifier vs duplicate vs all-null-vacuously-True edge,
+               duplicate_group_counts auxiliary parity, HLL approximate path
+               with n_rows>LARGE_ROW_LIMIT labelled algorithm=HLL + within
+               error bounds, sampled path (seed + bounded + deterministic
+               rerun), top-K frequency desc/raw asc + Polars group_by
+               parity + NULL exclusion + numeric-column registry gate,
+               rare-categories threshold + no-singleton empty, label_
+               inconsistencies case+whitespace collapse (DuckDB VARCHAR sort
+               is byte-ASCII: 'ACTIVE'<'Active'<'active'), high-cardinality
+               gate (>1000 distinct) omits the whole categorical block,
+               §4 gate-2 section-off uniqueness omits the whole uniqueness
+               block, §6.4 partial failure, empty-relation edges, every
+               profile §3.2 schema-valid across STANDARD/QUICK/DEEP +
+               byte-stable rerun). 402/402 pytest green, tsc clean
+               2026-10-24.
 Session notes: M2-T4 delivered engine/metrics/profiler.py —
                execute_stat_and_missingness(con, handle, report, plan, config,
                registry) consumes the M2-T3 ExecutionPlan, renders each
@@ -265,6 +371,60 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
   `dpe_sentinels` and `render_sql(params={'sentinels': '"dpe_sentinels"'})`
   substitutes the {sentinels} placeholder; a sentinel containing a quote (`it's`)
   still matches literally and cannot break the statement.
+- ColumnProfile **sub-blocks with no provenance carrier on a required field**
+  must be OMITTED when the planner skipped the family, never fabricated with
+  a default value. M2-T5 case: `uniqueness.is_unique_candidate` is a plain
+  `bool` — when §4 gate 2 disables the `uniqueness` section, all three
+  uniqueness decisions become not_computed and the whole
+  `ColumnProfile.uniqueness` block must be absent (tracked by the
+  runner-internal `_UniCatSlot.uniqueness_executed` flag), not emitted with
+  `is_unique_candidate=False` (that would hide a legitimate skip as a
+  "not unique" verdict). Same rule for `categorical`: unset array fields on
+  the open `Categorical` block must be DROPPED from the constructor kwargs
+  (ContractModel still rejects an explicit null on a non-nullable field even
+  for `_OpenModel`, same as M1-T4 `Provenance.denominator`) (M2-T5).
+- DuckDB `VARCHAR` sort is **byte/ASCII, not locale-aware** — uppercase sorts
+  BEFORE lowercase: `'ACTIVE' < 'Active' < 'active'`. Any reference test that
+  asserts a raw-variants ORDER BY must expect this order, not Python's
+  `sorted(...)` (which happens to agree for pure-ASCII but not for e.g.
+  case-folded Unicode) (M2-T5 test gotcha).
+- Low-cardinality categorical gate: ENGINE §3 lists Categorical Profiler as
+  computing "frequency, cardinality, rare categories" but the §4 registry
+  only gates the FAMILY by logical type (`_STRINGISH_LOGICAL`); the actual
+  runtime skip on a high-cardinality string (UUID/EMAIL near-unique) MUST
+  happen in the M2-T5+ runner reading `uniqueness.distinct_count` from the
+  same pass — the planner is size-agnostic here because `decide_method`
+  doesn't know per-column cardinality at plan time. Above
+  `CATEGORICAL_MAX_DISTINCT` (1_000 MVP heuristic) the whole
+  `ColumnProfile.categorical` block is omitted, never a truncated top-K
+  masquerading as a full enumeration (ADR-015 honesty) (M2-T5).
+- DuckDB 2.0 has **NO `width_bucket` scalar function** (CatalogException on
+  use). Histogram equal-width binning must be emulated with the identical
+  formula: `CAST(LEAST(nb, FLOOR((col - lo) / (hi - lo) * nb) + 1) AS INTEGER)`
+  over non-null values (NULLs fall out of the WHERE), top edge `hi` folds into
+  the last bin via the `LEAST`; guard the `hi == lo` (constant) divide-by-zero
+  with a single-bin shortcut BEFORE the bucket query (M2-T6).
+- DuckDB `skewness()` returns the **adjusted Fisher–Pearson G1**
+  (`g1 * sqrt(n(n-1))/(n-2)`), while Polars `.skew()` returns the **biased g1**
+  (`m3 / m2**1.5`) — they differ by the sample-size correction factor. A
+  reference test must compare against G1 computed in plain Python, and
+  explicitly assert it DIFFERS from Polars (the engine follows DuckDB). Both
+  are undefined for n<3 or zero variance → honest `not_computed` (M2-T6).
+- A contract `Provenance` (or any pydantic model) nested **inside an OPEN dict
+  value** (e.g. `Temporal.volume_per_granularity['buckets'][i]['provenance']`,
+  `gaps['provenance']`) is NOT auto-serialised by `ContractModel.model_dump
+  (mode='json')` — the open `Dict[str, Any]` passes the raw object through and
+  `model_dump_json`/JSONSchema validation then raises `Object of type
+  Provenance is not JSON serializable`. Call `.model_dump(mode='json')` on the
+  nested Provenance yourself before storing it in the open block (M2-T6;
+  out_of_expected_range already followed this pattern).
+- GIT-HISTORY NOTE: the M2-T5 session left its work UNCOMMITTED (last commit
+  was `abe0c56 M2-T4`); profiler.py's M2-T5 uniqueness/categorical code + the
+  M2-T5 test file were still only in the working tree when M2-T6 ran. Because
+  the M2-T5 and M2-T6 edits share one file and cannot be cleanly hunk-split,
+  M2-T5's artifacts land in the M2-T6 commit. STATE.md's M2-T5 `[x]` predates
+  this commit — do not assume a `[x]` task has its own commit; verify with
+  `git log` when resuming.
 ```
 
 ## M0 — Desktop Spike (gate: BLUEPRINT §5 Phase 0; acceptance: TESTING §5.2)
@@ -291,8 +451,8 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 - [x] **M2-T2** Discovery: physical→logical/semantic type inference + unit status. *Spec: ENGINE §4.1.* ✅ `discovery/` — `types.py` (closed LogicalType enum 18 members + Confidence high/medium/low + ColumnSignals bounded-aggregate dataclass + ColumnDiscovery + DiscoveryReport); `signals.py` (`collect_column_signals` — one scalar-aggregate pass + one bounded reservoir DISTINCT sample for VARCHAR; exact vs HLL switch at 10K; `DiscoveryError` carries §8 code `SCHEMA_INFERENCE_FAILED`); `inference.py` (physical→logical base map, VARCHAR pattern refinement email/uuid/url/phone/ISO-date(-time)/currency-shaped numeric via regex ≥90%HIGH/≥70%MEDIUM, name heuristics `_id`/`_at`/`amount|price|value`/`status|state`/`is_/has_`/freeform, length+cardinality → categorical_nominal / text_freeform / near-unique identifier, numeric low-cardinality → dimension, config overlay: PK ⇒ semantic=identifier HIGH + config_declared=True, units copied verbatim); `__init__.py` (public `discover(con, handle, config=None)`). Unit policy per ENGINE §4.1: `known` ONLY via config, `assumed` via currency symbol, else `unknown`; non-currency ⇒ no unit block. +`tests/test_discovery.py` 31 tests (physical family base, pattern promotions, name nudges, config overlay PK/units, distinct-exact↔HLL switch across 10K, empty/all-null edges, DiscoveryError→registry code, Parquet roundtrip, determinism, schema-valid dump for every column_profile emitted). 286/286 pytest green, tsc clean 2026-10-24.
 - [x] **M2-T3** Metric registry core + planner cost classes. *Spec: ENGINE §2, §2.1.* ✅ `engine/metrics/__init__.py` — `CostClass` (4 §2.1 members, large-N behaviour in doc), `MetricSpec` frozen dataclass (metric_id/family/display/contract_target/scope/cost_class + §4 applicability [logical+physical] + section + supports_approximate/requires_full_relation/exact_under_sampling/cast_varchar_on_fetch flags + sql/approx templates), 34-row MVP catalog over the 8 MVP-active §3 families (relationship/relational/drift intentionally unregistered — §3 marks them Phase-2/4), immutable `MetricRegistry` (dup/non-MVP/unknown guards) + `default_registry()`. `engine/planner.py` — `PlanDecision.__post_init__` structurally enforces §2.2 sampling honesty (sampled⇒seed, approximate⇒algorithm, not_computed⇒reason) → `provenance_kwargs()` stamps straight into contract `Provenance`; pure `decide_method()` = the §2.1×§8 table; `plan_execution()` applies §4 gates 1/2/3; `render_sql()` is the single SQL-materialisation point ({table}/{col} quoting, approx swap, temporal CAST-to-VARCHAR for the no-pytz TZ probe). No computation executed here (that is M2-T4..T6). +`tests/test_metric_registry_planner.py` 64 tests (registry integrity; every `contract_target` path resolved against the frozen JSON Schemas by $ref-walking `validator_for(...).schema`; catalog↔§3-family + ↔§2.1-cost-class parity; table-driven `decide_method` vs an **independent** dict reference transcribed from §2.1/§8 prose; Provenance stamping; selection + section gating; determinism; templated SQL executed on a hand-computed DuckDB fixture — exact/HLL-approx/t-digest-approx, TZ CAST fetch, odd-identifier quoting). 350/350 pytest green, tsc clean 2026-10-24.
 - [x] **M2-T4** Profilers: statistical + missingness (+ reference tests). *Spec: ENGINE §3; TESTING §3.1.* ✅ `engine/metrics/profiler.py` — `execute_stat_and_missingness(con, handle, report, plan, config, registry)` consumes the M2-T3 `ExecutionPlan`, renders each templated stats/missingness decision via `render_sql` against the DuckDB view (or ONE shared bounded sample relation for `sampled` decisions — seeded md5 ORDER+LIMIT, reservoir finalised in M2-T10), stamps scalars into `ColumnProfile.stats`/`.missingness` as `MetricValue`+`Provenance(**decision.provenance_kwargs())`. Honesty enforced: not_computed ⇒ value key ABSENT (`model_construct`+`fields_set.discard`); approximate-without-approx-template (stddev/quick) falls back to exact SQL but keeps the `approximate` label; §6.4 per-metric `duckdb.Error`→`RunErrorEntry(METRIC_NOT_COMPUTED)`+not_computed, run continues; DECIMAL→float JSON-safe. **ADR-017** (new): sentinel set is dataset-config input `profiling.missing.sentinel_values` (exact/case-sensitive, bound via `executemany($1)` into temp `dpe_sentinels`, never interpolated; absent ⇒ `sentinel_count` 0) — added to `dataset_config.schema.json`+`ConfigMissing` pydantic+`contracts.ts`, CONTRACTS §9 exemplar, ENGINE §3 note; + `missingness.{sentinel_count,missing_rate}` registry templates + `render_sql(params=…)` w/ unsubstituted-placeholder guard. +`tests/test_profilers_stats_missingness.py` (24 tests: stats vs Polars `std(ddof=1)`/`quantile(linear)` + hand-computed; missingness null/blank/sentinel/missing_rate+denominator; ADR-017 absent/case-sensitive/bound-quote; exact/approximate(t-digest)/sampled(seed+determinism+bounded)/not_computed(reason,no value); §6.4 partial-failure; empty relation; DECIMAL transport; §3.2 schema-valid + byte-stable rerun) + 1 new render_sql placeholder-guard test. 375/375 pytest green, tsc clean 2026-10-24.
-- [ ] **M2-T5** Profilers: uniqueness + categorical (+ reference tests; HLL provenance). *Spec: ENGINE §3, §2.2.*
-- [ ] **M2-T6** Profilers: distribution (histogram, outliers) + temporal single-column. *Spec: ENGINE §3.*
+- [x] **M2-T5** Profilers: uniqueness + categorical (+ reference tests; HLL provenance). *Spec: ENGINE §3, §2.2.* ✅ `engine/metrics/profiler.py` — `execute_uniqueness_and_categorical(con, handle, report, plan, config, registry)` runs the M2-T5 families. **Uniqueness**: `distinct_count` renders the templated exact OR HLL approx SQL by the planner's method label (algorithm=HLL stamped via `decision.provenance_kwargs()`); `is_unique_candidate` derived from `distinct_count.value == count(col)` on the SAME scanned relation (bool has no provenance carrier, honesty rides on the paired MetricValue); `duplicate_groups` (contract_target=None) built inline → auxiliary `ProfilerResult.duplicate_group_counts` for M2-T8. **Categorical**: `frequencies`/`rare_categories`/`label_inconsistencies` all built inline (registry has no templates); §4 low-cardinality gate reads the just-computed `uniqueness.distinct_count` (`CATEGORICAL_MAX_DISTINCT=1_000` → block ABOVE that threshold stays ABSENT, never a truncated top-K masquerading as full enumeration); `CATEGORICAL_TOP_K=50`, rare = count ≤ `max(1, floor(non_null * 0.001))`, label_inconsistencies = same `lower(trim(x))` with ≥2 raw variants. Approximate decisions without an approx template (`is_unique_candidate` at STANDARD-large, `label_inconsistencies`) fall back to EXACT SQL, planner's approximate label retained — same M2-T3 delegation M2-T4 established for stddev/quick. §6.4 per-metric `duckdb.Error` → `RunErrorEntry(METRIC_NOT_COMPUTED)` + honest absence (not_computed `MetricValue` for distinct_count; boolean default False; unset categorical keys DROPPED — pydantic strict rejects an explicit null on non-nullable, keys are omitted not nulled — gotcha M2-T5). Section gating: when §4 gate 2 disables the `uniqueness` section, the whole `ColumnProfile.uniqueness` block is structurally OMITTED (tracked via `_UniCatSlot.uniqueness_executed`), never fabricated. + `tests/test_profilers_uniqueness_categorical.py` (27 tests: distinct_count vs Polars `n_unique` + hand, `is_unique_candidate` identifier/duplicate/all-null-vacuously-True, duplicate_group_counts parity, HLL approximate path (n_rows > LARGE_ROW_LIMIT labelled `algorithm=HLL`, within documented error bounds), sampled path (seed + bounded + deterministic), top-K frequency desc/raw-asc + Polars group_by parity + NULL exclusion + numeric-column registry gate, rare threshold + empty no-singleton, label_inconsistencies case+whitespace collapse (DuckDB VARCHAR sort is byte-ASCII: `ACTIVE`<`Active`<`active`), high-cardinality >1_000 gate omits the whole categorical block, §4 gate-2 uniqueness section-off omits the whole uniqueness block, §6.4 partial failure, empty-relation edges, every profile §3.2 schema-valid across STANDARD/QUICK/DEEP + byte-stable rerun). 402/402 pytest green, tsc clean 2026-10-24.
+- [x] **M2-T6** Profilers: distribution (histogram, outliers) + temporal single-column (+ reference tests). *Spec: ENGINE §3, §2.2; TESTING §3.1.* ✅ `engine/metrics/profiler.py` — `execute_distribution_and_temporal(con, handle, report, plan, config, registry)` runs the M2-T6 families. **Distribution**: histogram BUILT inline via a width_bucket EMULATION (`CAST(LEAST(nb, FLOOR((col-lo)/(hi-lo)*nb)+1) AS INTEGER)` — DuckDB 2.0 has no `width_bucket` scalar), 10 fixed bins over [min,max], counts aligned to bins, top-edge folds into last bin, constant→single bin, empty→honest not_computed ([] bins/counts), bin_strategy/edges in `method_params`; `skewness` renders the templated `skewness(col)` (DuckDB = adjusted Fisher–Pearson **G1**, distinct from Polars' biased g1; undefined→not_computed+reason, value ABSENT); `outlier_candidates` built via Tukey IQR/1.5 fences from one `quantile_cont` q1/q3 summary pass → `OutlierCandidates{count, method='iqr_1_5', provenance, sample_row_refs=['row:N']}` (row *references*, never raw values; omitted at count==0). **Temporal**: range via render_sql (CAST AS VARCHAR, TZ-safe), `volume_per_granularity` (date_trunc + auto granularity from span, bounded), `gaps` (expected-minus-observed `generate_series` INTERVAL), `out_of_expected_range` honest not_computed (no MVP config bound), `timezone_source` naive/utc; nested Provenance in an open dict MUST be `.model_dump(mode='json')`. Section gating: disabled `distributions`/`temporal` ⇒ whole block structurally OMITTED (dist_active/temporal_active), never zeroed; approximate-without-approx-template (quick histogram/skewness) falls back to exact SQL keeping the label; §6.4 per-metric `duckdb.Error`→`RunErrorEntry(METRIC_NOT_COMPUTED)`. + `tests/test_profilers_distribution_temporal.py` (28 tests: histogram bin-count + non-null sum invariant vs Polars, edges/strategy, top-edge/constant/empty; skewness==G1 reference + differs-from-Polars-g1 + constant not_computed; outlier IQR count vs hand Tukey + refs-are-row:N + no-outlier omit + seeded count=2; temporal range/month-volume/gaps/day-gaps/out-of-range/naive-vs-utc-tz; distributions-off & temporal-off gating; quick approximate label+algorithm; sampled gaps seed+bounded+deterministic; §6.4 broken-skewness isolation; every profile §3.2 schema-valid STANDARD/QUICK/DEEP + byte-stable rerun + numeric-has-no-temporal-vice-versa). 430/430 pytest green, tsc clean 2026-10-24.
 - [ ] **M2-T7** Rule registry + compiler → one SQL per rule; statuses PASS/FAIL/WARN/ERROR. *Spec: ENGINE §5.1–5.3; CONTRACTS §4.1.*
 - [ ] **M2-T8** Findings: detectors, dedup/merge, prioritization, **fingerprint**. *Spec: ENGINE §6; CONTRACTS §4.4.*
 - [ ] **M2-T9** Recommendations: rule-based templates + narrative w/ evidence refs. *Spec: ENGINE §7; CONTRACTS §4.3.*
