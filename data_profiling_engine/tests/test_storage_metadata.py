@@ -45,6 +45,7 @@ from data_profiling_engine.schemas.models import (
     ColumnProfile,
     DatasetConfig,
     DatasetProfile,
+    Distribution,
     Finding,
     FindingFact,
     FindingHypothesis,
@@ -53,6 +54,8 @@ from data_profiling_engine.schemas.models import (
     JobStatus,
     MetricMethod,
     MetricValue,
+    Missingness,
+    NumericStats,
     ProfilingRun,
     Provenance,
     QualityCheckResult,
@@ -73,6 +76,7 @@ from data_profiling_engine.storage import MetadataStore, paths as P
 from data_profiling_engine.storage.metadata_store import (
     MetadataIntegrityError,
     MetadataStoreError,
+    _iter_column_metrics,
     _validate,
     config_document_hash,
 )
@@ -384,8 +388,11 @@ class TestDirectoryPolicy:
 
 class TestMigrations:
     def test_fresh_database_reaches_target_version(self, store):
-        assert store.schema_version() == TARGET_VERSION == 1
-        assert store.migration_report.applied == ((1, "m3t1_initial_metadata"),)
+        assert store.schema_version() == TARGET_VERSION == 2
+        assert store.migration_report.applied == (
+            (1, "m3t1_initial_metadata"),
+            (2, "m3t3_column_metric_values"),
+        )
 
     def test_all_metadata_tables_exist(self, store):
         names = {
@@ -394,7 +401,7 @@ class TestMigrations:
         }
         expected = {
             "datasets", "dataset_config_versions", "jobs", "runs", "dataset_profiles",
-            "run_columns", "quality_checks", "check_evidence_refs", "findings",
+            "run_columns", "column_metric_values", "quality_checks", "check_evidence_refs", "findings",
             "finding_evidence_refs", "finding_facts", "finding_hypotheses",
             "finding_related_refs", "finding_recommendation_refs", "recommendations",
             "recommendation_evidence_refs", "recommendation_do_not", "run_errors",
@@ -416,10 +423,10 @@ class TestMigrations:
 
     def test_upgrade_with_appended_migration(self, tmp_path):
         db = tmp_path / "metadata.sqlite3"
-        extra = Migration(2, "m_test_additions", "CREATE TABLE drift_marks (run_id TEXT, note TEXT);")
+        extra = Migration(3, "m_test_additions", "CREATE TABLE drift_marks (run_id TEXT, note TEXT);")
         with MetadataStore(db, migrations=MIGRATIONS + (extra,)) as st:
-            assert st.schema_version() == 2
-            assert [m["version"] for m in st.migration_history()] == [1, 2]
+            assert st.schema_version() == 3
+            assert [m["version"] for m in st.migration_history()] == [1, 2, 3]
         # reopening with the shipped chain only = the downgrade case
         with pytest.raises(MigrationError):
             MetadataStore(db, migrations=MIGRATIONS)
@@ -429,17 +436,17 @@ class TestMigrations:
         with MetadataStore(db) as st:
             st.register_dataset(dataset_id="ds_a", name="A", connector="csv", source_ref="/a.csv")
             assert st.migration_report.backup_path is None  # first create = nothing to preserve
-        extra = Migration(2, "m_two", "CREATE TABLE t2 (x TEXT);")
+        extra = Migration(3, "m_three", "CREATE TABLE t3 (x TEXT);")
         with MetadataStore(db, migrations=MIGRATIONS + (extra,)) as st:
             backup = st.migration_report.backup_path
             assert backup is not None
             assert backup.parent.name == P.BACKUP_SUBDIR
-        files = sorted((tmp_path / "meta" / P.BACKUP_SUBDIR).glob("metadata.pre-migration-v1-*.sqlite3"))
+        files = sorted((tmp_path / "meta" / P.BACKUP_SUBDIR).glob("metadata.pre-migration-v2-*.sqlite3"))
         assert [f.name for f in files] == [backup.name]
         con = sqlite3.connect(backup)
         try:
             assert con.execute("SELECT COUNT(*) FROM datasets").fetchone()[0] == 1
-            assert current_version(con) == 1  # the copy is the pre-migration state
+            assert current_version(con) == 2  # the copy is the pre-migration state
         finally:
             con.close()
 
@@ -449,13 +456,13 @@ class TestMigrations:
 
     def test_migration_is_atomic_on_failure(self, tmp_path):
         db = tmp_path / "metadata.sqlite3"
-        bad = Migration(2, "m_bad", "CREATE TABLE good_table(x); CREATE TABLE good_table(y);")
+        bad = Migration(3, "m_bad", "CREATE TABLE good_table(x); CREATE TABLE good_table(y);")
         con = sqlite3.connect(db)
         try:
             apply_migrations(con, migrations=MIGRATIONS)
             with pytest.raises(MigrationError):
                 apply_migrations(con, migrations=MIGRATIONS + (bad,))
-            assert current_version(con) == 1
+            assert current_version(con) == 2
             names = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             assert "good_table" not in names  # rolled back with the failed statement
         finally:
@@ -490,7 +497,9 @@ class TestMigrations:
             stamps = con.execute("SELECT version, name FROM schema_migrations").fetchall()
         finally:
             con.close()
-        assert stamps == [(1, "m3t1_initial_metadata")]  # stamped exactly once
+        assert stamps == [
+            (1, "m3t1_initial_metadata"), (2, "m3t3_column_metric_values")
+        ]  # each stamped exactly once
 
     def test_gap_in_chain_is_refused(self, tmp_path):
         con = sqlite3.connect(tmp_path / "gap.sqlite3")
@@ -651,7 +660,8 @@ class TestSaveRunSynthetic:
         run_id = store.save_run(bundle)
         counts = store.counts(run_id)
         assert counts == {
-            "dataset_profiles": 1, "run_columns": 2, "quality_checks": 2, "findings": 1,
+            "dataset_profiles": 1, "run_columns": 2, "column_metric_values": 1,
+            "quality_checks": 2, "findings": 1,
             "recommendations": 1, "run_errors": 1, "run_warnings": 0, "run_artifacts": 1,
         }
 
@@ -987,3 +997,162 @@ class TestPersistedEngineRun:
         st.close()
         with pytest.raises(MetadataStoreError):
             st.list_runs()
+
+
+# ===========================================================================
+# 6. Normalised (run_id, column, metric) rows — M3-T3, cheap run-history diffs
+# ===========================================================================
+
+
+def _metric_columns(mean_value=18450, missing_rate=0.15):
+    """Two §3.2 columns that carry every promoted-metric shape: an exact stat,
+    an approximate stat (algorithm), a sampled metric (seed), a ``not_computed``
+    metric (absent value + reason) and a distribution metric — plus a second
+    column whose only metric is a uniqueness distinct-count."""
+    return [
+        ColumnProfile(
+            schema_version=SCHEMA_VERSION, column="deal_value", ordinal=0,
+            physical_type="VARCHAR", logical_type="numeric_currency", semantic_type="measure",
+            missingness=Missingness(
+                null_count=3000, blank_count=0, sentinel_count=0,
+                missing_rate=MetricValue(
+                    value=missing_rate, denominator=20000,
+                    provenance=Provenance(
+                        method="sampled",
+                        method_params={
+                            "sampling_strategy": "reservoir",
+                            "sample_size": 100000,
+                            "seed": 20261024,
+                        },
+                    ),
+                ),
+            ),
+            stats=NumericStats(
+                valid_count=17000,
+                mean=MetricValue(value=mean_value, provenance=Provenance(method="exact")),
+                p95=MetricValue(
+                    value=82000,
+                    provenance=Provenance(
+                        method="approximate",
+                        method_params={"algorithm": "duckdb_approx_quantile", "confidence": 0.95},
+                    ),
+                ),
+                median=MetricValue(
+                    provenance=Provenance(method="not_computed", reason="column_type_unsupported")
+                ),
+            ),
+            distribution=Distribution(
+                skewness=MetricValue(value=4.2, provenance=Provenance(method="exact"))
+            ),
+        ),
+        ColumnProfile(
+            schema_version=SCHEMA_VERSION, column="deal_id", ordinal=1,
+            physical_type="VARCHAR", logical_type="identifier", semantic_type="identifier",
+            uniqueness=Uniqueness(
+                distinct_count=MetricValue(
+                    value=188,
+                    provenance=Provenance(
+                        method="approximate",
+                        method_params={"algorithm": "duckdb_count_distinct_hll"},
+                    ),
+                ),
+                is_unique_candidate=False,
+            ),
+        ),
+    ]
+
+
+def _metric_bundle(run_id="run-syn", dataset_id="ds_syn", *, started_at="2026-10-24T09:00:00Z", **col_kw):
+    return _bundle(
+        run=_run_doc(
+            run_id=run_id, dataset_id=dataset_id,
+            timing=RunTiming(started_at=started_at, finished_at=started_at, duration_ms=1000),
+        ),
+        profile=_profile_doc(run_id=run_id, column_count=2, columns=_metric_columns(**col_kw)),
+    )
+
+
+class TestColumnMetricValues:
+    def test_every_metricvalue_leaf_is_promoted(self, store):
+        run_id = store.save_run(_metric_bundle())
+        rows = store.column_metrics(run_id)
+        # deal_value: missingness.missing_rate + stats.mean/p95/median + distribution.skewness
+        # deal_id:    uniqueness.distinct_count  ==  6 addressed cells
+        assert {(r["column_name"], r["metric_name"]) for r in rows} == {
+            ("deal_value", "missingness.missing_rate"),
+            ("deal_value", "stats.mean"),
+            ("deal_value", "stats.p95"),
+            ("deal_value", "stats.median"),
+            ("deal_value", "distribution.skewness"),
+            ("deal_id", "uniqueness.distinct_count"),
+        }
+        assert store.counts(run_id)["column_metric_values"] == len(_iter_column_metrics(_metric_columns()[0]) + _iter_column_metrics(_metric_columns()[1])) == 6
+
+    def test_reads_a_single_cell_without_the_artifact(self, store):
+        run_id = store.save_run(_metric_bundle())
+        mv = store.metric_value(run_id, "deal_value", "stats.mean")
+        assert mv is not None and mv.value == 18450
+        assert mv.provenance.method == "exact"
+
+    def test_absent_cell_reads_back_as_none_not_zero(self, store):
+        run_id = store.save_run(_metric_bundle())
+        # deal_id has no stats block at all — a diff must see "no cell", not a 0
+        assert store.metric_value(run_id, "deal_id", "stats.mean") is None
+
+    def test_sampled_seed_and_denominator_survive_the_round_trip(self, store):
+        run_id = store.save_run(_metric_bundle())
+        src = _metric_columns()[0].missingness.missing_rate
+        mv = store.metric_value(run_id, "deal_value", "missingness.missing_rate")
+        assert mv.provenance.method == "sampled"
+        assert mv.provenance.method_params["seed"] == 20261024  # ADR-015 reproducibility lock
+        assert mv.denominator == 20000
+        assert mv.model_dump(mode="json") == src.model_dump(mode="json")
+
+    def test_not_computed_keeps_value_absent_not_null(self, store):
+        run_id = store.save_run(_metric_bundle())
+        mv = store.metric_value(run_id, "deal_value", "stats.median")
+        assert mv.provenance.method == "not_computed"
+        assert mv.provenance.reason == "column_type_unsupported"
+        # §1: not_computed must NOT carry a value (a null would masquerade as data)
+        assert "value" not in mv.model_fields_set
+        # and the source it projects from agrees
+        assert mv.model_dump(mode="json") == _metric_columns()[0].stats.median.model_dump(mode="json")
+
+    def test_all_promoted_cells_equal_their_artifact_source(self, store):
+        bundle = _metric_bundle()
+        run_id = store.save_run(bundle)
+        for column in bundle.profile.columns:
+            for name, src in _iter_column_metrics(column):
+                mv = store.metric_value(run_id, column.column, name)
+                assert mv is not None and mv.model_dump(mode="json") == src.model_dump(mode="json")
+
+    def test_metric_history_returns_newest_first_for_diffing(self, store):
+        store.save_run(_metric_bundle(run_id="run-old", started_at="2026-10-01T00:00:00Z", mean_value=17000))
+        store.save_run(_metric_bundle(run_id="run-new", started_at="2026-10-02T00:00:00Z", mean_value=19000))
+        hist = store.metric_history("ds_syn", "deal_value", "stats.mean")
+        assert [h["run_id"] for h in hist] == ["run-new", "run-old"]
+        assert [json.loads(h["value_json"]) for h in hist] == [19000, 17000]
+        assert all(h["method"] == "exact" for h in hist)
+        assert [h["run_id"] for h in store.metric_history("ds_syn", "deal_value", "stats.mean", limit=1)] == ["run-new"]
+
+    def test_metric_rows_cascade_when_the_run_is_deleted(self, store):
+        run_id = store.save_run(_metric_bundle())
+        assert store.counts(run_id)["column_metric_values"] == 6
+        with store._write_tx() as conn:
+            conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
+        assert store._query(
+            "SELECT 1 FROM column_metric_values WHERE run_id = ?", (run_id,)
+        ) == []
+
+    def test_real_engine_run_promotes_its_column_metrics(self, store, sales_bundle):
+        bundle, cfg = sales_bundle
+        run_id = store.save_run(bundle, config=cfg)
+        total = 0
+        for column in bundle.profile.columns:
+            for name, src in _iter_column_metrics(column):
+                total += 1
+                mv = store.metric_value(run_id, column.column, name)
+                assert mv is not None
+                assert mv.model_dump(mode="json") == src.model_dump(mode="json")
+        assert total > 0  # the real run actually carries promotable metrics
+        assert store.counts(run_id)["column_metric_values"] == total

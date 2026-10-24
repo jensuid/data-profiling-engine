@@ -392,10 +392,59 @@ CREATE TABLE recommendation_do_not (
 );
 """
 
+# ---------------------------------------------------------------------------
+# v2 — M3-T3 normalised (run_id, column_name, metric_name) value rows
+# ---------------------------------------------------------------------------
+#
+# ADR-008 keeps the *full* ColumnProfile document (histograms, category lists,
+# every metric body) in the artifact FILE store; v1 deliberately stored only
+# identity/type in ``run_columns`` and the §3.1 scalars in ``dataset_profiles``.
+# That leaves run-history *diffing* (M6) with no cheap way to read one numeric
+# cell: comparing `deal_value`'s p95 across two runs would otherwise mean
+# parsing and walking the whole ``profile.json`` artifact every time.
+#
+# This table is the missing index, not a second source of truth: it promotes
+# each CONTRACTS §3.2 ``MetricValue`` leaf (value + provenance pair) to one
+# addressed row keyed ``(run_id, column_name, metric_name)``, carrying the
+# ADR-015 ``method`` + ``method_params`` (+ seed lives inside method_params) so
+# a diff reads a single cell with a ``SELECT``. The artifact stays authoritative
+# for anything not promoted here (histogram bins, category arrays, the
+# physical/logical/semantic type split — all still in v1/§3.1/artifact). It is
+# purely additive: v1 is never edited (an existing user file carries its stamp).
+#
+# ``metric_name`` is the §3.2 path of the metric within its column
+# (``missingness.missing_rate``, ``uniqueness.distinct_count``, ``stats.p95``,
+# ``distribution.skewness`` …) — the same dotted identity the Finding ``metric_ref``
+# already uses, so a diff cell and an evidence citation describe one thing.
+#
+# Absence vs null is kept exactly as the §1 convention demands (mirrors the
+# ``quality_checks`` observed-value columns): ``value_json`` NULL means the
+# ``value`` key was absent (the ``not_computed`` case), the text ``"null"`` means
+# an explicit null; ``reason`` carries why a value was not computed.
+_V2_SQL = """
+CREATE TABLE column_metric_values (
+    run_id               TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+    column_name          TEXT NOT NULL,
+    metric_name          TEXT NOT NULL,                -- §3.2 path within the column
+    value_json           TEXT,                         -- JSON scalar; NULL = key absent; "null" = explicit null
+    method               TEXT NOT NULL,                -- ADR-015: exact|approximate|sampled|not_computed
+    method_params_json   TEXT,                         -- ADR-015: sampled keeps its seed here
+    reason               TEXT,                         -- not_computed reason
+    denominator          INTEGER,                      -- §1 optional MetricValue denominator
+    PRIMARY KEY (run_id, column_name, metric_name)
+);
+
+-- Diff reads one metric across the two runs being compared, then across the
+-- column inventory of a run; these two access paths are the M6 screen.
+CREATE INDEX idx_metric_values_run_metric ON column_metric_values (run_id, metric_name);
+CREATE INDEX idx_metric_values_column_metric ON column_metric_values (column_name, metric_name);
+"""
+
 #: The released migration chain. **Append-only** — never edit an entry that
 #: has shipped: existing user files carry its stamp.
 MIGRATIONS: Tuple[Migration, ...] = (
     Migration(version=1, name="m3t1_initial_metadata", sql=_V1_SQL),
+    Migration(version=2, name="m3t3_column_metric_values", sql=_V2_SQL),
 )
 
 #: Highest DDL version this build knows how to produce.

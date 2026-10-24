@@ -17,23 +17,105 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 Milestone : M3 — Persistence (GATE M1 CONTRACTS FREEZE PASSED 2026-10-24;
           GATE M2 engine spine PASSED 2026-10-24 — profiler-cli end-to-end)
 Task      : none in progress — M3-T1 done (SQLite metadata schema + migration
-          mechanism + ProfileBundle persistence). M3 continues with M3-T2.
-GATE M3   : NOT yet accepted. Needs M3-T2 (artifact file store: layout,
-          lifecycle, cleanup) + M3-T3 (normalized (run_id,column,metric)
-          rows). M3-T1 landed the metadata half of ADR-008 only.
-NEXT      : M3-T2 — Artifact store: layout, lifecycle policy, cleanup.
-          *Spec: SECURITY §2 (+ ADR-008: "large results live in the artifact
-          store as files, referenced by rows").* Open
-          docs/SECURITY_PACKAGING.md §2 (cache/temp/export locations, retention
-          + uninstall data policy) and build the FILE side under
-          `<data_root>/artifacts/` — `storage/paths.artifacts_dir()` already
-          resolves and guards it (bundle-separation + private dir are reusable,
-          do not re-implement). Metadata side is DONE: `run_artifacts` rows +
-          `MetadataStore.list_artifacts()/artifact_ref()` are the join point —
-          reference paths must stay store-relative, do not restructure them.
-          No new metric; no UI; no HTTP (ADR-005); CSV+Parquet only (ADR-011).
+          mechanism + ProfileBundle persistence); M3-T2 done (artifact FILE
+          store: layout, lifecycle policy, cleanup); M3-T3 done (normalized
+          (run_id,column,metric) value rows + diff reads). M3 is complete.
+GATE M3   : MET (pending explicit review) — ADR-008 fully landed: T1 metadata
+          half + T2 FILE half + T3 the normalized (run_id,column,metric) rows
+          that close the cheap-diff requirement. 642/642 pytest, tsc clean.
+NEXT      : M4-T1 — JSON result writer from contracts (golden snapshots).
+          *Spec: ENGINE §10; TESTING §2; BLUEPRINT Phase 1 gate (1M-row
+          contract-valid result set).* NOTE: M2-T11 already landed a
+          deterministic JSON writer (`reporting/__init__.py::result_document/
+          write_profile_json`, sort_keys byte-stable) + the CLI `--out`; M4-T1
+          is the FORMAL golden-snapshot harness over that writer (TESTING §2
+          fixtures), NOT a new writer — read `reporting/__init__.py` and
+          `tests/test_cli_rollup.py` first so you extend rather than duplicate.
+          Open docs/ENGINE_SPEC.md §10 + docs/TESTING_BENCHMARKS.md §2, then add
+          checked-in golden JSON files + a test that diffs emitted documents
+          against them. No new metric; no UI; no HTTP (ADR-005); CSV+Parquet
+          only (ADR-011).
           Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
-Blocked by: none — M3-T1 accepted by this session's suite (607/607, tsc clean).
+Blocked by: none — M3 accepted by this session's suite (642/642, tsc clean).
+Session notes: M3-T3 landed the normalized metric-value half of ADR-008. New
+               forward migration v2 (`MIGRATIONS` now ends
+               `Migration(2,"m3t3_column_metric_values")`; `TARGET_VERSION`
+               auto=2; v1 DDL UNTOUCHED/frozen) creates `column_metric_values`
+               keyed `(run_id, column_name, metric_name)` — one row per §3.2
+               `MetricValue` leaf, carrying ADR-015 `method`+`method_params`
+               (sampled seed lives inside method_params)+`reason`+`denominator`
+               and a `value_json` that keeps absent-vs-null (§1) via the same
+               `_field_json` the checks path uses. FK→runs ON DELETE CASCADE; two
+               indexes `(run_id,metric_name)` + `(column_name,metric_name)` are
+               the M6 diff access paths. `_iter_column_metrics(ColumnProfile)`
+               (metadata_store.py) ENUMERATES the promoted leaves explicitly
+               (missingness.missing_rate, uniqueness.distinct_count,
+               stats.{min,max,mean,median,p25,p75,p95,p99,stddev},
+               distribution.skewness) — a generic walk was rejected so a
+               provenance-bearing non-scalar (histogram/outlier block) can never
+               leak into a diff cell. `save_run` now calls
+               `_insert_column_metrics` in the SAME one transaction. Reads:
+               `column_metrics(run_id, column_name=, metric_name=)`,
+               `metric_value(run_id, column, metric)→Optional[MetricValue]` (the
+               single-cell read that avoids parsing the artifact; `_row_to_metric_value`
+               reuses the checks reconstruction), and `metric_history(dataset_id,
+               column, metric, limit=)` joining runs newest-first for M6. The
+               artifact FILE stays authoritative for anything not promoted
+               (histogram bins, category arrays, type split) — these rows are a
+               projection/index, never a second source of truth. `counts()` now
+               includes `column_metric_values`. NO new metric; no contract shape
+               change; no UI; no HTTP (ADR-005). Migrated test suite: v1-only
+               assertions bumped to v2 (fresh-db target/`applied`/stamps,
+               appended-migration & atomic-failure fixtures shifted to version
+               3, pre-migration backup now `v2`), `counts` dict + tables set
+               updated. +`tests/test_storage_metadata.py` (55→64: promotion set,
+               single-cell read, absent→None (not 0), sampled seed + denominator
+               survive, not_computed value stays ABSENT (not null) + reason,
+               every promoted cell == its artifact source, metric_history
+               newest-first + limit, FK cascade, and a REAL `profile_dataset` run
+               round-tripped cell-by-cell). 642/642 pytest green, tsc clean
+               2026-10-24.
+Session notes: M3-T2 landed the FILE half of ADR-008 in a new
+               `storage/artifact_store.py` (was an empty stub; joined via
+               `storage/__init__.py`). Layout: `<data_root>/artifacts/<run_id>/
+               <file>`, `ref_path` STORE-RELATIVE (`artifacts/<run_id>/<file>`,
+               `STORE_PREFIX`=paths.ARTIFACT_SUBDIR so the two layers cannot
+               drift) — matches CONTRACTS §2 `result_refs` example
+               `artifacts/DP-0001/profile.json` and the v1 migration comment;
+               `run_artifacts` rows unchanged. `ArtifactStore(data_root=,
+               staging_root=, cache_root=)` resolves via paths (reuses
+               `resolve_data_root`/`artifacts_dir`/`ensure_private_dir` 0o700 +
+               app-bundle refusal — NOT re-implemented). API: `ref_path/
+               resolve/write_text|write_bytes|write_document(deterministic
+               sort_keys JSON)/read_*/exists/open_path` (the `artifact.open`
+               entry). Safety: `resolve()` confines every ref inside the store
+               (realpath check defeats `..`/abs/symlink escape) → SOURCE_NOT_ALLOWED;
+               bare-filename validation on run_id+filename; all IO wrapped in
+               `ArtifactStoreError(code=ARTIFACT_WRITE_FAILED)` so no raw
+               OSError reaches the bridge. Lifecycle: `RetentionPolicy`
+               {RESULT,EXPORT,STAGING,REBUILDABLE} + `KIND_RETENTION`/`retention_for`
+               (unknown→RESULT, conservative); run store holds only RESULT/EXPORT
+               (survive upgrade, explicit-delete); staging lives in temp_root via
+               `stage()` contextmanager that rmtree's on exit (crash-safe,
+               SECURITY §4); cache is a separate rebuildable root. Cleanup:
+               `delete_run_artifacts(rows)` (explicit; idempotent, prunes empty
+               run dir, skips escaping refs), `delete_dataset_artifacts(store,
+               dataset_id)` (§4 "delete this dataset's history and artifacts"),
+               `sweep_orphans(store)` (deletes files under `<run_id>/` dirs with
+               NO `run_artifacts` row — the ADR-006/§6.1 crashed-run/partial-
+               artifact net; never touches a referenced file), `clear_staging/`
+               `clear_cache`. New read-only join helper `MetadataStore.
+               all_artifact_refs()` (no restructure of ref_path) is the sweep's
+               authority for live files. Deliberately OUT: rows are still the
+               metadata store's to delete (M5 wires the user action to remove
+               BOTH rows and files); no export writes (M4). +`tests/
+               test_storage_artifact_store.py` (26: layout/filenames, store-
+               relative+traversal+abs confinement, 0o700 private dir, determinism,
+               staging cleanup, retention map, delete idempotent+skip-escape,
+               clear_staging/cache, and 4 metadata-join tests over a REAL
+               `profile_dataset` run: rows→files resolve, orphan sweep keeps the
+               row-referenced file, dataset delete, bundle `result_refs` path).
+               633/633 pytest green, tsc clean 2026-10-24.
 Session notes: M3-T1 landed the metadata half of ADR-008 in a new
                `storage/` package (was an empty stub). `storage/paths.py` =
                SECURITY §2 directory resolution — `default_data_root/`
@@ -829,8 +911,8 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 ## M3 — Persistence
 
 - [x] **M3-T1** SQLite metadata schema (runs/jobs/registry/checks/findings refs) + migrations. *Spec: ADR-008; SECURITY §2, §6.5.* ✅ New `storage/` package: `paths.py` (OS-standard user-data/cache/temp resolution + `DPE_DATA_DIR`/`DPE_CACHE_DIR` overrides + app-bundle containment guard + 0o700 private dirs — SECURITY §2/§6.5), `migrations.py` (gapless forward-only `Migration` chain at `TARGET_VERSION=1`, `schema_migrations` + `PRAGMA user_version`, pre-migration online-backup `metadata.pre-migration-v{n}-{ts}Z.sqlite3`, downgrade + unversioned-db refusal, one atomic `BEGIN IMMEDIATE` per migration), `metadata_store.py` (`MetadataStore.save_run()` persists an M2-T11 `ProfileBundle` — §2 run, §3.1 profile, column inventory, §4.1 checks, §4.2 findings (ADR-016 fingerprint indexed, not unique), §4.3 recommendations, `error_log`/warnings, artifact references — in ONE transaction; full typed readers rebuild schema-valid objects identical to the input; registry/config-version/job APIs ready for M5; run-history + fingerprint queries ready for M6). WAL + `foreign_keys=ON` + `busy_timeout` + `isolation_level=None` deliver ADR-008 concurrent-read-during-run and crash-atomicity. 19 v1 tables, blobs stay in the artifact store (referenced by `run_artifacts`). NEW §8 code `METADATA_WRITE_FAILED`. NO artifact file lifecycle (M3-T2), NO normalized metric rows (M3-T3), no contract change, no new metric. +`tests/test_storage_metadata.py` (55). 607/607 pytest green, tsc clean 2026-10-24.
-- [ ] **M3-T2** Artifact store: layout, lifecycle policy, cleanup. *Spec: SECURITY §2.*
-- [ ] **M3-T3** Normalized metric persistence `(run_id, column, metric)` for cheap diffs. *Spec: ADR-008; ENGINE §9.*
+- [x] **M3-T2** Artifact store: layout, lifecycle policy, cleanup. *Spec: SECURITY §2.* ✅ `storage/artifact_store.py` (store-relative `artifacts/<run_id>/<file>` layout, `resolve()` confinement → SOURCE_NOT_ALLOWED, deterministic-JSON `write_document`, `RetentionPolicy`/`KIND_RETENTION`, `delete_run_artifacts`/`delete_dataset_artifacts`/`sweep_orphans`/`clear_staging`/`clear_cache`, staging `stage()` contextmanager; all IO wrapped in `ArtifactStoreError`). +`tests/test_storage_artifact_store.py` (26). See session note above for full detail.
+- [x] **M3-T3** Normalized metric persistence `(run_id, column, metric)` for cheap diffs. *Spec: ADR-008; ENGINE §9.* ✅ Forward migration v2 `column_metric_values` (keyed `(run_id, column_name, metric_name)`, one row per §3.2 `MetricValue` leaf, ADR-015 `method`+`method_params`(seed)+`reason`+`denominator`, absent-vs-null `value_json`, FK cascade, two diff indexes; v1 DDL frozen). `MetadataStore._insert_column_metrics` (in the save_run tx) + reads `column_metrics`/`metric_value`/`metric_history`; `_iter_column_metrics` enumerates the promoted leaves. Artifact FILE stays authoritative (rows are the cheap-diff index). +`tests/test_storage_metadata.py` (55→64) + v1→v2 migration-test bumps. See session note above. **→ closes GATE M3 (M3 complete).**
 
 ## M4 — Reporting Layer
 

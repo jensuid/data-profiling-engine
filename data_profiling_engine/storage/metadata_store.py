@@ -75,6 +75,7 @@ from data_profiling_engine.schemas.models import (
     CheckError,
     CheckEvidence,
     CheckThreshold,
+    ColumnProfile,
     DatasetConfig,
     Finding,
     FindingFact,
@@ -248,6 +249,39 @@ def _validate(filename: str, document: Any, *, context: str) -> None:
 
 def _rows(cursor: sqlite3.Cursor) -> List[Dict[str, Any]]:
     return [dict(zip((d[0] for d in cursor.description), row)) for row in cursor.fetchall()]
+
+
+#: The CONTRACTS §3.2 ``MetricValue`` leaves of a ColumnProfile, in a fixed
+#: (deterministic) order, as ``(metric_name, getter)`` pairs. ``metric_name`` is
+#: the §3.2 path so a normalised row addresses exactly the cell a diff and a
+#: Finding ``metric_ref`` both name. Only ``value``+provenance pairs are
+#: promoted — histogram bins, category arrays and the plain int counters stay
+#: in the artifact (ADR-008: SQLite holds metadata, not result blobs).
+_STATS_METRIC_FIELDS = (
+    "min", "max", "mean", "median", "p25", "p75", "p95", "p99", "stddev",
+)
+
+
+def _iter_column_metrics(column: ColumnProfile) -> List[Tuple[str, MetricValue]]:
+    """Flatten one ColumnProfile to ``(metric_name, MetricValue)`` pairs.
+
+    Enumerated explicitly against the model rather than by generic recursion so
+    a provenance-bearing non-scalar (histogram, outlier block) is never
+    mistaken for a metric cell, and so an added §3.2 metric is an intentional
+    one-line change here rather than an accidental row appearing in a diff."""
+    out: List[Tuple[str, MetricValue]] = []
+    if column.missingness is not None:
+        out.append(("missingness.missing_rate", column.missingness.missing_rate))
+    if column.uniqueness is not None:
+        out.append(("uniqueness.distinct_count", column.uniqueness.distinct_count))
+    if column.stats is not None:
+        for name in _STATS_METRIC_FIELDS:
+            value = getattr(column.stats, name)
+            if value is not None:
+                out.append((f"stats.{name}", value))
+    if column.distribution is not None and column.distribution.skewness is not None:
+        out.append(("distribution.skewness", column.distribution.skewness))
+    return out
 
 
 def config_document_hash(config: DatasetConfig) -> str:
@@ -775,6 +809,7 @@ class MetadataStore:
             )
             self._insert_profile_summary(conn, bundle)
             self._insert_columns(conn, bundle)
+            self._insert_column_metrics(conn, bundle)
             self._insert_checks(conn, bundle)
             self._insert_findings(conn, bundle)
             self._insert_recommendations(conn, bundle)
@@ -835,6 +870,40 @@ class MetadataStore:
                 )
                 for column in bundle.profile.columns
             ],
+        )
+
+    @staticmethod
+    def _insert_column_metrics(conn: sqlite3.Connection, bundle: "ProfileBundle") -> None:
+        """Promote each §3.2 MetricValue leaf to one addressed row (M3-T3).
+
+        The full column document still lives in the ``profile_json`` artifact
+        (ADR-008); these rows are the cheap-diff index, so a value here is a
+        *projection* of the artifact, never an independent edit. Provenance is
+        stored beside every value exactly as §1 requires — an absent ``value``
+        (the ``not_computed`` case) stays absent rather than becoming a silent
+        null, and a sampled metric keeps its seed inside ``method_params``."""
+        rows = [
+            (
+                bundle.profile.run_id,
+                column.column,
+                metric_name,
+                _field_json(metric, "value"),
+                metric.provenance.method,
+                _field_json(metric.provenance, "method_params"),
+                metric.provenance.reason,
+                metric.denominator,
+            )
+            for column in bundle.profile.columns
+            for metric_name, metric in _iter_column_metrics(column)
+        ]
+        conn.executemany(
+            """
+            INSERT INTO column_metric_values (run_id, column_name, metric_name,
+                                              value_json, method, method_params_json,
+                                              reason, denominator)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
         )
 
     @staticmethod
@@ -1054,6 +1123,18 @@ class MetadataStore:
         )
         return row["ref_path"] if row else None
 
+    def all_artifact_refs(self) -> List[Dict[str, Any]]:
+        """Every artifact reference in the store, across all runs.
+
+        Read-only join point for the artifact **file** store's orphan sweep
+        (M3-T2): the row set is the authority for which files are live, so a
+        file with no row here is one a crashed/aborted run left behind. Kept
+        deliberately narrow (no blob, no restructure of ``ref_path``) — the
+        reference shape is still ``store-relative`` exactly as written."""
+        return self._query(
+            "SELECT run_id, kind, ref_path FROM run_artifacts ORDER BY run_id, kind, ref_path"
+        )
+
     def load_profiling_run(self, run_id: str) -> Optional[ProfilingRun]:
         """Rebuild the §2 record from its rows and re-validate it: what was
         written is what comes back, with no field silently dropped."""
@@ -1162,6 +1243,92 @@ class MetadataStore:
             "FROM run_columns WHERE run_id = ? ORDER BY ordinal",
             (run_id,),
         )
+
+    # -- normalised metric values (M3-T3, cheap run-history diffs) ----------
+
+    @staticmethod
+    def _row_to_metric_value(row: Dict[str, Any]) -> MetricValue:
+        """Rebuild one §3.2 ``MetricValue`` from its normalised row, reusing the
+        exact provenance/absence logic the check-observation reader uses so a
+        diff cell round-trips identically to the artifact it projects: an absent
+        ``value`` stays absent (``not_computed``), an explicit null survives."""
+        provenance = _build_model(
+            Provenance,
+            method=row["method"],
+            method_params=_load_json(row["method_params_json"]),
+            reason=row["reason"],
+        )
+        kwargs: Dict[str, Any] = {"provenance": provenance}
+        if row["denominator"] is not None:
+            kwargs["denominator"] = row["denominator"]
+        _apply_json_field(kwargs, row["value_json"], "value")
+        return MetricValue.model_validate(kwargs)
+
+    def column_metrics(
+        self,
+        run_id: str,
+        *,
+        column_name: Optional[str] = None,
+        metric_name: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Normalised metric rows for a run, optionally narrowed to one column
+        and/or one §3.2 metric. The full-inventory read a diff screen pages
+        through; values are returned as stored (JSON-typed) columns."""
+        sql = (
+            "SELECT column_name, metric_name, value_json, method, method_params_json, "
+            "       reason, denominator "
+            "FROM column_metric_values WHERE run_id = ?"
+        )
+        params: List[Any] = [run_id]
+        if column_name is not None:
+            sql += " AND column_name = ?"
+            params.append(column_name)
+        if metric_name is not None:
+            sql += " AND metric_name = ?"
+            params.append(metric_name)
+        sql += " ORDER BY column_name, metric_name"
+        return self._query(sql, params)
+
+    def metric_value(
+        self, run_id: str, column_name: str, metric_name: str
+    ) -> Optional[MetricValue]:
+        """Read a single numeric cell without opening the artifact — the point
+        of M3-T3. Returns the reconstructed ``MetricValue`` (value + ADR-015
+        provenance), or ``None`` when that cell was never reported for the run
+        (absent, not a zero or a null)."""
+        row = self._query_one(
+            "SELECT value_json, method, method_params_json, reason, denominator "
+            "FROM column_metric_values WHERE run_id = ? AND column_name = ? "
+            "AND metric_name = ?",
+            (run_id, column_name, metric_name),
+        )
+        return self._row_to_metric_value(row) if row is not None else None
+
+    def metric_history(
+        self,
+        dataset_id: str,
+        column_name: str,
+        metric_name: str,
+        *,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """One metric cell across every run of a dataset, newest first — the
+        cross-run read M6's diff/baseline screen is built on. Joining through
+        ``runs`` keeps it to SUCCEEDED-or-other terminal history in time order
+        and carries the provenance so a method change is visible as *not* a
+        data change (ADR-015 consequence)."""
+        sql = (
+            "SELECT m.run_id, r.started_at, r.status, r.config_hash, r.engine_version, "
+            "       m.value_json, m.method, m.method_params_json, m.reason, m.denominator "
+            "FROM column_metric_values m JOIN runs r ON r.run_id = m.run_id "
+            "WHERE r.dataset_id = ? AND m.column_name = ? AND m.metric_name = ? "
+            "ORDER BY r.started_at DESC, m.run_id"
+        )
+        params: List[Any] = [dataset_id, column_name, metric_name]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        return self._query(sql, params)
 
     def list_checks(
         self,
@@ -1483,6 +1650,7 @@ class MetadataStore:
         for table in (
             "dataset_profiles",
             "run_columns",
+            "column_metric_values",
             "quality_checks",
             "findings",
             "recommendations",
