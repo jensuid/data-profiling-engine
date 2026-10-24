@@ -3,6 +3,9 @@
 M1-T1 scope: Provenance, ProfilingRun, DatasetProfile, ColumnProfile.
 M1-T2 adds QualityCheckResult / Finding / Recommendation / FindingWorkflow;
 M1-T3 adds the dataset-config schema (CONTRACTS §9, validated before any run);
+M1-T4 adds ``models.py`` — Pydantic domain models hand-aligned to these files
+(import them as ``data_profiling_engine.schemas.models``; the JSON Schemas stay
+the source of truth and ``tests/test_models.py`` round-trips against them);
 M1-T6 adds bridge/job envelopes.
 
 Every schema file in this directory follows ``<name>.schema.json`` and carries

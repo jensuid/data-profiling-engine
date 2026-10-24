@@ -16,21 +16,23 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 ```text
 Milestone : M1 — Contracts Freeze   (GATE M0 PASSED 2026-10-24: M0-T1..T5
           green on BOTH OS; Win smoke = smoke_win.txt at repo root)
-Task      : none in progress — M1-T3 done, start M1-T4 next.
-NEXT      : M1-T4 — Pydantic models generated/hand-aligned to the 9 frozen
-            schemas + round-trip tests. Open docs/CONTRACTS.md §1 and skim
-            schemas/*.schema.json (they are the source of truth now). New
-            module under data_profiling_engine/schemas/ (e.g. `models.py`);
-            tests in a new tests/test_models.py (round-trip: example dicts in
-            test_schemas.py → model → JSON → validate()). Then M1-T5..T6 per list.
+Task      : none in progress — M1-T4 done, start M1-T5 next.
+NEXT      : M1-T5 — TypeScript types mirroring the contracts + a parity test
+            against the JSON Schemas. Open docs/CONTRACTS.md §1 (parity rule)
+            + AGENTS §3; mirror `data_profiling_engine/schemas/models.py`
+            field-for-field into frontend/src (e.g. `types/contracts.ts`), then
+            assert parity (property/enum sets vs `schemas/*.schema.json`) —
+            extend tests/test_models.py-style parity checks or a node-side
+            script; keep HashRouter/build green (`npm --prefix frontend run build`).
+            Then M1-T6 (error-code registry + bridge/job envelopes).
 Blocked by: none.
-Session notes: M1-T3 delivered dataset_config.schema.json (CONTRACTS §9:
-               additionalProperties=false root+rule, closed ENGINE §5.1 rule
-               catalog, dimension/severity required w/ §4.1 enums, sampling
-               enabled⇒strategy+size+seed, condition⇒conditional_not_null,
-               value|threshold⇒threshold rules; $defs/rule extractable) +
-               REQUIRED_SCHEMAS entry + 24 tests (verbatim §9 YAML exemplar
-               transcribed to dict validates). 113/113 pytest green.
+Session notes: M1-T4 delivered `schemas/models.py` (17 closed enums +
+               ContractModel base + all objects for the 9 frozen schemas) and
+               tests/test_models.py — 49 tests: dict→model→dump→`schemas.validate`
+               round-trip for all 9 schemas, model-side conditional negatives
+               (§1.1/§2/§4.1/§4.3/§9), field-name + required-set + enum parity
+               vs canonical schemas, strict-vs-open additionalProperties
+               behaviour. 162/162 pytest green 2026-10-24.
                Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
 ```
 
@@ -87,6 +89,17 @@ Session notes: M1-T3 delivered dataset_config.schema.json (CONTRACTS §9:
   unlike persisted objects' string `schema_version` (`^\d+\.\d+$`); and config
   sampling uses key `size` while ProfilingRun.sampling uses `sample_size` —
   don't "align" them without a doc change.
+- Pydantic v2 (M1-T4): a **single-underscore class attr becomes a
+  ModelPrivateAttr**, so model-level markers must be non-underscore `ClassVar`s
+  (we use `NULLABLE_FIELDS` / `NULLABLE_DICT_FIELDS`), never `_NULLABLE`.
+- Pydantic emits a default-valued `Optional` field as JSON `null`, which our
+  strict schemas reject ("never a silent null"). `ContractModel` overrides
+  `model_dump`/`model_dump_json`: untouched-None ⇒ key omitted, explicit-None ⇒
+  null only for `NULLABLE_FIELDS`; a `mode="before"` validator rejects explicit
+  null on non-nullable declared fields. Open models pass extra keys through.
+- Parity harness lives in tests/test_models.py: it compares canonical
+  `properties`/`required`/`enum` against `model_fields` per root schema — extend
+  it whenever a schema file is added (M1-T6).
 ```
 
 ## M0 — Desktop Spike (gate: BLUEPRINT §5 Phase 0; acceptance: TESTING §5.2)
@@ -103,7 +116,7 @@ Session notes: M1-T3 delivered dataset_config.schema.json (CONTRACTS §9:
 - [x] **M1-T1** JSON Schemas in `schemas/`: Provenance, ProfilingRun, DatasetProfile, ColumnProfile. *Spec: CONTRACTS §1–3.* ✅ 4 Draft-2020-12 files under `data_profiling_engine/schemas/` + loader (`schemas/__init__.py`, `referencing.Registry`, `validator_for`/`validate`) + 27-test pack (`tests/test_schemas.py` covering §1.1 method rules, §2 terminal-status/sampling seed, §3.1 columns array, §3.2 unit.status/semantic_type enums, not_computed⇒no-value). 62/62 pytest green 2026-10-24.
 - [x] **M1-T2** JSON Schemas: QualityCheckResult, Finding(+fingerprint), Recommendation, FindingWorkflow. *Spec: CONTRACTS §4.* ✅ 4 Draft-2020-12 files added under `data_profiling_engine/schemas/` (§4.1/4.2/4.5/4.3) + `finding` embeds `finding_workflow` via `$ref` + `observed`/facts reuse Provenance `metricValue`. 27 new tests (§4.1 ERROR↔error coupling + status/dimension enums, §4.2 fingerprint `^sha256:[0-9a-f]{64}$` + facts/evidence_refs minItems 1 + hypothesis status enum + workflow null↔object, §4.3 `reason_type=evidence` ⇒ non-empty evidence_refs + status enum, §4.5 comment shape). 89/89 pytest green 2026-10-24.
 - [x] **M1-T3** Dataset-config JSON Schema + validator (rejects unknown rule keys, missing `dimension`). *Spec: CONTRACTS §9; ENGINE §5.1.* ✅ `dataset_config.schema.json` (Draft 2020-12, `$id` convention, `$defs/rule` extractable) — hard-rejects unknown config/rule keys via `additionalProperties:false`, closed ENGINE §5.1 rule catalog, `dimension` required (§4.1 enum parity), sampling enabled⇒strategy+size+seed, per-rule-type conditionals (`condition`⇒conditional_not_null; value|threshold⇒threshold rules); §9 YAML exemplar transcribed verbatim as positive test. +24 tests, 113/113 pytest green 2026-10-24.
-- [ ] **M1-T4** Pydantic models generated/hand-aligned to schemas + round-trip tests. *Spec: CONTRACTS §1.*
+- [x] **M1-T4** Pydantic models generated/hand-aligned to schemas + round-trip tests. *Spec: CONTRACTS §1.* ✅ `schemas/models.py` — hand-aligned mirror of all 9 frozen schemas (schemas stay source of truth): 17 closed enums, `ContractModel` base enforcing the null/absence policy + strict-vs-open extras, conditional rules as validators (§1.1 sampled⇒seed / approximate⇒algorithm / not_computed⇒reason, §2 sampling lock + terminal status, §4.1 ERROR⇔error coupling, §4.3 evidence⇒refs, §9 rule catalog + conditionals, ADR-016 fingerprint pattern). +49 tests in `tests/test_models.py` (round-trip over all 9 schemas, field/required/enum parity, negative enforcement). 162/162 pytest green 2026-10-24.
 - [ ] **M1-T5** TS types mirroring contracts + parity test against JSON Schemas. *Spec: CONTRACTS §1; AGENTS §3.*
 - [ ] **M1-T6** Error-code registry module + bridge/job envelope models. *Spec: CONTRACTS §5.3, §8.*
 
