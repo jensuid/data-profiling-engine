@@ -14,31 +14,60 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 ## ▶ CURRENT POSITION
 
 ```text
-Milestone : M4 — Reporting Layer (GATE M1 CONTRACTS FREEZE PASSED 2026-10-24;
-          GATE M2 engine spine PASSED 2026-10-24 — profiler-cli end-to-end;
-          GATE M3 persistence MET 2026-10-24 — ADR-008 fully landed)
-Task      : none in progress — M4-T4 done (report/narrative language, BLUEPRINT
-          Q1 ratified → ADR-018). Metric labels stay English; recommendation
-          narrative now bilingual EN + ID, switched by the new optional
-          top-level `DatasetConfig.language` ∈ {en, id}; shipped DEFAULT "en"
-          (omitted-when-unset, so config_hash + golden + all prior recommendation
-          tests stay byte-identical; `id` is opt-in). Recommendation contract
-          SHAPE (§4.3) unchanged — only the human-readable strings differ.
+Milestone : M5 — Bridge Facade + Job Manager (GATE M1 CONTRACTS FREEZE PASSED
+          2026-10-24; GATE M2 engine spine PASSED 2026-10-24 — profiler-cli
+          end-to-end; GATE M3 persistence MET 2026-10-24 — ADR-008 fully
+          landed; GATE M4 reporting COMPLETE dev-mode 2026-10-24 — packaged
+          verification deferred to M7/Phase-3)
+Task      : none in progress — M5-T1 done (the six remaining §5.2 read
+          commands: dataset.inspect / dataset.preview / quality.get_results /
+          findings.get / report.get_summary / artifact.open, served from the M3
+          stores + the M2 connector seam, paged, with the 1 MiB cap now enforced
+          on BOTH directions). The command table is complete: all nine MVP
+          commands wired, each schema-gated (`extra="forbid"`).
 GATE M4   : reporting-layer tasks T1-T4 COMPLETE (706/706 pytest, tsc clean,
           golden byte-stable). MVP acceptance is on the PACKAGED build
           (BLUEPRINT §5 Phase-1 gate / §6), not dev mode — do not stamp M4
           "accepted" until the packaged run is verified in M7/Phase-3.
-NEXT      : M5 — Bridge facade wraps M2-M4 behind commands (BLUEPRINT §6).
-          Verify end-to-end that the pywebview facade + worker propagate the
-          M4 reporting outputs (html_report / issue_csv / golden JSON) AND the
-          new `DatasetConfig.language` field: config flows facade → worker →
-          orchestration.run_pipeline(config) → build_recommendations(language=
-          config.language). Open `bridge/facade.py`, `bridge/worker/*`,
-          `schemas/bridge_request.schema.json` allow-list + `docs/CONTRACTS`
-          §5 before coding. No new metric; no HTTP (ADR-005); keep TS parity.
+NEXT      : M5-T3 — progress polling + optional evaluate_js push, one status
+          schema. *Spec: CONTRACTS §5.5.*
+          `profile.get_status` already returns the canonical §5.3 JobStatus
+          (M5-T2) and every read command is polled (M5-T1) — what is left is the
+          §5.5 *push* option: an optional `evaluate_js` notification on progress
+          / terminal events so the UI need not busy-poll, while ONE status schema
+          (JobStatus + ProgressEvent) stays the single definition both transports
+          serialise. Keep polling authoritative (push is a hint only); no HTTP,
+          no new command, no per-transport schema fork (ADR-005/§5.5).
           Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
                  (cd frontend && npx tsc --noEmit)
-Blocked by: none — M4-T4 accepted by this session's suite (706/706).
+Blocked by: none — M5-T1 accepted by this session's suite (753/753).
+Session notes: M5-T1 landed the read side of the bridge (CONTRACTS §5.2/§5.4,
+               SECURITY §3/§4). Files: `bridge/envelope.py` (+7 payload models
+               `DatasetInspectPayload` / `DatasetPreviewPayload` / `PagedResult
+               Payload` / `QualityGetResultsPayload` / `FindingsGetPayload` /
+               `ReportSummaryPayload` / `ArtifactOpenPayload`, `PREVIEW_ROW_CAP
+               =200`, `SOURCE_PATH_MAX_LENGTH`), `bridge/facade.py` (+6 handlers,
+               COMMANDS now the full 9-row §5.2 table, response-side 1 MiB check
+               in `bridge_send`, `_resolve_source_path` allow-list, `_reveal_path`
+               native viewer), `storage/metadata_store.py` (+`count_checks` /
+               `count_findings` for `page.total`), `discovery/inference.py`
+               (+public `PII_PATTERNS` so preview masks by exactly discovery's
+               email/phone shapes), `bridge/errors.py` (+`DATASET_READ_FAILED`
+               alias), `frontend/src/types/contracts.ts` (mirrored the new
+               payloads + result shapes, `PreviewColumn.masked`),
+               +`tests/test_bridge_read_commands.py` (38: allow-list equals the
+               §5.2 table, inspect joins stored types, preview paging/row-cap/
+               `_row_id` hidden/PII masking + `mask_pii=False`, paged contract
+               objects validated against the JSON Schemas, filters, summary
+               counts+refs only, artifact ack never content, traversal refused,
+               reveal opt-in, oversized response, crash leak-free, retryable
+               follows §8). GOTCHA: §8 is frozen and has NO run-address code, so
+               an unresolvable `run_id`/`dataset_id` is `BRIDGE_REQUEST_INVALID`
+               (mirrors `JOB_NOT_FOUND` covering an unknown job) — do not invent
+               `RUN_NOT_FOUND` silently. GOTCHA: `artifact.open` returns an ACK
+               (`run_id`/`kind`/`ref`/`size_bytes`) only — a ref is honoured only
+               when a `run_artifacts` row records it, never from caller text.
+               753/753 pytest green, tsc clean 2026-10-25.
 Session notes: M4-T4 landed the report/narrative language decision
                (ADR-018; BLUEPRINT Q1 ACCEPTED). Files:
                `recommendations/templates.py` (bilingual catalog:
@@ -1016,6 +1045,53 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
   connection on the same file a valid concurrent reader (that is the ADR-008
   "read during run" test shape); one connection per thread/process, never
   shared across threads.
+- M5-T2 gotchas (bridge ↔ store ↔ worker, verified 2026-10-25):
+  * `MetadataStore` is one-connection-per-thread BY DESIGN, and the manager's
+    `_persist` runs on a per-job **feeder thread** — it MUST NOT reuse the main
+    thread's handle; it opens a short-lived `MetadataStore(db_path=..., migrate=False)`
+    per call for on-disk stores and only touches the shared store directly when
+    it is `:memory:` (single-threaded test path).
+  * Canonical `JobStatus`/`JobProgress` are strict `ContractModel`s (explicit
+    null rejected) while the spike runtime model keeps null keys — always fold
+    via `manager._canonical_status` BEFORE `save_job_status` (omit `current_step`
+    when empty, `error_code`/`result` when None).
+  * `jobs.dataset_id` has an FK to `datasets`: in `_launch`'s persist branch
+    `register_dataset` MUST precede `create_job`.
+  * `bridge/runtime.py` uses `RLock` (not `Lock`): `get_profile_manager` nests
+    `get_metadata_store`; both mutate module globals and need `global` decls.
+  * `BridgeFacade` snapshots `self._commands` at construction — tests that
+    monkeypatch a handler patch the INSTANCE's `_commands`, not module COMMANDS.
+  * Spike-only commands (`echo`, `job.*` spike path) are registered only with
+    `enable_spike_commands=True` (or env `DPE_ENABLE_SPIKE_COMMANDS=1`); the
+    packaged facade leaves them OFF so `echo` ⇒ COMMAND_UNKNOWN. Spike test
+    fixtures must pass the flag (`test_bridge_facade.py` fixture does).
+  * §6.5 DuckDB mid-query interrupt is NOT implemented: cancel is checked at
+    worker STEP boundaries only (before/after the bounded `profile_dataset`
+    call). Phase-3 depth item, not a silent MVP gap — do not claim otherwise.
+- M5-T1 read-command gotchas:
+  * `MetadataStore.load_profiling_run` preserves absence fidelity
+    (`_present_keys` / `_retain_present`): a key the stored document never
+    carried comes back ABSENT — so `result_refs` is only readable when the run
+    document was built WITH them. Any caller that wants `report.get_summary`
+    refs must pass `result_refs=refs` into `profile_dataset` BEFORE `save_run`
+    (that is what `bridge/worker/profile_job.py` does; the test fixture now
+    mirrors it). Do not "fix" the reader — the behaviour is intentional.
+  * `_query_one` returns a dict row, never a tuple: `SELECT COUNT(*)` must be
+    aliased (`COUNT(*) AS n`) and read as `row["n"]`; `row[0]` raises.
+  * §8 has no run-address code and is frozen, so an unresolvable
+    `run_id`/`dataset_id` in a read command returns `BRIDGE_REQUEST_INVALID`
+    (same pattern as `JOB_NOT_FOUND` for an unknown job). Adding `RUN_NOT_FOUND`
+    would be a contract change: doc row + `ErrorCode` + registry row + TS enum.
+  * `ErrorCode.DATASET_READ_FAILED` is `retryable=True`, and the facade's
+    `_error()` now reads retryability from the registry — a missing source file
+    legitimately surfaces `retryable: True`. Tests asserting `retryable is
+    False` must use a non-retryable code (`CONFIG_INVALID`, `BRIDGE_*`).
+  * `dataset.preview` must drop the connector's `_row_id` plumbing column
+    (ENGINE §5.2) and must render rows BEFORE column descriptors, or the
+    `masked` flags miss cell-level PII discovered while masking.
+  * Adding TS interfaces to `contracts.ts` is safe for parity, but a new
+    `<Name>Values` enum bumps the hard-coded set in
+    `test_contracts_ts_parity.py` (currently 18) — mirror shapes as interfaces.
 ```
 
 ## M0 — Desktop Spike (gate: BLUEPRINT §5 Phase 0; acceptance: TESTING §5.2)
@@ -1061,12 +1137,12 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 - [x] **M4-T1** JSON result writer from contracts (golden snapshots). *Spec: ENGINE §10; TESTING §2.* ✅ FORMAL golden-snapshot harness over the M2-T11 writer (`reporting.write_profile_json`/`result_document`) — NO new writer, no contract shape change. New corpus dir `tests/fixtures/golden/` (checked-in triple: `sales_deals.csv` bytes, `sales_deals.config.json`, `sales_deals.golden.json` — 27 KB normalized). New `tests/golden_harness.py`: `normalize_document()` redacts ONLY the machine-dependent pointers (source_ref, source_snapshot.path/modified_at, engine.duckdb_version/python_version, timing.started_at/finished_at/duration_ms→0, per-check executed_at, result_refs) to stable sentinel tokens (`<VOLATILE>`, `REDACTED_INT=0` where the schema types the slot integer); the reproducibility tuple (content_hash + config_hash + engine_version + metrics + fingerprints + statuses + provenance.method) is preserved verbatim so drift is loud. `emit_result_document()` runs `profile_dataset` on the checked-in fixture and reads back the WRITTEN bytes (exercises the on-file writer, not only the in-memory dict). Regeneration path via `DPE_UPDATE_GOLDEN=1` (never set in CI). New `tests/test_reporting_golden.py` (8): byte-diff of normalized JSON against the golden (with a compact first-mismatch context on failure); every block schema-validates against its JSON Schema from disk; volatile fields ARE redacted (a future rollup change that starts leaking a machine path or wall-clock stamp into the golden fails loudly) and the reproducibility tuple is NOT; two-emit stability after normalization (TESTING §3.3); the golden carries the injected FAILs (`deal_id_unique`, `value_not_null`) + `stage_domain` PASS + fingerprints + recommendation back-refs; `config_hash(load_config(name))` matches the golden (config↔golden coupling, no drift between the two files); fixture-triple presence; harness self-check (deep copy). New `.gitattributes` freezes the golden dir with `-text` so CRLF autocrlf on Windows cannot shift `content_hash`. 650/650 pytest green, tsc clean 2026-10-24.
 - [x] **M4-T2** HTML self-contained report, inline Plotly, method badges, masking default. *Spec: ENGINE §10; SECURITY §4.* ✅ `reporting/html_report.py` renders the M4-T1 `result_document(bundle)` only (no recomputation); vendored `assets/plotly.min.js` (plotly 7.1.0, sha256-pinned test) inlined — zero external tags; every MetricValue wears its ADR-015 badge (seed/algorithm/reason in tooltip); PII := discovery `logical_type` ∈ {email, phone} (NOT semantic_type — the old NEXT memo was wrong), values masked by default in tables+charts; §10 chart vocabulary all emitted (histogram, categorical bar, missingness bar, outlier box, temporal volume); findings show ADR-016 fingerprint + working evidence back-links; `emit_html_report_artifact` → canonical `html_report` kind (`artifacts/<run>/report.html`), CLI `--html`, spec-file `datas` bumped. +25 tests, browser-verified offline. See session note above. **→ NEXT: M4-T3.**
 - [x] **M4-T3** CSV issue export columns + artifact refs. *Spec: ENGINE §10; SECURITY §4.* ✅ New `reporting/csv_export.py` (render/write/emit) consumes the SAME `ProfileBundle` via `result_document`-free typed objects, zero recomputation. Header verbatim from §10: `finding_id, rule_id, column, status, severity, observed, threshold, affected_records, evidence_ref`. Row source = findings joined to their originating **FAIL/WARN** check via the finding's `rule:<rule_id>` evidence ref (detectors only make rule findings from FAIL/WARN, so PASS/ERROR never appear — FAIL≠ERROR honored); a profile-extreme finding has no `rule:` ref ⇒ no row; a merged finding carrying two rules ⇒ two rows sharing `finding_id`. `observed` cell always names its ADR-015 `method` (+ seed/algorithm for sampled/approximate; `not_computed`→reason, never a blank-as-zero). SECURITY §4 satisfied by construction: an issue row carries only rule ids, column *names*, aggregate metrics and config thresholds — no raw source value is ever emitted (test asserts an email column leaks no value). Deterministic byte output (`csv` `lineterminator=\n`, `QUOTE_MINIMAL` quotes comma-bearing thresholds). `emit_issue_csv_artifact` → canonical `issue_csv` kind (`artifacts/<run>/issues.csv`, already in `DEFAULT_FILENAMES`/`KIND_RETENTION`=RESULT/CONTRACTS §2 result_refs). CLI `+--csv OUT` on `profile` (JSON/HTML paths untouched). +19 tests `tests/test_reporting_csv.py` (header verbatim, golden e2e = exactly the 2 FAIL rules, WARN-in/PASS-out/ERROR-out, merged→2 rows, sampled seed, not_computed reason, between `0..100`, dataset-scope column fallback + affected_records from finding scope, comma-quoting, no-PII-leak, writer parents, ArtifactStore canonical ref, CLI flag). 694/694 pytest green. **→ NEXT: M4-T4.**
-- [ ] **M4-T4** Language decision (BLUEPRINT Q1) recorded here, then templates. *Spec: BLUEPRINT §8.*
+- [x] **M4-T4** Language decision (BLUEPRINT Q1) recorded here, then templates. *Spec: BLUEPRINT §8.* ✅ Q1 ratified → ADR-018; bilingual EN+ID recommendation templates shipped, `DatasetConfig.language` opt-in (default "en", omitted-when-unset keeps golden/config_hash byte-identical). See session note in CURRENT POSITION. 706/706 pytest green, tsc clean 2026-10-24. **→ Closes GATE M4 (dev-mode; packaged verification in M7).**
 
 ## M5 — Bridge Facade + Job Manager (full)
 
-- [ ] **M5-T1** Command handlers for MVP command set; payload caps enforced. *Spec: CONTRACTS §5.2, §5.4.*
-- [ ] **M5-T2** Job manager: lifecycle, cancel, timeout, crash detection, recovery. *Spec: CONTRACTS §6; ADR-006.*
+- [x] **M5-T1** Command handlers for MVP command set; payload caps enforced. *Spec: CONTRACTS §5.2, §5.4.* ✅ All nine §5.2 commands wired. `bridge/envelope.py`: 7 new payload models (all `extra="forbid"`) — `DatasetInspectPayload`, `DatasetPreviewPayload` (`limit ≤ PREVIEW_ROW_CAP=200`, `mask_pii=True`), `PagedResultPayload` (requires `run_id` **or** `dataset_id`, `limit` 1..200, `offset ≥ 0`), `QualityGetResultsPayload` (`status`/`dimension`), `FindingsGetPayload` (`severity`/`category`), `ReportSummaryPayload`, `ArtifactOpenPayload` (`kind` XOR `ref`, `reveal=False`). `bridge/facade.py`: 6 handlers served from `runtime.get_metadata_store()` / the M2 connector seam — `dataset.inspect` (connector `build_snapshot` + `LIMIT 0` `_probe_schema`, joins stored `column_inventory` types + `profile_summary.row_count` + `last_run`; **never reads rows**, ADR-007), `dataset.preview` (DuckDB `LIMIT/OFFSET` page only, `_row_id` plumbing stripped, PII masked by stored `logical_type` column tag or a cell matching `discovery.inference.PII_PATTERNS`, `mask_pii=False` opt-out), `quality.get_results` / `findings.get` (paged ids from `list_checks`/`list_findings`, items rebuilt as contract §4.1/§4.2 objects via `load_check_results`/`load_findings`, `page.total` from new `count_checks`/`count_findings`), `report.get_summary` (`load_profiling_run` + `profile_summary` + `counts` + `check_status_counts` — counts/refs only, no big payload), `artifact.open` (ref resolvable ONLY through a recorded `run_artifacts` row → `ArtifactStore.open_path` confinement; returns an ack `{run_id,kind,ref,size_bytes}`, never content; `reveal` uses the OS native viewer, best-effort). Caps: request envelope cap + **new response cap** in `bridge_send` (`BRIDGE_PAYLOAD_TOO_LARGE` when the serialised result >1 MiB); handler filter vocabularies validated so a typo'd filter is typed `BRIDGE_REQUEST_INVALID`, not an empty page. `_resolve_source_path` applies the SECURITY §3 allow-list (`SOURCE_NOT_ALLOWED`); `_connector_error_result` maps connector codes onto §8; `_json_safe` coerces Decimal/date/bytes; `_error()` now derives `retryable` from `errors.is_retryable(code)` (§8) instead of hard-coding False. No new metric, no HTTP (ADR-005), no new §8 code, no architecture change. `contracts.ts` mirrors the payloads + result shapes (no new `<Name>Values` enum, so the 18-enum parity test still passes). +`tests/test_bridge_read_commands.py` (38, seeded by a REAL in-process `profile_dataset` run + ArtifactStore writes + `save_run`, `configure_runtime(root)` redirect). 753/753 pytest green, tsc clean 2026-10-25. Gotchas logged in GOTCHAS. **→ NEXT: M5-T3.**
+- [x] **M5-T2** Job manager: lifecycle, cancel, timeout, crash detection, recovery. *Spec: CONTRACTS §6; ADR-006.* ✅ Real write path live. `bridge/worker/profile_job.py::run_profile_job` = spawn-safe worker entry (all-positional primitive args, ADR-006): runs the FULL M2-M4 spine via `orchestration.rollup.profile_dataset` in the worker, emits + persists the run (ArtifactStore + `MetadataStore.save_run` on a worker-thread store), reports `ProgressEvent`/`TerminalEvent` over the IPC queue, honors cancel at step boundaries. `manager.py`: `_launch` generalized (echo spike + real job share one lifecycle), `start_profile_job` (persist=True, `PROFILE_JOB_TIMEOUT_SECONDS=1800`, QUEUED row mirrored to SQLite so `runs.job_id` resolves — `register_dataset`→`create_job` ordering FK-safe), `_persist` feeder-thread-safe (short-lived per-call store, canonical §5.3 `_canonical_status` conversion before write), `recover_interrupted_jobs` (orphaned open rows ⇒ honest FAILED/WORKER_CRASHED, §6.3) invoked once when `runtime.get_profile_manager()` first materializes. `bridge/runtime.py` = process-wide context singleton (`configure_runtime` seam redirects data root + rebuilds store/manager; tests use tmp_path, packaged app uses OS default). `envelope.py`: `ProfileStartPayload` (validated before spawn; invalid config rejected at the boundary, AGENTS §5). `facade.py`: `profile.start` / `profile.get_status` / `profile.cancel` handlers; spike commands behind `enable_spike_commands` (default env `DPE_ENABLE_SPIKE_COMMANDS`, OFF in packaged build). `rollup.profile_dataset` gained optional `job_id` threaded into `build_profiling_run` so the run row links to the job — CLI/golden path leaves it None (field absent per contract, golden byte-identical, verified). NO HTTP (ADR-005), no architecture change; status payloads are canonical §5.3 `JobStatus` ≤ bridge caps. +`tests/test_bridge_profile.py` (9: e2e profile.start→SUCCEEDED with schema-valid persisted run + artifacts on disk, invalid-config rejection, cancel → CANCELLED, unknown job, spike-off-by-default, recovery, payload validation, status canonical shape, timeout path). Spike fixtures updated to pass the enable flag. 715/715 pytest green, tsc clean 2026-10-25. Gotchas logged in GOTCHAS. **→ NEXT: M5-T1.**
 - [ ] **M5-T3** Progress polling + optional evaluate_js push, one status schema. *Spec: CONTRACTS §5.5.*
 
 ## M6 — UI Screens (one task = one screen)

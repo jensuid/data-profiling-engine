@@ -557,3 +557,138 @@ export interface DatasetConfig {
   quality_checks: DatasetConfigRule[];
   language?: ReportLanguage;
 }
+
+// ---------------------------------------------------------------------------
+// §5.2 bridge command payloads (M5-T1) — mirror of bridge/envelope.py.
+// These are request bodies wrapped in BridgeRequest.payload, and the small
+// response shapes the read commands return; they are NOT among the nine frozen
+// root schemas above, so they are validated by the pydantic models on the
+// Python side (extra fields forbidden there) rather than by a schema file.
+// ---------------------------------------------------------------------------
+
+export interface ProfileStartPayload {
+  dataset_id: string;
+  source_path: string;
+  config: DatasetConfig | { [key: string]: JsonValue };
+  profile_mode?: ProfileMode;
+  run_id?: string;
+  allowed_roots?: string[];
+}
+
+export interface JobIdPayload {
+  job_id: string;
+}
+
+export interface DatasetInspectPayload {
+  source_path: string;
+  dataset_id?: string;
+  run_id?: string;
+  allowed_roots?: string[];
+}
+
+export interface DatasetPreviewPayload {
+  source_path: string;
+  dataset_id?: string;
+  run_id?: string;
+  allowed_roots?: string[];
+  limit?: number; // clamp 1..200 (§5.4 preview row cap)
+  offset?: number;
+  mask_pii?: boolean;
+}
+
+export interface PagedResultPayload {
+  run_id?: string;
+  dataset_id?: string; // exactly one of run_id/dataset_id is required
+  limit?: number;
+  offset?: number;
+}
+
+export interface QualityGetResultsPayload extends PagedResultPayload {
+  status?: CheckStatus;
+  dimension?: QualityDimension;
+}
+
+export interface FindingsGetPayload extends PagedResultPayload {
+  severity?: Severity;
+  category?: QualityDimension;
+}
+
+export interface ReportSummaryPayload {
+  run_id?: string;
+  dataset_id?: string;
+}
+
+export interface ArtifactOpenPayload {
+  run_id: string;
+  kind?: string; // exactly one of kind/ref
+  ref?: string;
+  reveal?: boolean;
+}
+
+/** Page envelope shared by the paged result fetches (§5.4). */
+export interface Page {
+  limit: number;
+  offset: number;
+  total: number;
+}
+
+export interface InspectColumn {
+  ordinal: number;
+  name: string;
+  physical_type: string;
+  logical_type?: string;
+  semantic_type?: SemanticType;
+}
+
+export interface DatasetInspectResult {
+  dataset_id: string;
+  connector: string;
+  source_ref: string;
+  size_bytes?: number;
+  modified_at?: string;
+  content_hash?: string;
+  row_id_policy?: string;
+  column_count: number;
+  columns: InspectColumn[];
+  row_count?: number;
+  row_count_method?: MetricMethod;
+  last_run?: { [key: string]: JsonValue };
+}
+
+export interface PreviewColumn {
+  name: string;
+  physical_type: string;
+  logical_type?: string | null;
+  masked: boolean; // SECURITY §4: this column's sample values arrived masked
+}
+
+export interface DatasetPreviewResult {
+  dataset_id: string;
+  connector: string;
+  columns: PreviewColumn[];
+  rows: JsonValue[][];
+  offset: number;
+  limit: number;
+  returned: number;
+  total_rows: number;
+  masking_applied: string[];
+}
+
+export interface QualityGetResultsResult {
+  run_id: string;
+  items: QualityCheckResult[];
+  page: Page;
+}
+
+export interface FindingsGetResult {
+  run_id: string;
+  items: Finding[];
+  page: Page;
+}
+
+export interface ArtifactOpenResult {
+  run_id: string;
+  kind?: string;
+  ref: string;
+  size_bytes: number;
+}

@@ -1354,6 +1354,27 @@ class MetadataStore:
             params.extend([int(limit), int(offset)])
         return self._query(sql, params)
 
+    def count_checks(
+        self,
+        run_id: str,
+        *,
+        status: Optional[str] = None,
+        dimension: Optional[str] = None,
+    ) -> int:
+        """Total rows the identically-filtered :meth:`list_checks` would return
+        (no LIMIT/OFFSET) — the page-count a paged bridge response carries so
+        the UI knows when to stop paging (§5.4)."""
+        sql = "SELECT COUNT(*) AS n FROM quality_checks WHERE run_id = ?"
+        params: List[Any] = [run_id]
+        if status:
+            sql += " AND status = ?"
+            params.append(status)
+        if dimension:
+            sql += " AND dimension = ?"
+            params.append(dimension)
+        row = self._query_one(sql, params)
+        return int(row["n"]) if row else 0
+
     def load_check_results(self, run_id: str) -> List[QualityCheckResult]:
         """Rebuild §4.1 objects. ``ERROR`` comes back with its error object and
         a PASS/FAIL/WARN without, because the model itself refuses any other
@@ -1447,6 +1468,26 @@ class MetadataStore:
             sql += " LIMIT ? OFFSET ?"
             params.extend([int(limit), int(offset)])
         return self._query(sql, params)
+
+    def count_findings(
+        self,
+        run_id: str,
+        *,
+        severity: Optional[str] = None,
+        category: Optional[str] = None,
+    ) -> int:
+        """Total rows the identically-filtered :meth:`list_findings` would
+        return — see :meth:`count_checks` for why the paged fetch needs it."""
+        sql = "SELECT COUNT(*) AS n FROM findings WHERE run_id = ?"
+        params: List[Any] = [run_id]
+        if severity:
+            sql += " AND severity = ?"
+            params.append(severity)
+        if category:
+            sql += " AND category = ?"
+            params.append(category)
+        row = self._query_one(sql, params)
+        return int(row["n"]) if row else 0
 
     def load_findings(self, run_id: str) -> List[Finding]:
         """Rebuild §4.2 objects with facts / interpretation / hypotheses kept in

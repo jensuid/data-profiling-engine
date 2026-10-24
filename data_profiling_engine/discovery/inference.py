@@ -63,6 +63,15 @@ _NUMERIC_LIKE_RE = re.compile(
     r"(?:[$€£¥₹]|USD|EUR|GBP|JPY|IDR|AUD|CAD|CHF|CNY|INR|SGD|MYR|THB|VND)?\s*$"
 )
 
+#: The two probable-PII shapes of the ENGINE §4.1 vocabulary, published for the
+#: consumers SECURITY §4 names (report masking, the bridge's ``dataset.preview``)
+#: so a value is judged by exactly the pattern discovery would use — one source
+#: of truth for "this looks like an address / a phone number".
+PII_PATTERNS: Tuple[Tuple[str, "re.Pattern[str]"], ...] = (
+    ("email", _EMAIL_RE),
+    ("phone", _PHONE_RE),
+)
+
 # --- name heuristics --------------------------------------------------------
 
 _NAME_ID = re.compile(r"(?:^|_)(?:[a-z0-9]+_)?(?:id|uuid|guid|pk)(?:$|_)|_code$", re.IGNORECASE)
@@ -386,4 +395,5 @@ def infer_column(
 __all__ = [
     "infer_column",
     "SCHEMA_VERSION",
+    "PII_PATTERNS",
 ]

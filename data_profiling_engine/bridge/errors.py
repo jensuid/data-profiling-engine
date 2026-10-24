@@ -32,6 +32,10 @@ JOB_NOT_FOUND = ErrorCode.JOB_NOT_FOUND.value
 # invalid §9 config is refused before any worker spawns (AGENTS §5).
 CONFIG_INVALID = ErrorCode.CONFIG_INVALID.value
 
+# Surfaced by the ``dataset.*`` read handlers (M5-T1): the connector seam reports
+# an unreadable/missing source itself, the bridge only translates its code.
+DATASET_READ_FAILED = ErrorCode.DATASET_READ_FAILED.value
+
 __all__ = [
     "COMMAND_UNKNOWN",
     "PAYLOAD_TOO_LARGE",
@@ -41,6 +45,7 @@ __all__ = [
     "REQUEST_INVALID",
     "JOB_NOT_FOUND",
     "CONFIG_INVALID",
+    "DATASET_READ_FAILED",
     "ErrorCode",
     "ErrorInfo",
     "ERROR_REGISTRY",
