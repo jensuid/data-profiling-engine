@@ -10,11 +10,24 @@ user data outside the application bundle.
 * :mod:`~data_profiling_engine.storage.migrations` — versioned DDL chain,
   pre-migration backup, downgrade refusal (SECURITY §6.5, ADR-008).
 * :mod:`~data_profiling_engine.storage.metadata_store` — typed writer/reader
-  for one profiling run and everything it produced (ADR-008).
+  for one profiling run and everything it produced (ADR-008); also promotes
+  normalised `(run_id, column, metric)` value rows so a run-history diff reads
+  one numeric cell without parsing the artifact (M3-T3).
+* :mod:`~data_profiling_engine.storage.artifact_store` — the file side of
+  ADR-008: the per-run artifact layout, its lifecycle/retention policy, and the
+  cleanup entry points (SECURITY §2/§4/§6.5, M3-T2).
 
-Not here yet, by milestone order: the artifact **file** store layout and
-lifecycle (M3-T2) and normalised per-metric rows for cheap diffs (M3-T3).
+Not here yet, by milestone order: none — M3 (persistence) is complete.
 """
+from data_profiling_engine.storage.artifact_store import (
+    DEFAULT_FILENAMES,
+    KIND_RETENTION,
+    STORE_PREFIX,
+    ArtifactStore,
+    ArtifactStoreError,
+    RetentionPolicy,
+    retention_for,
+)
 from data_profiling_engine.storage.metadata_store import (
     DEFAULT_ARTIFACT_KIND,
     DEFAULT_BUSY_TIMEOUT_MS,
@@ -94,4 +107,12 @@ __all__ = [
     "MetadataStore",
     "MetadataStoreError",
     "config_document_hash",
+    # artifact file store (M3-T2)
+    "STORE_PREFIX",
+    "DEFAULT_FILENAMES",
+    "KIND_RETENTION",
+    "RetentionPolicy",
+    "ArtifactStore",
+    "ArtifactStoreError",
+    "retention_for",
 ]
