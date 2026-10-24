@@ -17,25 +17,67 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 Milestone : M2 — Engine CLI (spine; no UI)   (GATE M1 CONTRACTS FREEZE PASSED
           2026-10-24: M1-T1..T6 green; 9 result + 4 envelope schemas frozen,
           pydantic + TS mirrors in parity, §8 registry formalised)
-Task      : none in progress — M2-T6 done, start M2-T7 next.
-NEXT      : M2-T7 — Rule registry + compiler → one SQL per rule;
-            statuses PASS/FAIL/WARN/ERROR. Open docs/ENGINE_SPEC.md §5.1–5.3
-            (rule catalog + semantics) and docs/CONTRACTS.md §4.1
-            (QualityCheckResult shape + FAIL≠ERROR). This is the first task on
-            the QUALITY side (not a ColumnProfile metric family): consume the
-            frozen `dataset_config.quality_checks[]` rules (§9 ConfigRule),
-            compile each rule to ONE DuckDB SQL statement against the bound
-            relation (mirror render_sql's single-materialisation + bound-input
-            discipline — no user value interpolated), execute it, and emit a
-            QualityCheckResult{status∈{pass,fail,warn,error}, ...} per rule.
-            A rule whose SQL cannot execute is ERROR, never FAIL (§6.4
-            per-task isolation reused from M2-T4..T6). Reuse the
-            RelationHandle/_scalar/_relation_row_count helpers. NO new Column-
-            Profile block — results feed the dataset-level quality layer.
-            Reference tests: each §5.1 rule type vs an independent hand-
-            computed pass/fail on a fixture + one broken-SQL→ERROR case.
+Task      : none in progress — M2-T7 done, start M2-T8 next.
+NEXT      : M2-T8 — Findings engine: detectors → candidate findings, dedup/
+            merge, prioritization, deterministic fingerprint. Open docs/
+            ENGINE_SPEC.md §6/§6.1/§6.2 (pipeline + detectors + priority) and
+            docs/CONTRACTS.md §4.2 (Finding shape) + §4.4 (fingerprint =
+            sha256(category|scope_key|detector_id|normalized_measure)).
+            Implement in findings/ (ADR-016 says fingerprinting lives in
+            findings/fingerprinting.py). Consume ONLY existing evidence — the
+            M2-T7 QualityCheckResult[] (FAIL/WARN → findings) + ColumnProfile
+            extremes without a rule (constant column, near-total missingness,
+            dominant category → WARN findings with a metric ref) — never invent
+            numbers (AGENTS §3; facts/interpretation/hypotheses stay separate,
+            CONTRACTS §7). fingerprint rides stable identity (category +
+            column/scope + rule/metric id), NOT the changing value; reuse the
+            frozen Finding pydantic + finding.schema.json; MVP workflow=null.
+            Dedup merges same root column+dimension; priority=f(severity,
+            affected share, scope criticality from config PK/business columns,
+            confidence by method exact>approx>sampled). Reference tests: same
+            issue two runs different numbers → same fingerprint; different issue
+            → different; each detector → expected Finding; dedup collapses.
             Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
-Blocked by: none (M2-T1..T6 accepted).
+Blocked by: none (M2-T1..T7 accepted).
+Session notes: M2-T7 delivered the QUALITY side (first non-ColumnProfile task)
+               in a new quality/ package — registry.py (ENGINE §5.1 closed
+               catalog: RuleDefinition{measure∈count|rate|outlier, param_kind,
+               warn_only, mvp_active}; referential_integrity/date_order are
+               mvp_active=False), compiler.py (compile_rule → ONE DuckDB
+               statement shaped (violations,total,sample_row_ids,lower_bound,
+               upper_bound); mirrors render_sql single-materialisation + ADR-017
+               BOUND input — every threshold/domain/condition value is a $n
+               placeholder, only identifiers quoted inline; rule target +
+               condition column validated present else RuleCompileError→ERROR;
+               ENGINE §5.2 missing predicate = null OR trim='' — sentinel set
+               deliberately NOT folded into the rule's missing_rate_max (that is
+               the ColumnProfile metric); unique violations = nonnull−distinct
+               (per-group, NOT a window SUM(grp_n−1) that double-counts);
+               outlier_scan reuses Tukey IQR/1.5 quantile_cont fences surfaced
+               into threshold{between}; sample_row_ids via a bounded ORDER BY rid
+               LIMIT≤200 array_agg subquery — row:N refs, never raw values; the
+               unique/outlier CTE SELECT has NO outer FROM so an empty relation
+               still returns one row), executor.py (run_quality_checks(con,
+               handle, config, run_id, discovery?, executed_at?) →
+               QualityRunResult{checks per rule in config order, errors §6.4};
+               status PASS(0 viol)/FAIL(viol>0)/WARN(warn_only | business_note |
+               severity==warning)/ERROR(cannot compile|execute → RunErrorEntry
+               RULE_EXEC_FAILED + observed null, FAIL≠ERROR); non-error observed
+               = MetricValue{count or rate, exact provenance, denominator=
+               population}; schema_version reuses discovery SCHEMA_VERSION
+               '1.0', rule_version='1' (the frozen §9 rule carries no version
+               field). +tests/test_quality_rules.py (29 tests: registry parity +
+               phase-gate; every §5.1 MVP type vs a hand verdict — not_null/
+               unique/missing_rate_max/gte/lte/range/valid_domain/
+               conditional_not_null (the §5.2 example)/type_valid (e2e PASS +
+               direct INTEGER-cast FAIL); outlier WARN-not-FAIL with fences +
+               no-outlier PASS; business_note + warning-severity → WARN; FAIL≠
+               ERROR — absent column / Phase-2 / broken execution (quantile on
+               VARCHAR) / malformed range all ERROR w/ observed null; §6.4
+               one-broken-doesn't-abort; a bound 'it''s' domain value matches
+               literally; row:N evidence refs + ≤200 cap on a 300-row fixture;
+               every result §4.1-schema-valid w/ format checking). 459/459
+               pytest green, tsc clean 2026-10-24.
 Session notes: M2-T6 delivered the third-family pass in
                engine/metrics/profiler.py —
                execute_distribution_and_temporal(con, handle, report, plan,
@@ -418,6 +460,25 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
   Provenance is not JSON serializable`. Call `.model_dump(mode='json')` on the
   nested Provenance yourself before storing it in the open block (M2-T6;
   out_of_expected_range already followed this pattern).
+- Under `use_enum_values=True` a `DatasetConfigRule.rule`/`.severity`/
+  `.dimension` is a **plain string** at runtime, so `rule.rule is RuleType.X`
+  is ALWAYS False (M2-T2 gotcha generalised). The §5.1 catalog dict still
+  looks up fine (a str-Enum hashes/equals its value), but *dispatch* on the
+  registry's real enum member (`defn.rule_type`) or compare with `==`, never
+  `is`. Same trap for `Severity.WARNING` in the M2-T7 WARN policy. (M2-T7)
+- `unique`-rule violations = `non_null_rows − distinct_non_null_values` (a
+  per-group "minimum rows to drop to make unique"), NOT a per-row
+  `SUM(grp_n-1)` window which double-counts every duplicate group (Active×3 +
+  Closed Won×3 summed the window to 12 instead of the correct 4). The
+  `COUNT(*) OVER (PARTITION BY col)` is still fine for the *sample refs*
+  (`grp_n > 1`), just not for the count. (M2-T7)
+- ENGINE §5.2 fixes the rule statement shape as `(violations, total,
+  sample_row_ids)` in **one** statement. Keep it memory-flat with a bounded
+  `array_agg(rid) FROM (SELECT rid … ORDER BY rid LIMIT 200)` subquery, and
+  give a CTE-based (unique/outlier) SELECT **no outer FROM** so an empty
+  relation still yields exactly one aggregate row. Rule-level `missing` =
+  `null OR trim=''` only — sentinels (ADR-017) belong to the ColumnProfile
+  metric, deliberately NOT the rule's `missing_rate_max`. (M2-T7)
 - GIT-HISTORY NOTE: the M2-T5 session left its work UNCOMMITTED (last commit
   was `abe0c56 M2-T4`); profiler.py's M2-T5 uniqueness/categorical code + the
   M2-T5 test file were still only in the working tree when M2-T6 ran. Because
@@ -453,7 +514,7 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 - [x] **M2-T4** Profilers: statistical + missingness (+ reference tests). *Spec: ENGINE §3; TESTING §3.1.* ✅ `engine/metrics/profiler.py` — `execute_stat_and_missingness(con, handle, report, plan, config, registry)` consumes the M2-T3 `ExecutionPlan`, renders each templated stats/missingness decision via `render_sql` against the DuckDB view (or ONE shared bounded sample relation for `sampled` decisions — seeded md5 ORDER+LIMIT, reservoir finalised in M2-T10), stamps scalars into `ColumnProfile.stats`/`.missingness` as `MetricValue`+`Provenance(**decision.provenance_kwargs())`. Honesty enforced: not_computed ⇒ value key ABSENT (`model_construct`+`fields_set.discard`); approximate-without-approx-template (stddev/quick) falls back to exact SQL but keeps the `approximate` label; §6.4 per-metric `duckdb.Error`→`RunErrorEntry(METRIC_NOT_COMPUTED)`+not_computed, run continues; DECIMAL→float JSON-safe. **ADR-017** (new): sentinel set is dataset-config input `profiling.missing.sentinel_values` (exact/case-sensitive, bound via `executemany($1)` into temp `dpe_sentinels`, never interpolated; absent ⇒ `sentinel_count` 0) — added to `dataset_config.schema.json`+`ConfigMissing` pydantic+`contracts.ts`, CONTRACTS §9 exemplar, ENGINE §3 note; + `missingness.{sentinel_count,missing_rate}` registry templates + `render_sql(params=…)` w/ unsubstituted-placeholder guard. +`tests/test_profilers_stats_missingness.py` (24 tests: stats vs Polars `std(ddof=1)`/`quantile(linear)` + hand-computed; missingness null/blank/sentinel/missing_rate+denominator; ADR-017 absent/case-sensitive/bound-quote; exact/approximate(t-digest)/sampled(seed+determinism+bounded)/not_computed(reason,no value); §6.4 partial-failure; empty relation; DECIMAL transport; §3.2 schema-valid + byte-stable rerun) + 1 new render_sql placeholder-guard test. 375/375 pytest green, tsc clean 2026-10-24.
 - [x] **M2-T5** Profilers: uniqueness + categorical (+ reference tests; HLL provenance). *Spec: ENGINE §3, §2.2.* ✅ `engine/metrics/profiler.py` — `execute_uniqueness_and_categorical(con, handle, report, plan, config, registry)` runs the M2-T5 families. **Uniqueness**: `distinct_count` renders the templated exact OR HLL approx SQL by the planner's method label (algorithm=HLL stamped via `decision.provenance_kwargs()`); `is_unique_candidate` derived from `distinct_count.value == count(col)` on the SAME scanned relation (bool has no provenance carrier, honesty rides on the paired MetricValue); `duplicate_groups` (contract_target=None) built inline → auxiliary `ProfilerResult.duplicate_group_counts` for M2-T8. **Categorical**: `frequencies`/`rare_categories`/`label_inconsistencies` all built inline (registry has no templates); §4 low-cardinality gate reads the just-computed `uniqueness.distinct_count` (`CATEGORICAL_MAX_DISTINCT=1_000` → block ABOVE that threshold stays ABSENT, never a truncated top-K masquerading as full enumeration); `CATEGORICAL_TOP_K=50`, rare = count ≤ `max(1, floor(non_null * 0.001))`, label_inconsistencies = same `lower(trim(x))` with ≥2 raw variants. Approximate decisions without an approx template (`is_unique_candidate` at STANDARD-large, `label_inconsistencies`) fall back to EXACT SQL, planner's approximate label retained — same M2-T3 delegation M2-T4 established for stddev/quick. §6.4 per-metric `duckdb.Error` → `RunErrorEntry(METRIC_NOT_COMPUTED)` + honest absence (not_computed `MetricValue` for distinct_count; boolean default False; unset categorical keys DROPPED — pydantic strict rejects an explicit null on non-nullable, keys are omitted not nulled — gotcha M2-T5). Section gating: when §4 gate 2 disables the `uniqueness` section, the whole `ColumnProfile.uniqueness` block is structurally OMITTED (tracked via `_UniCatSlot.uniqueness_executed`), never fabricated. + `tests/test_profilers_uniqueness_categorical.py` (27 tests: distinct_count vs Polars `n_unique` + hand, `is_unique_candidate` identifier/duplicate/all-null-vacuously-True, duplicate_group_counts parity, HLL approximate path (n_rows > LARGE_ROW_LIMIT labelled `algorithm=HLL`, within documented error bounds), sampled path (seed + bounded + deterministic), top-K frequency desc/raw-asc + Polars group_by parity + NULL exclusion + numeric-column registry gate, rare threshold + empty no-singleton, label_inconsistencies case+whitespace collapse (DuckDB VARCHAR sort is byte-ASCII: `ACTIVE`<`Active`<`active`), high-cardinality >1_000 gate omits the whole categorical block, §4 gate-2 uniqueness section-off omits the whole uniqueness block, §6.4 partial failure, empty-relation edges, every profile §3.2 schema-valid across STANDARD/QUICK/DEEP + byte-stable rerun). 402/402 pytest green, tsc clean 2026-10-24.
 - [x] **M2-T6** Profilers: distribution (histogram, outliers) + temporal single-column (+ reference tests). *Spec: ENGINE §3, §2.2; TESTING §3.1.* ✅ `engine/metrics/profiler.py` — `execute_distribution_and_temporal(con, handle, report, plan, config, registry)` runs the M2-T6 families. **Distribution**: histogram BUILT inline via a width_bucket EMULATION (`CAST(LEAST(nb, FLOOR((col-lo)/(hi-lo)*nb)+1) AS INTEGER)` — DuckDB 2.0 has no `width_bucket` scalar), 10 fixed bins over [min,max], counts aligned to bins, top-edge folds into last bin, constant→single bin, empty→honest not_computed ([] bins/counts), bin_strategy/edges in `method_params`; `skewness` renders the templated `skewness(col)` (DuckDB = adjusted Fisher–Pearson **G1**, distinct from Polars' biased g1; undefined→not_computed+reason, value ABSENT); `outlier_candidates` built via Tukey IQR/1.5 fences from one `quantile_cont` q1/q3 summary pass → `OutlierCandidates{count, method='iqr_1_5', provenance, sample_row_refs=['row:N']}` (row *references*, never raw values; omitted at count==0). **Temporal**: range via render_sql (CAST AS VARCHAR, TZ-safe), `volume_per_granularity` (date_trunc + auto granularity from span, bounded), `gaps` (expected-minus-observed `generate_series` INTERVAL), `out_of_expected_range` honest not_computed (no MVP config bound), `timezone_source` naive/utc; nested Provenance in an open dict MUST be `.model_dump(mode='json')`. Section gating: disabled `distributions`/`temporal` ⇒ whole block structurally OMITTED (dist_active/temporal_active), never zeroed; approximate-without-approx-template (quick histogram/skewness) falls back to exact SQL keeping the label; §6.4 per-metric `duckdb.Error`→`RunErrorEntry(METRIC_NOT_COMPUTED)`. + `tests/test_profilers_distribution_temporal.py` (28 tests: histogram bin-count + non-null sum invariant vs Polars, edges/strategy, top-edge/constant/empty; skewness==G1 reference + differs-from-Polars-g1 + constant not_computed; outlier IQR count vs hand Tukey + refs-are-row:N + no-outlier omit + seeded count=2; temporal range/month-volume/gaps/day-gaps/out-of-range/naive-vs-utc-tz; distributions-off & temporal-off gating; quick approximate label+algorithm; sampled gaps seed+bounded+deterministic; §6.4 broken-skewness isolation; every profile §3.2 schema-valid STANDARD/QUICK/DEEP + byte-stable rerun + numeric-has-no-temporal-vice-versa). 430/430 pytest green, tsc clean 2026-10-24.
-- [ ] **M2-T7** Rule registry + compiler → one SQL per rule; statuses PASS/FAIL/WARN/ERROR. *Spec: ENGINE §5.1–5.3; CONTRACTS §4.1.*
+- [x] **M2-T7** Rule registry + compiler → one SQL per rule; statuses PASS/FAIL/WARN/ERROR. *Spec: ENGINE §5.1–5.3; CONTRACTS §4.1.* ✅ `quality/` package — `registry.py` (ENGINE §5.1 closed catalog `RuleDefinition`{measure∈count|rate|outlier, param_kind, warn_only, mvp_active}; `referential_integrity`/`date_order` mvp_active=False → ERROR), `compiler.py` (`compile_rule` → ONE DuckDB statement shaped `(violations,total,sample_row_ids,lower_bound,upper_bound)`; mirrors `render_sql` single-materialisation + ADR-017 **bound input** (every threshold/domain/condition value is a `$n` placeholder, only identifiers quoted inline); target + condition columns validated present else `RuleCompileError`→ERROR; §5.2 missing = `null OR trim=''` (sentinels deliberately excluded — ColumnProfile concern); unique = `nonnull−distinct` (per-group, not a window `SUM(grp_n-1)`); outlier_scan reuses Tukey IQR/1.5 `quantile_cont` fences into `threshold{between}`; `sample_row_ids` bounded `array_agg … ORDER BY rid LIMIT≤200` → `row:N` refs never raw values; CTE SELECT has no outer FROM so empty ⇒ one row), `executor.py` (`run_quality_checks(con,handle,config,run_id,discovery?,executed_at?)`→`QualityRunResult{checks,errors}`; status PASS(0)/FAIL(>0)/WARN(warn_only|business_note|severity==warning)/ERROR(cannot compile|execute→`RunErrorEntry(RULE_EXEC_FAILED)`+observed null, **FAIL≠ERROR**); non-error `observed=MetricValue{count|rate, exact, denominator=population}`; `schema_version`='1.0', `rule_version`='1'). +`tests/test_quality_rules.py` (29: every §5.1 MVP type vs hand verdict + type_valid direct-INTEGER FAIL; outlier WARN-not-FAIL w/ fences; business_note/warning→WARN; absent-col/Phase-2/broken-quantile/malformed-range→ERROR w/ null observed; §6.4 isolation; bound `it''s` literal; `row:N` refs + ≤200 cap on 300 rows; every result §4.1-schema-valid). **No contract change** (consumes frozen §9 rules + emits frozen §4.1 results). 459/459 pytest green, tsc clean 2026-10-24.
 - [ ] **M2-T8** Findings: detectors, dedup/merge, prioritization, **fingerprint**. *Spec: ENGINE §6; CONTRACTS §4.4.*
 - [ ] **M2-T9** Recommendations: rule-based templates + narrative w/ evidence refs. *Spec: ENGINE §7; CONTRACTS §4.3.*
 - [ ] **M2-T10** Modes quick/standard/deep + sampling (reservoir, seed) wiring. *Spec: ENGINE §2.2, §8.*
