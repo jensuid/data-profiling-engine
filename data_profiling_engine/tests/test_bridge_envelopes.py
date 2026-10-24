@@ -195,6 +195,7 @@ _DOC_RETRYABLE = {
     "BRIDGE_PAYLOAD_TOO_LARGE": False,
     "BRIDGE_COMMAND_UNKNOWN": False,
     "ARTIFACT_WRITE_FAILED": True,
+    "METADATA_WRITE_FAILED": True,  # introduced M3-T1 (SQLite metadata store)
     "BRIDGE_REQUEST_INVALID": False,  # promoted M1-T6
     "JOB_NOT_FOUND": False,  # promoted M1-T6
 }

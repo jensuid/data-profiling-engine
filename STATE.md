@@ -14,27 +14,85 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 ## ▶ CURRENT POSITION
 
 ```text
-Milestone : M2 — Engine CLI (spine; no UI)   (GATE M1 CONTRACTS FREEZE PASSED
-          2026-10-24: M1-T1..T6 green; 9 result + 4 envelope schemas frozen,
-          pydantic + TS mirrors in parity, §8 registry formalised)
-Task      : none in progress — M2-T11 done; the M2 engine-CLI spine + JSON
-          writer are complete. NEXT milestone M3 (persistence) awaits go-ahead.
-GATE M2   : M2 engine spine GREEN — `profiler-cli` end-to-end on a `sales_deals`
-          fixture emits a full §2/§3.1 contract-valid JSON document (551/551
-          pytest, tsc clean). The *full* BLUEPRINT Phase 1 gate additionally
-          needs M3 (SQLite run-metadata writer) + M4 (HTML report / Plotly /
-          CSV issue export) + the 1M-row scale correctness benchmark — later
-          milestones, so Phase-1 gate is NOT yet declared passed.
-NEXT      : M3-T1 — SQLite metadata schema (runs/jobs/registry/checks/findings
-          refs) + migrations. *Spec: ADR-008; SECURITY §2, §6.5.* Open
-          docs/SECURITY_PACKAGING.md §2 + §6.5 (+ ADR-008 in
-          ARCHITECTURE_AND_ADRS) and persist the M2-T11 `ProfileBundle`
-          (orchestration/rollup.py) — runs/jobs/checks/findings refs + a
-          migration path. Keep user data separate from the app dir; honor
-          upgrade/uninstall policy; no new metric. AGENTS §4: get user
-          confirmation before starting the M3 milestone.
+Milestone : M3 — Persistence (GATE M1 CONTRACTS FREEZE PASSED 2026-10-24;
+          GATE M2 engine spine PASSED 2026-10-24 — profiler-cli end-to-end)
+Task      : none in progress — M3-T1 done (SQLite metadata schema + migration
+          mechanism + ProfileBundle persistence). M3 continues with M3-T2.
+GATE M3   : NOT yet accepted. Needs M3-T2 (artifact file store: layout,
+          lifecycle, cleanup) + M3-T3 (normalized (run_id,column,metric)
+          rows). M3-T1 landed the metadata half of ADR-008 only.
+NEXT      : M3-T2 — Artifact store: layout, lifecycle policy, cleanup.
+          *Spec: SECURITY §2 (+ ADR-008: "large results live in the artifact
+          store as files, referenced by rows").* Open
+          docs/SECURITY_PACKAGING.md §2 (cache/temp/export locations, retention
+          + uninstall data policy) and build the FILE side under
+          `<data_root>/artifacts/` — `storage/paths.artifacts_dir()` already
+          resolves and guards it (bundle-separation + private dir are reusable,
+          do not re-implement). Metadata side is DONE: `run_artifacts` rows +
+          `MetadataStore.list_artifacts()/artifact_ref()` are the join point —
+          reference paths must stay store-relative, do not restructure them.
+          No new metric; no UI; no HTTP (ADR-005); CSV+Parquet only (ADR-011).
           Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
-Blocked by: none within M3; M2 accepted (this session).
+Blocked by: none — M3-T1 accepted by this session's suite (607/607, tsc clean).
+Session notes: M3-T1 landed the metadata half of ADR-008 in a new
+               `storage/` package (was an empty stub). `storage/paths.py` =
+               SECURITY §2 directory resolution — `default_data_root/`
+               `cache_root/temp_root` from OS locations (`~/Library/Application
+               Support`, `%APPDATA%`, `XDG_DATA_HOME`) with `DPE_DATA_DIR`/
+               `DPE_CACHE_DIR` overrides for packaging/tests, plus
+               `ensure_outside_app_bundle()` (refuses a user-data path inside
+               `sys._MEIPASS`/frozen-exe dir → an upgrade can never destroy it,
+               §6.5) and `ensure_private_dir()` (0o700 on POSIX);
+               `metadata_db_path/backups_dir/artifacts_dir` hang off the root.
+               `storage/migrations.py` = the ADR-008 "migration mechanism":
+               gapless forward-only `Migration(version,name,sql)` chain
+               (`MIGRATIONS=(Migration(1,"m3t1_initial_metadata",…),)`,
+               `TARGET_VERSION=1`), bookkeeping table `schema_migrations` +
+               mirrored `PRAGMA user_version`, refuses a DOWNGRADE ("restore a
+               pre-migration backup") and refuses to touch an UNVERSIONED db
+               that already has tables, writes `backup_database()` copy
+               `metadata.pre-migration-v{n}-{ts}Z.sqlite3` into
+               `<db dir>/backups` before applying anything (skipped when
+               `before==0` — nothing to preserve), and applies each migration in
+               ONE manual `BEGIN IMMEDIATE` … `COMMIT` with ROLLBACK on failure
+               (verified: a failing DDL leaves the version unchanged and creates
+               no partial tables). v1 DDL = 19 tables: datasets,
+               dataset_config_versions, jobs, runs, dataset_profiles, run_columns,
+               quality_checks, check_evidence_refs, findings + 5 finding children
+               (evidence_refs/facts/hypotheses/related_refs/recommendation_refs),
+               recommendations + 2 children, run_errors, run_warnings,
+               run_artifacts. `storage/metadata_store.py` = typed writer/reader;
+               `save_run(bundle, config=…, artifact_refs=…)` persists a whole
+               M2-T11 `ProfileBundle` in ONE transaction (§2 run, §3.1 profile,
+               column inventory, §4.1 checks + ERROR-only error columns, §4.2
+               findings with indexed-not-unique ADR-016 fingerprint, §4.3
+               recommendations, error_log/warnings, artifact refs) and every
+               block reads back schema-valid + equal to what went in
+               (`load_profiling_run/load_check_results/load_findings/
+               load_recommendations`); registry/config-version/job APIs
+               (`register_dataset`, `save_config_version`, `create_job`,
+               `save_job_status`, `unfinished_jobs`) are there for M5; history/
+               diff queries `list_runs/latest_run/runs_by_fingerprint/
+               check_status_counts/counts` back M6's run-history screen.
+               Connection setup `journal_mode=WAL` + `foreign_keys=ON` +
+               `busy_timeout=5000` + `isolation_level=None` = ADR-008
+               "concurrent read during run" (test has a writer thread + a
+               second reader store on the same file) and "worker crash does not
+               corrupt the store" (per-run atomicity). NEW §8 code
+               `METADATA_WRITE_FAILED` (retryable, source=`storage`) wrapped in
+               `MetadataStoreError`/`MetadataIntegrityError` so sqlite internals
+               never leak to the bridge. Deliberately OUT of scope (by milestone
+               order): the artifact FILE store + lifecycle (M3-T2) and normalized
+               `(run_id,column,metric)` rows (M3-T3) — result documents stay
+               referenced files; `runs`/`run_columns` carry only scalars +
+               identity/type columns. No contract shape changed, no new metric,
+               no server (ADR-005). +`tests/test_storage_metadata.py` (55:
+               directory policy, migration chain/backup/atomicity/downgrade&
+               unversioned refusal, registry/jobs, synthetic per-block
+               write→read-back equality incl. absent-vs-null + FAIL≠ERROR +
+               sampled-seed survival, one REAL 60-row `profile_dataset` run
+               persisted + WAL concurrency). 607/607 pytest green, tsc clean
+               2026-10-24.
 Session notes: M2-T11 closed the contract rollup M2-T10 deferred. New
                orchestration/rollup.py executes the dataset-scope plan
                decisions (schema.row_count / column_count / key_candidates —
@@ -695,6 +753,45 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
   `yaml.safe_load` (needs `pyyaml`, added to requirements.txt); the venv is
   uv-managed so install with `uv pip install "PyYAML>=6.0"
   --python .venv/bin/python` — there is no `.venv/bin/pip` (M2-T11).
+- `sqlite3.executescript()` **implicitly commits** — it destroys the atomicity of
+  a migration and fights an explicit `BEGIN` (legacy `isolation_level=""`
+  auto-commits around it). For a transactional DDL step use
+  `conn.isolation_level = None` + manual `BEGIN IMMEDIATE` → per-statement
+  `execute()` loop → stamped `COMMIT`, `ROLLBACK` on `sqlite3.Error`, and
+  restore `isolation_level` in `finally` (M3-T1, `migrations.apply_migrations`).
+- Splitting a DDL script on `;` must strip comments **per line first**: a
+  trailing `--` comment that contains a `;` (e.g.
+  `-- NULL = no §2 sampling block; 0 = declared off`) cuts the following
+  statement in half → `sqlite3.OperationalError: incomplete input`. Use
+  `"\n".join(line.split("--", 1)[0] for line in sql.splitlines())` before the
+  split (`migrations._split_statements`).
+- SQL `NULL` silently MERGES "key absent" with "explicit null", which breaks the
+  `ContractModel` round-trip (§1 treats the two as different meanings for metric
+  values). Store JSON-typed fields through `metadata_store._field_json(model,
+  name)` (returns `None` only when the key was never set; an explicit null is
+  kept as the text `"null"`) and rebuild with `_apply_json_field(...)`. Needed
+  wherever a `MetricValue.value`/`CheckThreshold.value`/`FindingFact.value`
+  round-trip must be exact. Plain scalar nullable columns keep the benign
+  equivalence (`_build_model` + `NULLABLE_FIELDS`).
+- A 2-state `INTEGER NOT NULL` flag also collapses "block absent" (a §2 run with
+  NO `sampling` block) into "declared off" — make the column NULLable and map
+  `None / 0 / 1` explicitly, both in writer and reader (`runs.sampling_enabled`,
+  M3-T1).
+- `Recommendation` (§4.3) has **no** `run_id` field, and `ProfileBundle.errors`
+  is NOT what gets persisted — per-task errors ride `run.error_log`; the store's
+  `run_errors` rows come from there. Writing either from the bundle is a bug
+  (M3-T1 test review).
+- Metadata-store failures must surface as `MetadataStoreError` carrying a §8
+  `ErrorCode` (`METADATA_WRITE_FAILED`, retryable, source `storage`) — never a
+  bare `sqlite3.Error`, which would leak an unusable/PII-bearing message through
+  the bridge. Adding it required the §8 triple in ONE change: `ErrorCode` member
+  + `ERROR_REGISTRY` row + `docs/CONTRACTS.md` §8 table row, plus the
+  `_DOC_RETRYABLE` map in `tests/test_bridge_envelopes.py` (M3-T1).
+- `MetadataStore` write ops must go through `_write_tx` (one short
+  `BEGIN IMMEDIATE`): `journal_mode=WAL` + `busy_timeout` make a *second*
+  connection on the same file a valid concurrent reader (that is the ADR-008
+  "read during run" test shape); one connection per thread/process, never
+  shared across threads.
 ```
 
 ## M0 — Desktop Spike (gate: BLUEPRINT §5 Phase 0; acceptance: TESTING §5.2)
@@ -731,7 +828,7 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 
 ## M3 — Persistence
 
-- [ ] **M3-T1** SQLite metadata schema (runs/jobs/registry/checks/findings refs) + migrations. *Spec: ADR-008; SECURITY §2, §6.5.*
+- [x] **M3-T1** SQLite metadata schema (runs/jobs/registry/checks/findings refs) + migrations. *Spec: ADR-008; SECURITY §2, §6.5.* ✅ New `storage/` package: `paths.py` (OS-standard user-data/cache/temp resolution + `DPE_DATA_DIR`/`DPE_CACHE_DIR` overrides + app-bundle containment guard + 0o700 private dirs — SECURITY §2/§6.5), `migrations.py` (gapless forward-only `Migration` chain at `TARGET_VERSION=1`, `schema_migrations` + `PRAGMA user_version`, pre-migration online-backup `metadata.pre-migration-v{n}-{ts}Z.sqlite3`, downgrade + unversioned-db refusal, one atomic `BEGIN IMMEDIATE` per migration), `metadata_store.py` (`MetadataStore.save_run()` persists an M2-T11 `ProfileBundle` — §2 run, §3.1 profile, column inventory, §4.1 checks, §4.2 findings (ADR-016 fingerprint indexed, not unique), §4.3 recommendations, `error_log`/warnings, artifact references — in ONE transaction; full typed readers rebuild schema-valid objects identical to the input; registry/config-version/job APIs ready for M5; run-history + fingerprint queries ready for M6). WAL + `foreign_keys=ON` + `busy_timeout` + `isolation_level=None` deliver ADR-008 concurrent-read-during-run and crash-atomicity. 19 v1 tables, blobs stay in the artifact store (referenced by `run_artifacts`). NEW §8 code `METADATA_WRITE_FAILED`. NO artifact file lifecycle (M3-T2), NO normalized metric rows (M3-T3), no contract change, no new metric. +`tests/test_storage_metadata.py` (55). 607/607 pytest green, tsc clean 2026-10-24.
 - [ ] **M3-T2** Artifact store: layout, lifecycle policy, cleanup. *Spec: SECURITY §2.*
 - [ ] **M3-T3** Normalized metric persistence `(run_id, column, metric)` for cheap diffs. *Spec: ADR-008; ENGINE §9.*
 

@@ -37,6 +37,7 @@ class ErrorCode(str, Enum):
     BRIDGE_PAYLOAD_TOO_LARGE = "BRIDGE_PAYLOAD_TOO_LARGE"
     BRIDGE_COMMAND_UNKNOWN = "BRIDGE_COMMAND_UNKNOWN"
     ARTIFACT_WRITE_FAILED = "ARTIFACT_WRITE_FAILED"
+    METADATA_WRITE_FAILED = "METADATA_WRITE_FAILED"
     # --- promoted in M1-T6 from the M0 spike (see module docstring) ---
     BRIDGE_REQUEST_INVALID = "BRIDGE_REQUEST_INVALID"
     JOB_NOT_FOUND = "JOB_NOT_FOUND"
@@ -72,6 +73,7 @@ ERROR_REGISTRY: dict[ErrorCode, ErrorInfo] = {
         _row(ErrorCode.BRIDGE_PAYLOAD_TOO_LARGE, "bridge", "Message exceeded cap", False),
         _row(ErrorCode.BRIDGE_COMMAND_UNKNOWN, "bridge", "Command not in allow-list", False),
         _row(ErrorCode.ARTIFACT_WRITE_FAILED, "storage", "Could not persist artifact", True),
+        _row(ErrorCode.METADATA_WRITE_FAILED, "storage", "Could not persist metadata row", True),
         _row(ErrorCode.BRIDGE_REQUEST_INVALID, "bridge", "Envelope/payload schema validation failed", False),
         _row(ErrorCode.JOB_NOT_FOUND, "job", "Status/cancel referenced an unknown job id", False),
     )

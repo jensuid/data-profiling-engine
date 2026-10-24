@@ -367,12 +367,13 @@ No component may move a hypothesis up into facts or assert an unverified cause. 
 | `BRIDGE_PAYLOAD_TOO_LARGE` | bridge | Message exceeded cap | no |
 | `BRIDGE_COMMAND_UNKNOWN` | bridge | Command not in allow-list | no |
 | `ARTIFACT_WRITE_FAILED` | storage | Could not persist artifact | maybe |
+| `METADATA_WRITE_FAILED` | storage | Could not persist a metadata-store row (SQLite) | maybe |
 | `BRIDGE_REQUEST_INVALID` | bridge | Envelope/command-payload schema validation failed | no |
 | `JOB_NOT_FOUND` | job | Status/cancel referenced an unknown job id | no |
 
 Error objects must never contain credentials or raw sensitive data values ([[SECURITY_PACKAGING]] §5).
 
-> The registry is formalised as a Python module in `data_profiling_engine/errors.py` (M1-T6): `ErrorCode` (one member per code) + `ERROR_REGISTRY` (code → layer/meaning/retryable) with `lookup`/`is_retryable`/`is_registered` helpers. `BRIDGE_REQUEST_INVALID` and `JOB_NOT_FOUND` were introduced by the M0-T2/M0-T3 spike and promoted here in M1-T6. Add a new code by appending a row here **and** an `ErrorCode`/registry entry in the same change.
+> The registry is formalised as a Python module in `data_profiling_engine/errors.py` (M1-T6): `ErrorCode` (one member per code) + `ERROR_REGISTRY` (code → layer/meaning/retryable) with `lookup`/`is_retryable`/`is_registered` helpers. `BRIDGE_REQUEST_INVALID` and `JOB_NOT_FOUND` were introduced by the M0-T2/M0-T3 spike and promoted here in M1-T6. `METADATA_WRITE_FAILED` was introduced by M3-T1 (SQLite metadata store) under this same rule. Add a new code by appending a row here **and** an `ErrorCode`/registry entry in the same change.
 
 ## 9. Dataset configuration schema (input contract)
 
