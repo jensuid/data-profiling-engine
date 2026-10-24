@@ -14,26 +14,43 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 ## ▶ CURRENT POSITION
 
 ```text
-Milestone : M1 — Contracts Freeze   (GATE M0 PASSED 2026-10-24: M0-T1..T5
-          green on BOTH OS; Win smoke = smoke_win.txt at repo root)
-Task      : none in progress — M1-T4 done, start M1-T5 next.
-NEXT      : M1-T5 — TypeScript types mirroring the contracts + a parity test
-            against the JSON Schemas. Open docs/CONTRACTS.md §1 (parity rule)
-            + AGENTS §3; mirror `data_profiling_engine/schemas/models.py`
-            field-for-field into frontend/src (e.g. `types/contracts.ts`), then
-            assert parity (property/enum sets vs `schemas/*.schema.json`) —
-            extend tests/test_models.py-style parity checks or a node-side
-            script; keep HashRouter/build green (`npm --prefix frontend run build`).
-            Then M1-T6 (error-code registry + bridge/job envelopes).
-Blocked by: none.
-Session notes: M1-T4 delivered `schemas/models.py` (17 closed enums +
-               ContractModel base + all objects for the 9 frozen schemas) and
-               tests/test_models.py — 49 tests: dict→model→dump→`schemas.validate`
-               round-trip for all 9 schemas, model-side conditional negatives
-               (§1.1/§2/§4.1/§4.3/§9), field-name + required-set + enum parity
-               vs canonical schemas, strict-vs-open additionalProperties
-               behaviour. 162/162 pytest green 2026-10-24.
+Milestone : M2 — Engine CLI (spine; no UI)   (GATE M1 CONTRACTS FREEZE PASSED
+          2026-10-24: M1-T1..T6 green; 9 result + 4 envelope schemas frozen,
+          pydantic + TS mirrors in parity, §8 registry formalised)
+Task      : none in progress — M2-T2 done, start M2-T3 next.
+NEXT      : M2-T3 — Metric registry core + planner cost classes.
+            Open docs/ENGINE_SPEC.md §2 (execution planner), §2.1 (cost
+            classes), §3 (profiler list — the table columns become the
+            MVP-active registry rows) and §8 (mode/sampling gating).
+            Discovery output (data_profiling_engine/discovery/types.py
+            DiscoveryReport / LogicalType) is the planner's column-level
+            input; §4 selection rules decide which metrics run.
+            Land under data_profiling_engine/engine/metrics/ + a
+            MetricRegistry / MetricSpec / CostClass surface plus
+            independent reference tests (TESTING §3.1).
+Blocked by: none (M2-T1 accepted, M2-T2 accepted).
+Session notes: M2-T2 delivered data_profiling_engine/discovery/
+               (types.py LogicalType+Confidence+ColumnSignals+Discovery+
+               Report; signals.py bounded DuckDB aggregates + reservoir
+               sample; inference.py cascade + config overlay; __init__.py
+               discover(con, handle, config=None)). Config wins: declared
+               primary_key forces semantic=identifier (HIGH, config_declared);
+               declared units are copied verbatim into ColumnProfile.unit.
+               Currency is only `known` when config says so; a name+symbol
+               match yields `assumed`; anything else numeric_currency emits
+               `unknown` (AGENTS §3 "never present sampled/approx as exact"
+               applied to unit status). ColumnProfile skeletons emitted by
+               discovery already schema-validate against
+               column_profile.schema.json (metric sub-blocks come in
+               M2-T4..T6). +tests/test_discovery.py (31 tests: base
+               families, VARCHAR pattern promotions email/uuid/url/phone/
+               ISO date+datetime, currency-name→numeric_currency, config
+               PK+unit overlay, distinct-exact↔HLL switch at 10K, empty/
+               all-null edges, DiscoveryError→SCHEMA_INFERENCE_FAILED
+               registry code, deterministic re-run).
                Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
+                      (286 passed 2026-10-24; npm --prefix frontend run
+                      typecheck clean)
 ```
 
 ## ✔ GOTCHAS ( discoveries every future session must know )
@@ -46,9 +63,11 @@ Session notes: M1-T4 delivered `schemas/models.py` (17 closed enums +
 - Smoke entry: `python -m data_profiling_engine.main --smoke` (opens window, auto-closes).
 - pywebview `evaluate_js` serialises a JS Promise as `{}` — stash the resolution on `window`
   and poll from Python instead of expecting an awaited return (M0-T2 gotcha).
-- Bridge spike introduced code `BRIDGE_REQUEST_INVALID` (see bridge/errors.py) not yet in
-  CONTRACTS §8; M1-T6 promotes it into the formal error-code registry module + doc row.
-  Same promotion applies to `JOB_NOT_FOUND` (added M0-T3).
+- Bridge spike codes `BRIDGE_REQUEST_INVALID` (bridge/errors.py) + `JOB_NOT_FOUND`
+  (M0-T3) were promoted into the formal §8 registry (`data_profiling_engine/errors.py`,
+  ErrorCode members + §8 doc rows) in M1-T6; `bridge/errors.py` now just re-exports
+  their `.value`. Add new codes as an ErrorCode member + ERROR_REGISTRY row + §8
+  doc row in one change.
 - `multiprocessing.context` has NO `BaseEvent` — import `from multiprocessing.synchronize
   import Event`; only `SpawnContext`/`get_context` live in `multiprocessing.context`.
 - A handler result dict containing a `job_id` key must NOT be used to detect
@@ -100,6 +119,44 @@ Session notes: M1-T4 delivered `schemas/models.py` (17 closed enums +
 - Parity harness lives in tests/test_models.py: it compares canonical
   `properties`/`required`/`enum` against `model_fields` per root schema — extend
   it whenever a schema file is added (M1-T6).
+- TS↔schema parity lives in tests/test_contracts_ts_parity.py: it line-parses
+  `frontend/src/types/contracts.ts` (format is load-bearing — `<Name>Values`
+  const tuples, `?`=optional, `| null`=nullable, `[key: string]: unknown`=open,
+  one field per line) and asserts root property/required/enum parity vs the 9
+  schemas. Keep the TS file in that format or the parser silently under-matches.
+  GOTCHA: an open interface's index signature MUST be `unknown`, not
+  `JsonValue` — a sub-interface with optional props (e.g. `TemporalRange`) is
+  NOT assignable to a `JsonValue` index (tsc TS2411); `unknown` keeps tsc green
+  and the parity check only tests for the index signature's presence.
+- `con.execute()` a second time on the same DuckDB connection **replaces the
+  open result** — snapshot `rel.description` immediately after execute, or the
+  later probe silently mutates what you read (M2-T1 gotcha).
+- DuckDB 2.0 `read_csv` has **no `file_row_number` option** ("not supported by
+  this reader") — CSV row-ids use `row_number() OVER ()` (sequential scan,
+  1-based data-line); `read_parquet(file_row_number=true)` is 0-based global
+  row-group+offset (M2-T1).
+- Plain `polars` wheel crashes this Mac (no AVX2, illegal instruction at
+  import) — installed `polars[rtcompat]` (polars-runtime-compat wheel);
+  requirements.txt pinned `polars[rtcompat]>=2.0`. Polars 2.0 API: pass str
+  paths, not Path.
+- DuckDB `TIMESTAMP WITH TIME ZONE` scalar fetch into Python requires `pytz`
+  (DuckDB builds a tz-aware datetime on fetch); we do not ship pytz. Any
+  min/max/first-style scalar probe on a temporal column MUST `CAST(... AS
+  VARCHAR)` in SQL (see discovery/signals.py collect_column_signals). Same
+  for M2-T6 temporal profiler — keep it CAST-clean or add pytz deliberately.
+- DuckDB physical type strings are prefix-matched in `_family`; check
+  `INTEGER[]` / `STRUCT(...)` / `MAP(...)` / `UNION(...)` **BEFORE** the
+  integer/float families or `INTEGER[]` mis-detects as integer (M2-T2 gotcha).
+- Pydantic `use_enum_values=True` on the contract base classes means
+  `profile.semantic_type` / `unit.status` are plain strings at runtime, not
+  Enum members — compare with `== UnitStatus.KNOWN.value`, never `.value` on
+  the returned field (M2-T2 test gotcha).
+- ColumnProfile + DatasetProfile are `additionalProperties:false`; the
+  discovery "confidence + rationale" required by ENGINE §4.1 ("recorded with
+  a confidence so misclassification is visible") lives on the engine-internal
+  ColumnDiscovery object, not the contract. Persisted output stays clean;
+  planner/findings read the internal view. No contract change needed until
+  a UI surface asks for it — then a new ADR (M2-T2 design note).
 ```
 
 ## M0 — Desktop Spike (gate: BLUEPRINT §5 Phase 0; acceptance: TESTING §5.2)
@@ -117,13 +174,13 @@ Session notes: M1-T4 delivered `schemas/models.py` (17 closed enums +
 - [x] **M1-T2** JSON Schemas: QualityCheckResult, Finding(+fingerprint), Recommendation, FindingWorkflow. *Spec: CONTRACTS §4.* ✅ 4 Draft-2020-12 files added under `data_profiling_engine/schemas/` (§4.1/4.2/4.5/4.3) + `finding` embeds `finding_workflow` via `$ref` + `observed`/facts reuse Provenance `metricValue`. 27 new tests (§4.1 ERROR↔error coupling + status/dimension enums, §4.2 fingerprint `^sha256:[0-9a-f]{64}$` + facts/evidence_refs minItems 1 + hypothesis status enum + workflow null↔object, §4.3 `reason_type=evidence` ⇒ non-empty evidence_refs + status enum, §4.5 comment shape). 89/89 pytest green 2026-10-24.
 - [x] **M1-T3** Dataset-config JSON Schema + validator (rejects unknown rule keys, missing `dimension`). *Spec: CONTRACTS §9; ENGINE §5.1.* ✅ `dataset_config.schema.json` (Draft 2020-12, `$id` convention, `$defs/rule` extractable) — hard-rejects unknown config/rule keys via `additionalProperties:false`, closed ENGINE §5.1 rule catalog, `dimension` required (§4.1 enum parity), sampling enabled⇒strategy+size+seed, per-rule-type conditionals (`condition`⇒conditional_not_null; value|threshold⇒threshold rules); §9 YAML exemplar transcribed verbatim as positive test. +24 tests, 113/113 pytest green 2026-10-24.
 - [x] **M1-T4** Pydantic models generated/hand-aligned to schemas + round-trip tests. *Spec: CONTRACTS §1.* ✅ `schemas/models.py` — hand-aligned mirror of all 9 frozen schemas (schemas stay source of truth): 17 closed enums, `ContractModel` base enforcing the null/absence policy + strict-vs-open extras, conditional rules as validators (§1.1 sampled⇒seed / approximate⇒algorithm / not_computed⇒reason, §2 sampling lock + terminal status, §4.1 ERROR⇔error coupling, §4.3 evidence⇒refs, §9 rule catalog + conditionals, ADR-016 fingerprint pattern). +49 tests in `tests/test_models.py` (round-trip over all 9 schemas, field/required/enum parity, negative enforcement). 162/162 pytest green 2026-10-24.
-- [ ] **M1-T5** TS types mirroring contracts + parity test against JSON Schemas. *Spec: CONTRACTS §1; AGENTS §3.*
-- [ ] **M1-T6** Error-code registry module + bridge/job envelope models. *Spec: CONTRACTS §5.3, §8.*
+- [x] **M1-T5** TS types mirroring contracts + parity test against JSON Schemas. *Spec: CONTRACTS §1; AGENTS §3.* ✅ `frontend/src/types/contracts.ts` — hand-aligned TS mirror of `models.py` (17 `*Values` const-enum tuples + unions, 42 interfaces; `?`/`| null`/`[key: string]: unknown` carry optional/nullable/open semantics; HashRouter build intact) + `tests/test_contracts_ts_parity.py` (14 tests: root property-name + required-set + strict/no-index parity, root-enum↔named-TS-enum order-exact, PascalCase type-reference resolution, all-17-enums). `tsc --noEmit` clean + `vite build` green. 176/176 pytest green 2026-10-24.
+- [x] **M1-T6** Error-code registry module + bridge/job envelope models. *Spec: CONTRACTS §5.3, §8.* ✅ `data_profiling_engine/errors.py` — formal §8 registry: `ErrorCode` enum + `ERROR_REGISTRY` (code→layer/meaning/retryable) + `lookup`/`is_retryable`/`is_registered`; promotes `BRIDGE_REQUEST_INVALID`+`JOB_NOT_FOUND` (added §8 doc rows). `bridge/errors.py` re-exports `.value` aliases (facade/manager unchanged). 4 canonical §5.3 envelope schemas + models in `schemas/models.py` — `BridgeRequest`/`BridgeResponse`(status-discriminated ok↔result / accepted↔job_id / error↔error, request_id may be "" for pre-envelope failures)/`BridgeErrorObject`(§8 uppercase code)/`JobStatus`+`JobProgress`(§6.2 6 states). `bridge/envelope.py` re-exports canonical `Bridge*`; spike worker runtime kept enum-based (identity+`is_terminal`), asserted schema-conformant. Registered in `REQUIRED_SCHEMAS` + `test_models.py::CANONICAL_ROOTS`. +`tests/test_bridge_envelopes.py` (45 tests). 230/230 pytest green, tsc clean 2026-10-24. **→ GATE M1 CONTRACTS FREEZE PASSED.**
 
 ## M2 — Engine CLI (spine; no UI)
 
-- [ ] **M2-T1** Connectors: CSV + Parquet → DuckDB relation, read-only, `content_hash`, row-id policy. *Spec: ENGINE §5.2 note; CONTRACTS §2.*
-- [ ] **M2-T2** Discovery: physical→logical/semantic type inference + unit status. *Spec: ENGINE §4.1.*
+- [x] **M2-T1** Connectors: CSV + Parquet → DuckDB relation, read-only, `content_hash`, row-id policy. *Spec: ENGINE §5.2 note; CONTRACTS §2.* ✅ `connectors/` — `base.py` (pluggable `Connector` ABC + `RelationHandle` + §8-coded `DatasetReadFailed`/`SourceNotAllowed`; pre-compute path allow-list + suffix guard (ADR-011 closed set), streaming sha256 `SourceSnapshot` (+`row_id_policy` extra, open-model §2), LIMIT-0 dual probe = fail-fast parse + (name, physical type) schema w/o rows, collision guards for `_row_id`/`file_row_number`), `csv_connector.py` (`row_number() OVER ()` = generated line number), `parquet_connector.py` (`file_row_number+1` = row-group+offset, plumbing stripped), `__init__.py` registry + suffix dispatch. View = read-only explicit projection + `_row_id` (scan-time eval ⇒ stable under filter, verified). +`tests/test_connectors.py` 25 tests (independent refs: hashlib/Polars/hand-computed; multi-rowgroup 300K offset check; snapshot dump → profiling_run schema-valid; read-only byte/mtime assertions). 255/255 pytest green 2026-10-24.
+- [x] **M2-T2** Discovery: physical→logical/semantic type inference + unit status. *Spec: ENGINE §4.1.* ✅ `discovery/` — `types.py` (closed LogicalType enum 18 members + Confidence high/medium/low + ColumnSignals bounded-aggregate dataclass + ColumnDiscovery + DiscoveryReport); `signals.py` (`collect_column_signals` — one scalar-aggregate pass + one bounded reservoir DISTINCT sample for VARCHAR; exact vs HLL switch at 10K; `DiscoveryError` carries §8 code `SCHEMA_INFERENCE_FAILED`); `inference.py` (physical→logical base map, VARCHAR pattern refinement email/uuid/url/phone/ISO-date(-time)/currency-shaped numeric via regex ≥90%HIGH/≥70%MEDIUM, name heuristics `_id`/`_at`/`amount|price|value`/`status|state`/`is_/has_`/freeform, length+cardinality → categorical_nominal / text_freeform / near-unique identifier, numeric low-cardinality → dimension, config overlay: PK ⇒ semantic=identifier HIGH + config_declared=True, units copied verbatim); `__init__.py` (public `discover(con, handle, config=None)`). Unit policy per ENGINE §4.1: `known` ONLY via config, `assumed` via currency symbol, else `unknown`; non-currency ⇒ no unit block. +`tests/test_discovery.py` 31 tests (physical family base, pattern promotions, name nudges, config overlay PK/units, distinct-exact↔HLL switch across 10K, empty/all-null edges, DiscoveryError→registry code, Parquet roundtrip, determinism, schema-valid dump for every column_profile emitted). 286/286 pytest green, tsc clean 2026-10-24.
 - [ ] **M2-T3** Metric registry core + planner cost classes. *Spec: ENGINE §2, §2.1.*
 - [ ] **M2-T4** Profilers: statistical + missingness (+ reference tests). *Spec: ENGINE §3; TESTING §3.1.*
 - [ ] **M2-T5** Profilers: uniqueness + categorical (+ reference tests; HLL provenance). *Spec: ENGINE §3, §2.2.*
