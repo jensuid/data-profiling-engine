@@ -151,7 +151,8 @@ def test_timeout_marks_failed_with_job_timeout() -> None:
 
 @pytest.fixture()
 def facade() -> BridgeFacade:
-    return BridgeFacade()
+    # The spike worker_echo_job / job.* trio are test-only commands (M5-T2).
+    return BridgeFacade(enable_spike_commands=True)
 
 
 def _poll_until_terminal(fac: BridgeFacade, job_id: str) -> dict:

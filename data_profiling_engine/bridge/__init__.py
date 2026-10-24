@@ -1,8 +1,11 @@
 """Bridge package — typed JS↔Python facade (CONTRACTS §5; SECURITY §3).
 
 M0-T2/T3 spike: :class:`BridgeFacade` with ``echo`` plus the worker-job trio
-backed by the spawn-method worker in :mod:`bridge.worker`. Real MVP commands
-land in M5-T1.
+backed by the spawn-method worker in :mod:`bridge.worker`. M5-T2 lands the real
+``profile.start`` / ``profile.get_status`` / ``profile.cancel`` trio over the
+store-backed job manager; the spike commands stay available only behind
+``BridgeFacade(enable_spike_commands=True)``. The app host binds its user-data
+root with :func:`configure_runtime` before serving the bridge.
 """
 from .envelope import (
     BridgeErrorObject,
@@ -10,9 +13,11 @@ from .envelope import (
     BridgeResponse,
     EchoPayload,
     JobIdPayload,
+    ProfileStartPayload,
     WorkerEchoJobPayload,
 )
-from .facade import COMMANDS, PAYLOAD_CAP_BYTES, BridgeFacade
+from .facade import COMMANDS, PAYLOAD_CAP_BYTES, SPIKE_COMMANDS, BridgeFacade
+from .runtime import configure_runtime
 
 __all__ = [
     "BridgeErrorObject",
@@ -20,8 +25,11 @@ __all__ = [
     "BridgeRequest",
     "BridgeResponse",
     "COMMANDS",
+    "SPIKE_COMMANDS",
     "EchoPayload",
     "JobIdPayload",
+    "ProfileStartPayload",
     "PAYLOAD_CAP_BYTES",
     "WorkerEchoJobPayload",
+    "configure_runtime",
 ]

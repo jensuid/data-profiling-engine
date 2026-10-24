@@ -23,7 +23,9 @@ from data_profiling_engine.bridge import errors
 
 @pytest.fixture()
 def facade() -> BridgeFacade:
-    return BridgeFacade()
+    # Spike tests exercise the M0 echo pathway; the packaged facade leaves
+    # these commands off (M5-T2 spike-behind-a-flag).
+    return BridgeFacade(enable_spike_commands=True)
 
 
 # ---- happy path ----------------------------------------------------------
@@ -77,8 +79,10 @@ def test_handler_exception_never_leaks(facade: BridgeFacade, monkeypatch) -> Non
 
     from data_profiling_engine.bridge import facade as facade_mod
 
+    # The facade snapshots its command table at construction, so patch the
+    # live instance's resolved map (echo is a spike command enabled above).
     monkeypatch.setitem(
-        facade_mod.COMMANDS,
+        facade._commands,  # noqa: SLF001 — test reaches the resolved table
         "echo",
         facade_mod.CommandSpec(name="echo", payload_model=EchoPayload, handler=_boom),
     )

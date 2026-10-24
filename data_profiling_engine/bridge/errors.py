@@ -28,6 +28,10 @@ JOB_TIMEOUT = ErrorCode.JOB_TIMEOUT.value
 REQUEST_INVALID = ErrorCode.BRIDGE_REQUEST_INVALID.value
 JOB_NOT_FOUND = ErrorCode.JOB_NOT_FOUND.value
 
+# Host-side rejection surfaced by the ``profile.start`` handler (M5-T2): an
+# invalid §9 config is refused before any worker spawns (AGENTS §5).
+CONFIG_INVALID = ErrorCode.CONFIG_INVALID.value
+
 __all__ = [
     "COMMAND_UNKNOWN",
     "PAYLOAD_TOO_LARGE",
@@ -36,6 +40,7 @@ __all__ = [
     "JOB_TIMEOUT",
     "REQUEST_INVALID",
     "JOB_NOT_FOUND",
+    "CONFIG_INVALID",
     "ErrorCode",
     "ErrorInfo",
     "ERROR_REGISTRY",

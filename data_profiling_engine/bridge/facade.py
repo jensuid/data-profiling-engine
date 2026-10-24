@@ -8,27 +8,34 @@ matching :class:`BridgeResponse`. The facade never raises into the WebView;
 unknown input, oversized messages, or handler exceptions come back as typed
 error objects.
 
-Spike scope (M0-T2/T3): registered commands are ``echo`` plus the worker-job
-trio (``worker_echo_job`` / ``job.get_status`` / ``job.cancel``) that proves
-the bridge→spawn-worker→status-slot pathway. The real MVP commands from
-CONTRACTS §5.2 land in M5-T1.
+Spike scope (M0-T2/T3): the ``echo`` + worker-trio
+(``worker_echo_job`` / ``job.get_status`` / ``job.cancel``) prove the
+bridge→spawn-worker→status-slot pathway. They are kept in :data:`SPIKE_COMMANDS`
+and only registered when the facade is constructed with
+``enable_spike_commands=True`` (the M0 spike test suite does; the packaged app
+does not). The real MVP commands from CONTRACTS §5.2 are wired here:
+``profile.start`` / ``profile.get_status`` / ``profile.cancel`` land on the
+store-backed job manager (M5-T2).
 """
 from __future__ import annotations
 
 import json
+import os
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from . import errors
+from . import errors, runtime
 from .envelope import (
     BridgeErrorObject,
     BridgeRequest,
     BridgeResponse,
     EchoPayload,
     JobIdPayload,
+    ProfileStartPayload,
     WorkerEchoJobPayload,
 )
 from .worker import default_manager
@@ -73,14 +80,23 @@ def _worker_start_handler(payload: dict[str, Any]) -> dict[str, Any]:
     return {_ACCEPTED_SENTINEL: True, "job_id": job_id}
 
 
-def _job_status_handler(payload: dict[str, Any]) -> dict[str, Any]:
-    """Poll the thread-safe status slot (CONTRACTS §5.3/§5.5 shape)."""
-    status = default_manager().get_status(payload["job_id"])
+def _status_payload(manager: Any, job_id: str) -> dict[str, Any]:
+    """Poll the manager's thread-safe status slot (§5.3/§5.5 shape).
+
+    Shared by the spike ``job.get_status`` and the real ``profile.get_status``:
+    one status schema, transport-agnostic (the only difference is *which*
+    manager owns the job)."""
+    status = manager.get_status(job_id)
     if status is None:
-        return _error_result(payload["job_id"], errors.JOB_NOT_FOUND, "unknown job id")
+        return _error_result(job_id, errors.JOB_NOT_FOUND, "unknown job id")
     result = status.model_dump(mode="json", exclude_none=True)
     result.pop("job_id", None)  # envelope already identifies the job
     return result
+
+
+def _job_status_handler(payload: dict[str, Any]) -> dict[str, Any]:
+    """Spike poll — reads the in-memory default manager."""
+    return _status_payload(default_manager(), payload["job_id"])
 
 
 def _job_cancel_handler(payload: dict[str, Any]) -> dict[str, Any]:
@@ -90,7 +106,93 @@ def _job_cancel_handler(payload: dict[str, Any]) -> dict[str, Any]:
     return {"cancelled": True}
 
 
+def _profile_status_handler(payload: dict[str, Any]) -> dict[str, Any]:
+    """Real poll (§5.2 ``profile.get_status``) — reads the store-backed manager."""
+    return _status_payload(runtime.get_profile_manager(), payload["job_id"])
+
+
+def _profile_cancel_handler(payload: dict[str, Any]) -> dict[str, Any]:
+    """§5.2 ``profile.cancel``: set CANCEL_REQUESTED; confirmation is the worker's."""
+    if not runtime.get_profile_manager().cancel_job(payload["job_id"]):
+        return _error_result(payload["job_id"], errors.JOB_NOT_FOUND, "unknown job id")
+    return {"cancelled": True}
+
+
+def _new_run_id() -> str:
+    # A v4 hex is a fine unique id for a bridge job; the app host may pass a
+    # time-sortable ULID via ``payload.run_id`` (§1).
+    return str(uuid.uuid4())
+
+
+def _validate_config(document: dict[str, Any], profile_mode: "str | None") -> "str | None":
+    """Reject an invalid §9 config *before* any job starts (AGENTS §5).
+
+    Returns ``None`` when valid, else a short safe reason. The mode override is
+    folded in so what we validate is exactly what the worker will run; the
+    worker re-validates defensively (it cannot trust the host)."""
+    from data_profiling_engine import schemas as S
+    from data_profiling_engine.schemas.models import DatasetConfig
+
+    check = document
+    if profile_mode is not None:
+        profiling = dict(document.get("profiling") or {})
+        profiling["mode"] = profile_mode
+        check = {**document, "profiling": profiling}
+    schema_errors = S.validate("dataset_config.schema.json", check)
+    if schema_errors:
+        return "config failed schema validation"
+    try:
+        DatasetConfig.model_validate(check)
+    except ValidationError:
+        return "config failed model validation"
+    return None
+
+
+def _profile_start_handler(payload: dict[str, Any]) -> dict[str, Any]:
+    """Enqueue a REAL profiling job (§5.2 ``profile.start``) on the worker.
+
+    Validates the config first (rejected config never spawns a worker), then
+    hands the source path + config document + allow-list to the store-backed
+    manager, which creates the QUEUED job row and spawns the worker. The reply
+    is the §5.3 ``accepted`` + ``job_id`` envelope; results are polled, never
+    returned here."""
+    reason = _validate_config(payload["config"], payload.get("profile_mode"))
+    if reason is not None:
+        return _error_result("", errors.CONFIG_INVALID, reason)
+    root = runtime.data_root()
+    job_id = runtime.get_profile_manager().start_profile_job(
+        dataset_id=payload["dataset_id"],
+        source_path=payload["source_path"],
+        config_document=payload["config"],
+        run_id=payload.get("run_id") or _new_run_id(),
+        profile_mode=payload.get("profile_mode"),
+        allowed_roots=payload.get("allowed_roots"),
+        data_root=str(root) if root is not None else None,
+    )
+    return {_ACCEPTED_SENTINEL: True, "job_id": job_id}
+
+
 COMMANDS: dict[str, CommandSpec] = {
+    "profile.start": CommandSpec(
+        name="profile.start",
+        payload_model=ProfileStartPayload,
+        handler=_profile_start_handler,
+    ),
+    "profile.get_status": CommandSpec(
+        name="profile.get_status",
+        payload_model=JobIdPayload,
+        handler=_profile_status_handler,
+    ),
+    "profile.cancel": CommandSpec(
+        name="profile.cancel",
+        payload_model=JobIdPayload,
+        handler=_profile_cancel_handler,
+    ),
+}
+
+# Spike-only commands (M0-T2/T3). Registered only behind ``enable_spike_commands``
+# so the packaged facade exposes nothing the §5.2 MVP set does not define.
+SPIKE_COMMANDS: dict[str, CommandSpec] = {
     "echo": CommandSpec(name="echo", payload_model=EchoPayload, handler=_echo_handler),
     "worker_echo_job": CommandSpec(
         name="worker_echo_job",
@@ -110,6 +212,10 @@ COMMANDS: dict[str, CommandSpec] = {
 }
 
 
+def _spike_enabled_from_env() -> bool:
+    return os.environ.get("DPE_ENABLE_SPIKE_COMMANDS", "").lower() in {"1", "true", "yes"}
+
+
 class BridgeFacade:
     """Object passed to ``webview.create_window(js_api=...)``.
 
@@ -119,10 +225,15 @@ class BridgeFacade:
     reachable from the WebView.
     """
 
-    def __init__(self) -> None:
-        # Spike jobs live in the process-wide default manager; the real
-        # M5-T2 manager will be owned by the application host.
-        pass
+    def __init__(self, *, enable_spike_commands: "bool | None" = None) -> None:
+        # Resolve the spike flag: an explicit argument wins; otherwise the
+        # ``DPE_ENABLE_SPIKE_COMMANDS`` env (unset in the packaged app ⇒ spike
+        # off). Spike commands are a test affordance only (§5.2 MVP set excludes them).
+        if enable_spike_commands is None:
+            enable_spike_commands = _spike_enabled_from_env()
+        self._commands: dict[str, CommandSpec] = dict(COMMANDS)
+        if enable_spike_commands:
+            self._commands.update(SPIKE_COMMANDS)
 
     def bridge_send(self, request: Any) -> dict[str, Any]:
         """Single allow-listed entry point from JS. Never raises."""
@@ -168,7 +279,7 @@ class BridgeFacade:
             )
 
         # 4. Command allow-list (SECURITY §3: unknown → BRIDGE_COMMAND_UNKNOWN).
-        spec = COMMANDS.get(req.command)
+        spec = self._commands.get(req.command)
         if spec is None:
             return _error(
                 req.request_id,

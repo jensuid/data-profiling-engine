@@ -8,11 +8,16 @@ models. Extra fields are forbidden everywhere — SECURITY §3.
 
 M1-T6 freezes the three envelope models as canonical contracts, so they are
 imported from :mod:`data_profiling_engine.schemas.models` (validated against
-``schemas/bridge_*.schema.json``) rather than redefined here. Only the
-*spike-only*, per-command payload models below remain local — they are not part
-of CONTRACTS §5.3 (``echo`` / worker-trio stand-ins for the §5.2 commands).
+``schemas/bridge_*.schema.json``) rather than redefined here. The per-command
+payload models below are the **request-payload shapes** of the §5.2 command
+set: the envelope schema keeps ``payload`` free-form (the command name picks
+its model), so these pydantic classes are the single validation gate each
+handler passes through (SECURITY §3). ``echo`` / worker-trio stand-ins are
+spike-only and not part of §5.2.
 """
 from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -30,6 +35,7 @@ __all__ = [
     "EchoPayload",
     "WorkerEchoJobPayload",
     "JobIdPayload",
+    "ProfileStartPayload",
 ]
 
 
@@ -59,8 +65,29 @@ class WorkerEchoJobPayload(BaseModel):
 
 
 class JobIdPayload(BaseModel):
-    """Payload for ``job.get_status`` / ``job.cancel`` spike commands (M0-T3)."""
+    """Payload for ``job.get_status`` / ``job.cancel`` spike commands (M0-T3),
+    reused by the real ``profile.get_status`` / ``profile.cancel`` (§5.2)."""
 
     model_config = ConfigDict(extra="forbid")
 
     job_id: str = Field(min_length=1, max_length=128)
+
+
+class ProfileStartPayload(BaseModel):
+    """Payload for the real §5.2 ``profile.start`` command (M5-T2).
+
+    Carries everything the worker needs to run one job: the source path, the
+    §9 config **document** (validated against ``dataset_config.schema.json`` +
+    the pydantic model by the handler before dispatch — AGENTS §5), and the
+    optional ``profile_mode`` override / ``run_id`` / path ``allowed_roots``
+    allow-list. Only the config *document* (a bounded JSON object) crosses the
+    bridge, never a result; the whole envelope still obeys the 1 MiB cap (§5.4)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_id: str = Field(min_length=1, max_length=128)
+    source_path: str = Field(min_length=1, max_length=4096)
+    config: Dict[str, Any]
+    profile_mode: Optional[str] = Field(default=None, max_length=16)
+    run_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    allowed_roots: Optional[List[str]] = None

@@ -370,6 +370,7 @@ def profile_dataset(
     allowed_roots=None,
     registry: Optional[MetricRegistry] = None,
     result_refs: Optional[Dict[str, str]] = None,
+    job_id: Optional[str] = None,
 ) -> ProfileBundle:
     """Open a CSV/Parquet source, run the full engine path (M2-T10), then fold
     the result + dataset-scope metrics into the §3.1 / §2 contract rollups. This
@@ -379,7 +380,11 @@ def profile_dataset(
 
     ``result_refs`` is the artifact-path map the caller knows up front (e.g.
     the CLI's ``--out`` file) so the run record's reproducibility tuple can
-    point at the written document."""
+    point at the written document. ``job_id`` links the run to the §6 job that
+    produced it — set by the M5 bridge job manager (``profile.start``) so
+    ``MetadataStore.save_run`` can resolve the ``runs.job_id`` foreign key; the
+    headless CLI leaves it ``None`` (absent on the §2 record, per contract).
+    """
     from data_profiling_engine.orchestration import run_dataset_profiling
 
     con = con if con is not None else duckdb.connect()
@@ -390,7 +395,10 @@ def profile_dataset(
     )
     finished_at = datetime.now(timezone.utc)
     profile = build_dataset_profile(con, result, config, registry=registry)
-    run = build_profiling_run(result, config, started_at, finished_at, result_refs=result_refs)
+    run = build_profiling_run(
+        result, config, started_at, finished_at,
+        result_refs=result_refs, job_id=job_id,
+    )
     return ProfileBundle(
         run=run,
         profile=profile,
