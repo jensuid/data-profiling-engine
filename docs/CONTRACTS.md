@@ -389,6 +389,7 @@ profiling:
   mode: standard            # quick | standard | deep
   sampling: { enabled: false, strategy: reservoir, size: 100000, seed: 20261024 }
   sections: [schema, descriptive_statistics, missing_values, uniqueness, distributions]
+  missing: { sentinel_values: ["N/A", "n/a", "NA", "-", "unknown"] }
 quality_checks:
   - id: deal_id_not_null
     rule: not_null
@@ -424,3 +425,4 @@ quality_checks:
 - Each rule declares `dimension` (required for scorecard, [[ENGINE_SPEC]] §5.4).
 - `business_note` supports semantics-aware handling (e.g. negative revenue valid for refunds).
 - Unknown/unvalidatable config or rule keys are hard errors before execution.
+- `profiling.missing.sentinel_values` (optional, ADR-017): the closed per-dataset set of sentinel placeholders counted by `ColumnProfile.missingness.sentinel_count`. Matching is **exact, case-sensitive, on the raw stringified value** (no trim, no folding — predictable metadata-driven behavior); NULL never matches. When absent, `sentinel_count` is 0. Sentinel values are business placeholders, not credentials/raw sensitive values (SECURITY §5).

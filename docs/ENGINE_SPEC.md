@@ -77,6 +77,8 @@ Each profiler consumes a DuckDB relation and emits contract objects. Only releva
 | **Relational Profiler** | join cardinality, orphans, referential integrity | Phase 2 (deep, cross-table) | Final App |
 | **Drift Profiler** | change vs baseline | Phase 4 | Final App |
 
+> Sentinel values (Missingness Profiler) come from dataset config `profiling.missing.sentinel_values` (ADR-017); the set is closed per dataset, matched exact/case-sensitive, and an absent set means `sentinel_count` = 0. `missing_rate` denominator is the scanned relation's row count (sample or full, per the planner's method decision).
+
 ### 3.1 Correlation guardrail (why not MVP)
 
 Numeric all-pairs correlation is O(n²) in columns and expensive in rows. It is intentionally excluded from MVP. When added (deep mode), the engine must support column selection, pair cap (e.g. top-K by relevance), sampling, and a computation budget — never brute-force on a wide dataset.

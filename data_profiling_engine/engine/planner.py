@@ -161,6 +161,7 @@ def render_sql(
     column: Optional[str] = None,
     physical_type: Optional[str] = None,
     method: MetricMethod = MetricMethod.EXACT,
+    params: Optional[Dict[str, str]] = None,
 ) -> str:
     """Materialise a registry template for execution (the single place SQL is
     rendered; profilers M2-T4..T6 execute exactly this string).
@@ -170,7 +171,14 @@ def render_sql(
     bounded sample relation — the honesty lives in the Provenance label, not
     a different query. Temporal scalars get CAST(... AS VARCHAR) on fetch
     unless the source column is already a string (DuckDB TZ probe needs
-    pytz, which we do not ship — gotcha)."""
+    pytz, which we do not ship — gotcha).
+
+    ``params`` substitutes extra named placeholders beyond {table}/{col}
+    (e.g. {sentinels} → a bound parameterised relation name, ADR-017); the
+    profiler still binds the *values* separately — params carry SQL
+    identifiers only, never data. Any unsubstituted placeholder left in the
+    output is a programming error, caught here (one SQL materialisation
+    point, no silent half-rendered statements)."""
     if not spec.sql_template:
         raise PlanningError(f"{spec.metric_id} has no sql_template; profiler task builds it")
     template = spec.sql_template
@@ -183,7 +191,12 @@ def render_sql(
         # wrap the column reference itself — every templated cast-metric is an
         # aggregate over exactly one {col} occurrence
         col_sql = f"CAST({_q(column or '')} AS VARCHAR)"
-    return template.replace("{table}", _q(view_name)).replace("{col}", col_sql)
+    sql = template.replace("{table}", _q(view_name)).replace("{col}", col_sql)
+    for key, value in (params or {}).items():
+        sql = sql.replace("{%s}" % key, value)
+    if "{table}" in sql or "{col}" in sql or "{sentinels}" in sql:
+        raise PlanningError(f"{spec.metric_id}: unsubstituted SQL placeholder")
+    return sql
 
 
 def decide_method(

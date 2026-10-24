@@ -18,7 +18,8 @@ SQL templates use ``{table}`` / ``{col}`` placeholders and cover the MVP
 scalar aggregates only; multi-statement profilers (histogram binning,
 frequency pages, gap scans) are built by their profiler tasks M2-T4..T6 and
 register with ``sql_template=None`` until then — the registry is the plan
-surface, not the executor.
+surface; execution lives in ``engine/metrics/profiler.py`` (M2-T4 runner
+for the statistical + missingness families).
 """
 from __future__ import annotations
 
@@ -207,7 +208,12 @@ _STATS_METRICS = (
 _MISSINGNESS_METRICS = (
     # Missingness Profiler → ColumnProfile.missingness. Counts are single-scan
     # aggregates = §2.1 "null count" cheap_exact tier; the sentinel VALUE SET
-    # is config input (dataset_config), so detection itself stays cheap.
+    # is config input — profiling.missing.sentinel_values, ADR-017 — so
+    # detection itself stays cheap.
+    # Sentinel templates carry a third placeholder, {sentinels}: a
+    # parameterised relation ($1 = bound value list, ADR-017 — values are
+    # never interpolated into SQL), substituted by planner.render_sql's
+    # `params` kwarg before execution.
     MetricSpec("missingness.null_count", "missingness", "null count",
                "column_profile.missingness.null_count", MetricScope.COLUMN,
                CostClass.CHEAP_EXACT, section="missing_values",
@@ -222,12 +228,20 @@ _MISSINGNESS_METRICS = (
                "sentinel-value count",
                "column_profile.missingness.sentinel_count", MetricScope.COLUMN,
                CostClass.CHEAP_EXACT, section="missing_values",
-               exact_under_sampling=True),
+               exact_under_sampling=True,
+               sql_template="SELECT count(*) FILTER (WHERE CAST({col} AS VARCHAR) "
+                             "IN (SELECT value FROM {sentinels})) FROM {table}"),
     MetricSpec("missingness.missing_rate", "missingness",
                "missing rate + denominator (MetricValue)",
                "column_profile.missingness.missing_rate", MetricScope.COLUMN,
                CostClass.CHEAP_EXACT, section="missing_values",
-               exact_under_sampling=True),
+               exact_under_sampling=True,
+               # union predicate — a value both blank and sentinel counts once;
+               # NULL never matches the sentinel set (ADR-017). Empty relation
+               # → NULL → profiler normalises to 0.0 over denominator 0.
+               sql_template="SELECT count(*) FILTER (WHERE {col} IS NULL OR "
+                             "trim(CAST({col} AS VARCHAR)) = '' OR CAST({col} AS VARCHAR) "
+                             "IN (SELECT value FROM {sentinels})) * 1.0 / count(*) FROM {table}"),
 )
 
 _UNIQUENESS_METRICS = (

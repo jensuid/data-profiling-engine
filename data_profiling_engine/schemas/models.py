@@ -929,10 +929,31 @@ class ConfigSampling(_OpenModel):
         return self
 
 
+class ConfigMissing(_StrictModel):
+    """ADR-017 — missingness profiling knobs. Sentinel placeholders are
+    per-dataset business knowledge, declared here, never hard-coded in the
+    engine (AGENTS §5). Exact, case-sensitive match on the raw stringified
+    value; NULL never matches; absent/empty ⇒ sentinel_count = 0."""
+
+    sentinel_values: Optional[List[str]] = None
+
+    @field_validator("sentinel_values")
+    @classmethod
+    def _sentinel_shape(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return v
+        if len(set(v)) != len(v):
+            raise ValueError("sentinel_values entries must be unique")
+        if any(not item for item in v):
+            raise ValueError("sentinel_values entries must be non-empty")
+        return v
+
+
 class ConfigProfiling(_StrictModel):
     mode: ProfileMode
     sampling: Optional[ConfigSampling] = None
     sections: Optional[List[str]] = None
+    missing: Optional[ConfigMissing] = None
 
     @field_validator("sections")
     @classmethod
@@ -1166,6 +1187,7 @@ __all__ = [
     "ConfigUnitAssertion",
     "ConfigDataset",
     "ConfigSampling",
+    "ConfigMissing",
     "ConfigProfiling",
     "RuleCondition",
     "DatasetConfigRule",

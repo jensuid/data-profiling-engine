@@ -480,8 +480,18 @@ class TestTemplateExecution:
         assert con.execute(render_sql(default_registry().get("schema.column_count"), "fx")).fetchone()[0] == 2
 
     def test_render_rejects_missing_template(self, con):
+        # M2-T4 gave sentinel_count/missing_rate their templates; the
+        # no-template guard now rides on an still-untemplated row.
         with pytest.raises(PlanningError, match="no sql_template"):
+            render_sql(default_registry().get("uniqueness.is_unique_candidate"), "fx", column="n")
+
+    def test_render_rejects_unsubstituted_placeholder(self, con):
+        # {sentinels} must be provided via params (ADR-017 binding seam)
+        with pytest.raises(PlanningError, match="unsubstituted"):
             render_sql(default_registry().get("missingness.sentinel_count"), "fx", column="n")
+        sql = render_sql(default_registry().get("missingness.sentinel_count"), "fx",
+                         column="n", params={"sentinels": '"sent"'})
+        assert "{sentinels}" not in sql and '"sent"' in sql
 
     def test_render_rejects_approx_without_template(self, con):
         with pytest.raises(PlanningError, match="no approx"):

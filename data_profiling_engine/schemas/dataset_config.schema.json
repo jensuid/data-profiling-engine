@@ -77,6 +77,19 @@
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1 },
           "description": "Requested profile sections (ENGINE orchestration §5 point 2; §9 example: schema, descriptive_statistics, missing_values, uniqueness, distributions). Names are resolved by the metric registry at planning time — unknown entries are rejected there, not by this input schema."
+        },
+        "missing": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "sentinel_values": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 },
+              "description": "ADR-017: per-dataset sentinel placeholders counted by ColumnProfile.missingness.sentinel_count (ENGINE §3 Missingness row). Exact, case-sensitive match on the raw stringified value; NULL never matches. Absent/empty set ⇒ sentinel_count = 0."
+            }
+          },
+          "description": "Missingness profiling knobs (ADR-017)."
         }
       }
     },

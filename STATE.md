@@ -17,27 +17,65 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 Milestone : M2 — Engine CLI (spine; no UI)   (GATE M1 CONTRACTS FREEZE PASSED
           2026-10-24: M1-T1..T6 green; 9 result + 4 envelope schemas frozen,
           pydantic + TS mirrors in parity, §8 registry formalised)
-Task      : none in progress — M2-T3 done, start M2-T4 next.
-NEXT      : M2-T4 — Profilers: statistical + missingness (+ reference tests).
-            Open docs/ENGINE_SPEC.md §3 (Statistical + Missingness rows) and
-            docs/TESTING_BENCHMARKS.md §3.1 (independent reference tests).
-            The M2-T3 registry already carries the metric rows + exact/approx
-            SQL templates + CostClass for stats.{valid_count,min,max,mean,
-            median,p25,p75,p95,p99,stddev} and missingness.{null_count,
-            blank_count,sentinel_count,missing_rate}; the planner emits
-            PlanDecision(method+params) for each. M2-T4 EXECUTES those
-            decisions: consume ExecutionPlan, run render_sql(spec, view_name,
-            column, physical_type, method) against the DuckDB view, and stamp
-            each scalar into ColumnProfile.stats / .missingness as MetricValue
-            with Provenance(**decision.provenance_kwargs()) (ADR-015 —
-            sampled needs seed, approximate needs algorithm, not_computed
-            needs reason and NO value). Land under
-            data_profiling_engine/engine/metrics/ (a profiler runner module).
-            sentinel_count has no sql_template yet (needs the config sentinel
-            value set) — add its SQL + registry template in this task.
-            Reference-test every metric vs Polars/plain-SQL/hand-computed.
+Task      : none in progress — M2-T4 done, start M2-T5 next.
+NEXT      : M2-T5 — Profilers: uniqueness + categorical (+ reference tests;
+            HLL provenance). Open docs/ENGINE_SPEC.md §3 (Uniqueness +
+            Categorical rows) + §2.2 (HLL / sampling) and
+            docs/TESTING_BENCHMARKS.md §3.1. M2-T4 landed the runner pattern in
+            engine/metrics/profiler.py (execute_stat_and_missingness) — add a
+            second family pass (same module or sibling uniqueness.py /
+            categorical.py) consuming the ExecutionPlan decisions the M2-T3
+            registry already emits for uniqueness.{distinct_count (HLL approx
+            template, expensive_exact → approximate at >LARGE_ROW_LIMIT or
+            quick, algorithm duckdb HLL), is_unique_candidate (distinct==
+            non-null), duplicate_groups} → ColumnProfile.uniqueness
+            (MetricValue distinct_count + is_unique_candidate bool) and
+            categorical.{frequencies,rare_categories,label_inconsistencies}
+            (all sql_template=None → the profiler BUILDS the GROUP BY SQL; §4
+            gate-1 low-cardinality trigger reads uniqueness.distinct_count)
+            → ColumnProfile.categorical. Reuse the _not_computed_value /
+            _metric_value honesty helpers + §6.4 per-task error policy +
+            render_sql(params=…). Reference-test distinct (exact vs HLL within
+            error bounds + labeled approximate) and frequencies vs
+            Polars/hand. NOTE: the M2-T4 runner SKIPS non-{statistical,
+            missingness} families by design (EXECUTED_FAMILIES); M2-T5 EXECUTES
+            the families it owns.
             Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
-Blocked by: none (M2-T1, M2-T2, M2-T3 accepted).
+Blocked by: none (M2-T1..T4 accepted).
+Session notes: M2-T4 delivered engine/metrics/profiler.py —
+               execute_stat_and_missingness(con, handle, report, plan, config,
+               registry) consumes the M2-T3 ExecutionPlan, renders each
+               templated stats/missingness decision via render_sql against the
+               DuckDB view (or ONE shared bounded sample relation for `sampled`
+               decisions — md5('seed#‖_row_id') ORDER + LIMIT, a preliminary
+               reservoir deferred to M2-T10), and stamps scalars into
+               ColumnProfile.stats/.missingness as MetricValue with
+               Provenance(**decision.provenance_kwargs()). not_computed →
+               value-key ABSENT (MetricValue.model_construct + fields_set.
+               discard('value')); denominator omitted when None. Sentinel set
+               BOUND via executemany($1) into a temp `dpe_sentinels` relation
+               read by the new {sentinels} placeholder (ADR-017) — values never
+               enter SQL. An `approximate` decision whose spec has no approx
+               template (stddev under quick) falls back to EXACT SQL but keeps
+               the approximate label (M2-T3 delegated execution detail). §6.4:
+               per-metric duckdb.Error → RunErrorEntry(METRIC_NOT_COMPUTED) +
+               not_computed value, run continues. DECIMAL fetches normalise to
+               float (JSON-safe). ADR-017 (CONTRACTS §9
+               profiling.missing.sentinel_values + ARCHITECTURE ADR-017 +
+               ENGINE §3 note): dataset_config.schema.json + ConfigMissing
+               pydantic + contracts.ts ConfigMissing — exact/case-sensitive
+               match, absent ⇒ sentinel_count 0. + registry templates for
+               missingness.{sentinel_count,missing_rate} + render_sql(params=…)
+               + unsubstituted-placeholder guard. +
+               tests/test_profilers_stats_missingness.py (24: stats vs Polars
+               std(ddof=1)/quantile(linear) + hand; missingness
+               null/blank/sentinel/missing_rate; ADR-017 absent/case-sensitive/
+               bound-quote; exact/approximate(t-digest)/sampled(seed+determinism
+               +bounded)/not_computed(reason,no value); §6.4 partial-failure;
+               empty relation; DECIMAL transport; §3.2 schema-valid + byte-stable
+               rerun) + 1 new render_sql placeholder-guard test in
+               test_metric_registry_planner. 375/375 pytest green, tsc clean
+               2026-10-24.
 Session notes: M2-T3 delivered data_profiling_engine/engine/metrics/__init__.py
                (CostClass enum 4 members w/ §2.1 verbatim behaviour; MetricSpec
                frozen dataclass — metric_id/family/contract_target/scope/
@@ -208,6 +246,25 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 - DuckDB `quantile_cont` linear-interpolation hand-values over {1,2,3}: p25=1.5,
   median=2.0, p75=2.5 (NOT nearest-rank); `avg` ignores NULLs (3,1,2→2.0). Fixed
   these reference literals while writing the M2-T3 template-execution test.
+- DuckDB `read_csv` reads an **empty quoted field `""` as NULL**, not the blank
+  string `''` (default null_str is empty) — to exercise `missingness.blank_count`
+  you must build the fixture as a DuckDB `VALUES` relation with a real `''`, not
+  a CSV (M2-T4 test gotcha).
+- Strict contract models reject an **explicit null on a non-nullable field**
+  (`MetricValue.denominator` included) — when a metric is absent OMIT the key,
+  never pass `None`; for `not_computed` MetricValue use `model_construct` then
+  `model_fields_set.discard('value')` so the canonical dump omits `value`
+  (M2-T4).
+- Planner `decide_method` labels a `supports_approximate` metric `approximate`
+  even when it has NO `approx_sql_template` (e.g. `stats.stddev` under quick);
+  `render_sql` then raises "no approx template". The PROFILER must fall back to
+  rendering the EXACT template while KEEPING the planner's `approximate`+algorithm
+  provenance label (M2-T3 delegated this execution detail to M2-T4..T6).
+- Sentinel values cross the SQL boundary **bound, not interpolated** (ADR-017):
+  the missingness runner `executemany($1)`-loads them into temp relation
+  `dpe_sentinels` and `render_sql(params={'sentinels': '"dpe_sentinels"'})`
+  substitutes the {sentinels} placeholder; a sentinel containing a quote (`it's`)
+  still matches literally and cannot break the statement.
 ```
 
 ## M0 — Desktop Spike (gate: BLUEPRINT §5 Phase 0; acceptance: TESTING §5.2)
@@ -233,7 +290,7 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 - [x] **M2-T1** Connectors: CSV + Parquet → DuckDB relation, read-only, `content_hash`, row-id policy. *Spec: ENGINE §5.2 note; CONTRACTS §2.* ✅ `connectors/` — `base.py` (pluggable `Connector` ABC + `RelationHandle` + §8-coded `DatasetReadFailed`/`SourceNotAllowed`; pre-compute path allow-list + suffix guard (ADR-011 closed set), streaming sha256 `SourceSnapshot` (+`row_id_policy` extra, open-model §2), LIMIT-0 dual probe = fail-fast parse + (name, physical type) schema w/o rows, collision guards for `_row_id`/`file_row_number`), `csv_connector.py` (`row_number() OVER ()` = generated line number), `parquet_connector.py` (`file_row_number+1` = row-group+offset, plumbing stripped), `__init__.py` registry + suffix dispatch. View = read-only explicit projection + `_row_id` (scan-time eval ⇒ stable under filter, verified). +`tests/test_connectors.py` 25 tests (independent refs: hashlib/Polars/hand-computed; multi-rowgroup 300K offset check; snapshot dump → profiling_run schema-valid; read-only byte/mtime assertions). 255/255 pytest green 2026-10-24.
 - [x] **M2-T2** Discovery: physical→logical/semantic type inference + unit status. *Spec: ENGINE §4.1.* ✅ `discovery/` — `types.py` (closed LogicalType enum 18 members + Confidence high/medium/low + ColumnSignals bounded-aggregate dataclass + ColumnDiscovery + DiscoveryReport); `signals.py` (`collect_column_signals` — one scalar-aggregate pass + one bounded reservoir DISTINCT sample for VARCHAR; exact vs HLL switch at 10K; `DiscoveryError` carries §8 code `SCHEMA_INFERENCE_FAILED`); `inference.py` (physical→logical base map, VARCHAR pattern refinement email/uuid/url/phone/ISO-date(-time)/currency-shaped numeric via regex ≥90%HIGH/≥70%MEDIUM, name heuristics `_id`/`_at`/`amount|price|value`/`status|state`/`is_/has_`/freeform, length+cardinality → categorical_nominal / text_freeform / near-unique identifier, numeric low-cardinality → dimension, config overlay: PK ⇒ semantic=identifier HIGH + config_declared=True, units copied verbatim); `__init__.py` (public `discover(con, handle, config=None)`). Unit policy per ENGINE §4.1: `known` ONLY via config, `assumed` via currency symbol, else `unknown`; non-currency ⇒ no unit block. +`tests/test_discovery.py` 31 tests (physical family base, pattern promotions, name nudges, config overlay PK/units, distinct-exact↔HLL switch across 10K, empty/all-null edges, DiscoveryError→registry code, Parquet roundtrip, determinism, schema-valid dump for every column_profile emitted). 286/286 pytest green, tsc clean 2026-10-24.
 - [x] **M2-T3** Metric registry core + planner cost classes. *Spec: ENGINE §2, §2.1.* ✅ `engine/metrics/__init__.py` — `CostClass` (4 §2.1 members, large-N behaviour in doc), `MetricSpec` frozen dataclass (metric_id/family/display/contract_target/scope/cost_class + §4 applicability [logical+physical] + section + supports_approximate/requires_full_relation/exact_under_sampling/cast_varchar_on_fetch flags + sql/approx templates), 34-row MVP catalog over the 8 MVP-active §3 families (relationship/relational/drift intentionally unregistered — §3 marks them Phase-2/4), immutable `MetricRegistry` (dup/non-MVP/unknown guards) + `default_registry()`. `engine/planner.py` — `PlanDecision.__post_init__` structurally enforces §2.2 sampling honesty (sampled⇒seed, approximate⇒algorithm, not_computed⇒reason) → `provenance_kwargs()` stamps straight into contract `Provenance`; pure `decide_method()` = the §2.1×§8 table; `plan_execution()` applies §4 gates 1/2/3; `render_sql()` is the single SQL-materialisation point ({table}/{col} quoting, approx swap, temporal CAST-to-VARCHAR for the no-pytz TZ probe). No computation executed here (that is M2-T4..T6). +`tests/test_metric_registry_planner.py` 64 tests (registry integrity; every `contract_target` path resolved against the frozen JSON Schemas by $ref-walking `validator_for(...).schema`; catalog↔§3-family + ↔§2.1-cost-class parity; table-driven `decide_method` vs an **independent** dict reference transcribed from §2.1/§8 prose; Provenance stamping; selection + section gating; determinism; templated SQL executed on a hand-computed DuckDB fixture — exact/HLL-approx/t-digest-approx, TZ CAST fetch, odd-identifier quoting). 350/350 pytest green, tsc clean 2026-10-24.
-- [ ] **M2-T4** Profilers: statistical + missingness (+ reference tests). *Spec: ENGINE §3; TESTING §3.1.*
+- [x] **M2-T4** Profilers: statistical + missingness (+ reference tests). *Spec: ENGINE §3; TESTING §3.1.* ✅ `engine/metrics/profiler.py` — `execute_stat_and_missingness(con, handle, report, plan, config, registry)` consumes the M2-T3 `ExecutionPlan`, renders each templated stats/missingness decision via `render_sql` against the DuckDB view (or ONE shared bounded sample relation for `sampled` decisions — seeded md5 ORDER+LIMIT, reservoir finalised in M2-T10), stamps scalars into `ColumnProfile.stats`/`.missingness` as `MetricValue`+`Provenance(**decision.provenance_kwargs())`. Honesty enforced: not_computed ⇒ value key ABSENT (`model_construct`+`fields_set.discard`); approximate-without-approx-template (stddev/quick) falls back to exact SQL but keeps the `approximate` label; §6.4 per-metric `duckdb.Error`→`RunErrorEntry(METRIC_NOT_COMPUTED)`+not_computed, run continues; DECIMAL→float JSON-safe. **ADR-017** (new): sentinel set is dataset-config input `profiling.missing.sentinel_values` (exact/case-sensitive, bound via `executemany($1)` into temp `dpe_sentinels`, never interpolated; absent ⇒ `sentinel_count` 0) — added to `dataset_config.schema.json`+`ConfigMissing` pydantic+`contracts.ts`, CONTRACTS §9 exemplar, ENGINE §3 note; + `missingness.{sentinel_count,missing_rate}` registry templates + `render_sql(params=…)` w/ unsubstituted-placeholder guard. +`tests/test_profilers_stats_missingness.py` (24 tests: stats vs Polars `std(ddof=1)`/`quantile(linear)` + hand-computed; missingness null/blank/sentinel/missing_rate+denominator; ADR-017 absent/case-sensitive/bound-quote; exact/approximate(t-digest)/sampled(seed+determinism+bounded)/not_computed(reason,no value); §6.4 partial-failure; empty relation; DECIMAL transport; §3.2 schema-valid + byte-stable rerun) + 1 new render_sql placeholder-guard test. 375/375 pytest green, tsc clean 2026-10-24.
 - [ ] **M2-T5** Profilers: uniqueness + categorical (+ reference tests; HLL provenance). *Spec: ENGINE §3, §2.2.*
 - [ ] **M2-T6** Profilers: distribution (histogram, outliers) + temporal single-column. *Spec: ENGINE §3.*
 - [ ] **M2-T7** Rule registry + compiler → one SQL per rule; statuses PASS/FAIL/WARN/ERROR. *Spec: ENGINE §5.1–5.3; CONTRACTS §4.1.*

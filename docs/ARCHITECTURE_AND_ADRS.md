@@ -201,6 +201,12 @@ Each ADR: Context → Decision → Alternatives → Consequences → Validation.
 - **Consequences:** fingerprint algorithm belongs to `findings/fingerprinting.py`; baseline feature depends on it.
 - **Validation:** same issue across two runs with different numbers → same fingerprint; different issue → different fingerprint.
 
+### ADR-017 — Sentinel value sets are dataset-config input — Accepted (supersedes an implicit gap in ADR-015-era contracts)
+- **Context:** `ColumnProfile.missingness.sentinel_count` (CONTRACTS §3.2) requires knowing which placeholder values ("N/A", "-", …) count as missing, but neither the frozen §9 config schema nor ENGINE §3 ever defined **where that set comes from**. The metric-registry comment (M2-T3) assumed "config input"; the field did not exist. Sentinel semantics are per-dataset business knowledge, and AGENTS §5 forbids hard-coding per-dataset behavior in code.
+- **Decision:** the sentinel set is declared in dataset config as `profiling.missing.sentinel_values` (optional array of non-empty, unique strings; empty/absent ⇒ no sentinels, `sentinel_count` = 0). Matching is **exact, case-sensitive, on the raw stringified value** (NULL never matches) — normalization variants are explicitly rejected to keep behavior predictable and metadata-driven.
+- **Consequences:** additive change to `dataset_config.schema.json` + `DatasetConfig` pydantic mirror + CONTRACTS §9 exemplar (all in the M2-T4 change); the missingness profiler passes the set as bound parameters (values never interpolated into SQL). No change to any persisted result contract.
+- **Validation:** config with unknown keys still rejected before profiling; sentinel counts verified against hand-computed fixtures; absent config ⇒ `sentinel_count` == 0.
+
 ## 6. Decision summary matrix
 
 | Aspect | Decision | ADR |
@@ -214,6 +220,7 @@ Each ADR: Context → Decision → Alternatives → Consequences → Validation.
 | Internal transport | **Bridge only, no HTTP/TCP** | ADR-005 |
 | Frontend routing | **HashRouter** | ADR-013 |
 | Doc pack | **6 docs + AGENTS.md** | ADR-014 |
+| Missingness sentinel set | **Dataset-config input (`profiling.missing.sentinel_values`)** | ADR-017 |
 | Persistence | SQLite metadata + file artifact store | ADR-008 |
 | Packaging | PyInstaller (pending Phase-0) | ADR-009 |
 | Security | Read-only default, locked bridge, native credential store | [[SECURITY_PACKAGING]] |

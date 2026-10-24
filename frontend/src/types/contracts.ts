@@ -518,10 +518,15 @@ export interface ConfigSampling {
   [key: string]: unknown;
 }
 
+export interface ConfigMissing {
+  sentinel_values?: string[];
+}
+
 export interface ConfigProfiling {
   mode: ProfileMode;
   sampling?: ConfigSampling;
   sections?: string[];
+  missing?: ConfigMissing;
 }
 
 export interface RuleCondition {
