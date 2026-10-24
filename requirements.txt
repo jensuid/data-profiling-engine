@@ -3,6 +3,7 @@ pywebview>=5.1
 duckdb>=1.1
 pydantic>=2.8
 jsonschema>=4.22  # canonical JSON Schema validation for contracts/ (M1, ADR-014; Draft 2020-12)
+pyyaml>=6.0  # §9 dataset-config authoring syntax loader for the profiler-cli (BLUEPRINT Phase 1; ADR-012 — YAML is a syntax choice, not a framework)
 polars[rtcompat]>=2.0 # independent reference computations for correctness tests only; rtcompat wheel required on non-AVX2 CPUs (M2-T1 gotcha)
 
 # Test tooling (AGENTS §9: pytest tests are part of every task)
