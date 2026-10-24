@@ -13,6 +13,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { BridgeError, bridgeAvailable } from "../bridge/api";
+import { setSelectedDataset } from "../state/selection";
 import type {
   DatasetInspectResult,
   DatasetInspectPayload,
@@ -71,6 +72,13 @@ export default function DatasetSelection() {
       );
       setInspect(result);
       setInspectStatus("ready");
+      // M6-T2: hand the confirmed dataset to the Run Configuration screen
+      // through the shared selection store (survives HashRouter navigation).
+      setSelectedDataset({
+        sourcePath: sourcePath.trim(),
+        datasetId: result.dataset_id,
+        columns: result.columns.map((c) => c.name),
+      });
     } catch (e) {
       setInspectStatus("error");
       setInspectError(e instanceof BridgeError ? `${e.code}: ${e.message}` : String(e));

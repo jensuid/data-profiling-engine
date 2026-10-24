@@ -22,30 +22,63 @@ Milestone : M6 — UI Screens (GATE M1 CONTRACTS FREEZE PASSED
           dev-mode 2026-10-25 — T1 read commands + caps, T2 job manager +
           real profile.start worker, T3 §5.5 progress push; packaged
           bridge/worker verification on both OS deferred to M7/Phase-3)
-Task      : none in progress — M6-T1 done (Dataset Selection screen: bridge
-          client `api.ts`, `DatasetSelection.tsx` page calling
-          `dataset.inspect` + `dataset.preview`, routing wired in App.tsx).
-          M5 is COMPLETE, M6 UI screens started. Frontend compiles clean;
-          Python suite unchanged (all changes frontend-only).
+Task      : none in progress — M6-T2 done (Run Configuration screen: profile
+          mode, sampling w/ required seed, §9 config upload (YAML/JSON) +
+          form-built config, live client-side validation errors, Start →
+          `profile.start`). Job id parked in the shared selection store for
+          M6-T3. M5 COMPLETE; M6-T1+T2 landed. Frontend compiles clean;
+          Python suite unchanged (all changes frontend-only + one npm dep).
 GATE M4   : reporting-layer tasks T1-T4 COMPLETE (706/706 pytest, tsc clean,
           golden byte-stable). MVP acceptance is on the PACKAGED build
           (BLUEPRINT §5 Phase-1 gate / §6), not dev mode — do not stamp M4
           "accepted" until the packaged run is verified in M7/Phase-3.
-NEXT      : M6-T2 — Run Configuration (mode, sampling, config upload w/
-          validation errors). *Spec: CONTRACTS §9.*
-          The Dataset Selection screen lets the user confirm a file; the next
-          screen collects profile mode + optional DatasetConfig YAML upload and
-          validates it before offering a `profile.start` button. Files to open:
-          `frontend/src/pages/` (new RunConfig.tsx),
-          `frontend/src/types/contracts.ts` (`DatasetConfig`, `ConfigProfiling`,
-          `DatasetConfigRule`),
-          `docs/CONTRACTS.md` §9 (config schema),
-          `frontend/src/bridge/api.ts` (`bridgeStartJob` already wired),
-          `data_profiling_engine/bridge/facade.py` (`_validate_config` pattern
-          to mirror client-side validation hints).
+NEXT      : M6-T3 — Run Progress (status/percent/cancel). *Spec: CONTRACTS §6.*
+          RunConfig already starts the job and writes `{jobId, datasetId,
+          sourcePath, startedAt}` to the shared store. Build the progress
+          screen: poll `profile.get_status` (authoritative §5.5) + optional
+          `onPushedJobStatus` hints, render §6.2 state + `progress`
+          (completed/total_steps, current_step), Cancel → `profile.cancel`
+          (CANCEL_REQUESTED is not a guarantee — only the polled terminal state
+          confirms it).
+          Files to open: `frontend/src/pages/` (new RunProgress.tsx),
+          `frontend/src/state/selection.ts` (`useStartedJob`),
+          `frontend/src/bridge/api.ts` (`bridgeSend`/`onPushedJobStatus`),
+          `docs/CONTRACTS.md` §5.3/§5.5/§6, `frontend/src/types/contracts.ts`
+          (`JobStatus`), `frontend/src/App.tsx` (route — nav already has Run;
+          consider /run vs /progress split).
           Test:  cd frontend && npx tsc --noEmit
                  .venv/bin/python -m pytest data_profiling_engine/tests -q
 Blocked by: none.
+Session notes: M6-T2 landed the Run Configuration screen (CONTRACTS §9).
+               Files: `frontend/src/pages/RunConfig.tsx` (mode radios;
+               sampling toggle + strategy/size/seed — seed REQUIRED when
+               enabled, ADR-015; language default(en)/en/id; rule editor with
+               deterministic derived ids + conditional_not_null condition row;
+               YAML/JSON §9 upload; live validation-issue panel; Start →
+               `bridgeStartJob("profile.start")`, mode always sent as the
+               `profile_mode` override), `frontend/src/config/validation.ts`
+               (client-side MIRROR of dataset_config.schema.json + facade
+               `_validate_config` hints — `parseConfigDocument` (js-yaml),
+               `validateDatasetConfig`, `buildConfigFromForm`,
+               `BRIDGE_MESSAGE_CAP_BYTES` pre-check; a UX hint only — the
+               server-side schema+model check with CONFIG_INVALID stays the
+               sole authority, AGENTS §5), `frontend/src/state/selection.ts`
+               (cross-screen external stores via `useSyncExternalStore`:
+               `SelectedDataset` set by the Dataset screen on inspect, and
+               `StartedJob` for M6-T3 — in-memory only, the SQLite store stays
+               the restart authority §6.3), `App.tsx` (route /run → RunConfig),
+               `DatasetSelection.tsx` (+setSelectedDataset), `styles.css`
+               (+99 lines). New npm dep: `js-yaml` + `@types/js-yaml`.
+               Verified: §9 YAML exemplar → 0 errors on BOTH the client mirror
+               and the server schema; form-built doc schema+model-valid;
+               `language` omitted when unset (config_hash stability, ADR-018).
+               GOTCHA found: `language` must be in the mirror's TOP_KEYS or the
+               exemplar self-rejects (fixed same session). Upload reads file
+               TEXT in the WebView and only the parsed document crosses the
+               bridge — no new facade method and no path allow-list exposure
+               needed (SECURITY §3); the dataset path stays a text input
+               pending the pywebview Browse spike below. 765/765 pytest green,
+               tsc clean, vite build clean 2026-10-25.
 Session notes: M6-T1 landed the first real UI screen (Dataset Selection).
                Files: `frontend/src/bridge/api.ts` (typed §5.3 bridge client:
                `BridgeRequest`/`BridgeResponse`/`BridgeError`/`bridgeSend`/
@@ -1168,6 +1201,14 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
   selected path to JS, or trigger the dialog from a Python-side hook and push
   the path via `evaluate_js`. The text-input path entry shipped in M6-T1 is the
   interim until this is done.
+- M6-T2 client §9 mirror (`frontend/src/config/validation.ts`) has NO pytest
+  parity guard (no frontend test runner by design). If `dataset_config.schema.json`
+  or the §9 exemplar ever changes, re-verify the mirror MANUALLY: bundle with
+  `npx esbuild src/config/validation.ts --bundle --format=esm` and run the
+  exemplar + known-bad mutations through `validateDatasetConfig`, then diff
+  against `S.validate("dataset_config.schema.json", …)`. The server check
+  (CONFIG_INVALID at profile.start) is always the authority — a stale mirror
+  only mis-hints the UI, it can never admit a bad config.
 ```
 
 ## M0 — Desktop Spike (gate: BLUEPRINT §5 Phase 0; acceptance: TESTING §5.2)
@@ -1224,7 +1265,7 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 ## M6 — UI Screens (one task = one screen)
 
 - [x] **M6-T1** Dataset Selection + inspect/preview. *Spec: BLUEPRINT Phase 2; CONTRACTS §5.* ✅ First real UI screen. `bridge/api.ts` (typed §5.3 envelope client: `BridgeRequest`/`BridgeResponse`/`BridgeError`; `bridgeSend<R>` unwraps ok→result; `bridgeStartJob` returns job_id; `onPushedJobStatus` registers the optional §5.5 `__dpeJobStatus` push sink; `bridgeAvailable` detects shell). `DatasetSelection.tsx`: path text input → `dataset.inspect` metadata grid (file, connector, size, content_hash, columns table w/ logical+semantic types when stored run exists, last_run badge, row_count + method tag) → auto `dataset.preview` (50-row paged, PII mask toggle, lock icons, masking_applied info, prev/next). `App.tsx`: route `/` → DatasetSelection. `styles.css`: +150 lines (path-row, meta-grid, inspect/preview-panel, table-scroll, pager, error-box, banner-warn, mask-toggle, last-run-badge, dark-mode variants). No Python changes, no new §5.2 commands, no new enum, 765 tests green, tsc clean, vite build 5.6s. **→ NEXT: M6-T2.**
-- [ ] **M6-T2** Run Configuration (mode, sampling, config upload w/ validation errors). *Spec: CONTRACTS §9.*
+- [x] **M6-T2** Run Configuration (mode, sampling, config upload w/ validation errors). *Spec: CONTRACTS §9.* ✅ `RunConfig.tsx` + `config/validation.ts` (client §9 mirror — js-yaml parse, schema-mirrored validator, form→document builder) + `state/selection.ts` (cross-screen dataset/job stores). Mode always sent as the §5.3 `profile_mode` override (worker folds it in, so validated==run); sampling enabled ⇒ strategy+size+seed enforced (ADR-015); uploaded invalid doc blocks Start locally AND server `CONFIG_INVALID` stays authority (no worker spawns on bad config); §9 exemplar validated 0-error on both sides. New dep js-yaml. No Python/contract change; 765/765 pytest green, tsc clean, vite build clean 2026-10-25. **→ NEXT: M6-T3.**
 - [ ] **M6-T3** Run Progress (status/percent/cancel). *Spec: CONTRACTS §6.*
 - [ ] **M6-T4** Report View: Overview + Column Profiling. *Spec: expected-output §3.1–3.2.*
 - [ ] **M6-T5** Report View: Visualizations + Quality Assessment. *Spec: expected-output §3.3–3.4.*
