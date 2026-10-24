@@ -38,6 +38,7 @@ from data_profiling_engine import schemas as S
 from data_profiling_engine.connectors.base import ConnectorError
 from data_profiling_engine.orchestration.rollup import profile_dataset
 from data_profiling_engine.reporting import write_profile_json
+from data_profiling_engine.reporting.html_report import write_html_report
 from data_profiling_engine.schemas.models import DatasetConfig, ProfileMode
 
 _CONFIG_MODES = tuple(m.value for m in ProfileMode)
@@ -92,9 +93,12 @@ def run_profile(
     dataset_id: Optional[str] = None,
     run_id: Optional[str] = None,
     allowed_roots: Optional[List[Path]] = None,
+    html_out: Optional["Path | str"] = None,
 ) -> Path:
     """Execute one profiling run and write the canonical JSON. Returns the
-    output path. ``mode`` overrides ``config.profiling.mode`` when given."""
+    output path. ``mode`` overrides ``config.profiling.mode`` when given.
+    ``html_out`` additionally emits the self-contained HTML report
+    (ENGINE §10, M4-T2) — PII masked by default per SECURITY §4."""
     config = load_config(config_path)
     if mode is not None:
         if mode not in _CONFIG_MODES:
@@ -114,6 +118,8 @@ def run_profile(
         result_refs={"profile_json": str(out)},
     )
     written = write_profile_json(bundle, out)
+    if html_out is not None:
+        write_html_report(bundle, html_out)
     return written
 
 
@@ -150,6 +156,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-root", action="append", dest="allowed_roots", default=None,
         help="restrict source access to this root (repeatable; path allow-list)",
     )
+    profile.add_argument(
+        "--html", dest="html_out", default=None,
+        help="also write the self-contained offline HTML report (M4-T2) to this path",
+    )
     return parser
 
 
@@ -162,7 +172,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         out = run_profile(
             args.input, args.config, args.out,
             mode=args.mode, dataset_id=args.dataset_id, run_id=args.run_id,
-            allowed_roots=allowed_roots,
+            allowed_roots=allowed_roots, html_out=args.html_out,
         )
     except CliError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -173,6 +183,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"error [{exc.code.value}]: {exc.message}", file=sys.stderr)
         return 2
     print(f"profiled -> {out}")
+    if args.html_out:
+        print(f"html report -> {args.html_out}")
     return 0
 
 

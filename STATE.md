@@ -14,29 +14,123 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 ## ▶ CURRENT POSITION
 
 ```text
-Milestone : M3 — Persistence (GATE M1 CONTRACTS FREEZE PASSED 2026-10-24;
-          GATE M2 engine spine PASSED 2026-10-24 — profiler-cli end-to-end)
-Task      : none in progress — M3-T1 done (SQLite metadata schema + migration
-          mechanism + ProfileBundle persistence); M3-T2 done (artifact FILE
-          store: layout, lifecycle policy, cleanup); M3-T3 done (normalized
-          (run_id,column,metric) value rows + diff reads). M3 is complete.
-GATE M3   : MET (pending explicit review) — ADR-008 fully landed: T1 metadata
-          half + T2 FILE half + T3 the normalized (run_id,column,metric) rows
-          that close the cheap-diff requirement. 642/642 pytest, tsc clean.
-NEXT      : M4-T1 — JSON result writer from contracts (golden snapshots).
-          *Spec: ENGINE §10; TESTING §2; BLUEPRINT Phase 1 gate (1M-row
-          contract-valid result set).* NOTE: M2-T11 already landed a
-          deterministic JSON writer (`reporting/__init__.py::result_document/
-          write_profile_json`, sort_keys byte-stable) + the CLI `--out`; M4-T1
-          is the FORMAL golden-snapshot harness over that writer (TESTING §2
-          fixtures), NOT a new writer — read `reporting/__init__.py` and
-          `tests/test_cli_rollup.py` first so you extend rather than duplicate.
-          Open docs/ENGINE_SPEC.md §10 + docs/TESTING_BENCHMARKS.md §2, then add
-          checked-in golden JSON files + a test that diffs emitted documents
-          against them. No new metric; no UI; no HTTP (ADR-005); CSV+Parquet
-          only (ADR-011).
+Milestone : M4 — Reporting Layer (GATE M1 CONTRACTS FREEZE PASSED 2026-10-24;
+          GATE M2 engine spine PASSED 2026-10-24 — profiler-cli end-to-end;
+          GATE M3 persistence MET 2026-10-24 — ADR-008 fully landed)
+Task      : none in progress — M4-T2 done (self-contained HTML report:
+          vendored inline Plotly.js, ADR-015 method badges on every number,
+          SECURITY §4 PII masking default, charts from stored metrics only,
+          ArtifactStore emit under canonical html_report kind). Reporting
+          layer still owes CSV export (M4-T3), language/templates (M4-T4).
+GATE M4   : not yet — T3/T4 outstanding.
+NEXT      : M4-T3 — CSV issue export: one row per failing/warning item with
+          columns `finding_id, rule_id, column, status, severity, observed,
+          threshold, affected_records, evidence_ref` (ENGINE §10 "CSV issue
+          export" bullet, verbatim). *Spec: ENGINE §10; SECURITY §4 (masking
+          applies to CSV too — "HTML/CSV export" in TESTING §8 acceptance).*
+          Read `docs/ENGINE_SPEC.md` §10 + `data_profiling_engine/reporting/
+          __init__.py` + `html_report.py` (same bundle-input discipline) +
+          `schemas/models.py` Finding/QualityCheckResult first. Build in
+          `reporting/` (new module `csv_export.py`), consume the SAME
+          `ProfileBundle`; row source = findings whose check FAILED/WARNED
+          (map finding → originating rule_id via its `rule:` evidence_refs /
+          facts); emit via ArtifactStore kind=`issue_csv` (canonical name
+          `issues.csv` is already registered in DEFAULT_FILENAMES + CONTRACTS
+          §2 result_refs example). No new metric; no HTML/JSON changes; no
+          UI; no HTTP (ADR-005).
           Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
-Blocked by: none — M3 accepted by this session's suite (642/642, tsc clean).
+Blocked by: none — M4-T2 accepted by this session's suite (675/675, tsc clean,
+          browser-verified offline render).
+Session notes: M4-T2 landed the self-contained HTML report (ENGINE §10,
+               SECURITY §4). Files: `reporting/html_report.py`
+               (render_html_report / write_html_report /
+               emit_html_report_artifact; consumes
+               `result_document(bundle)` — the exact M4-T1-pinned shape, zero
+               recomputation; sections: status counts, run metadata +
+               error_log + sampling record, column cards with every MetricValue
+               wearing its method badge (tooltip carries seed/algorithm/
+               reason), quality table (rule anchors `#rule-<id>`), findings
+               with fingerprint + evidence back-links, recommendations),
+               vendored `reporting/assets/plotly.min.js` (from the plotly
+               7.1.0 wheel's package_data; sha256 3b6e15d4…68d721f pinned in
+               `tests/test_reporting_html.py`; NOT a runtime dependency —
+               requirements.txt unchanged per ADR-012 minimalism),
+               +`tests/test_reporting_html.py` (25 tests: asset pin, no
+               `<script src>`/`<link>` tags, golden-fixture e2e render,
+               byte-determinism, badge/seed tooltips, not_computed→reason,
+               email/phone masking default + `mask_pii=False` override,
+               escaping, chart kinds incl. §10 outlier box, ArtifactStore ref
+               `artifacts/<run>/report.html`, CLI `--html` flag),
+               `cli/__init__.py` (+`--html OUT` on `profile`, JSON path
+               untouched), `data_profiling_engine.spec` (assets dir added to
+               `datas` — PyInstaller doesn't auto-collect package data files),
+               `reporting/__init__.py` docstring now defers only CSV to M4-T3.
+               GOTCHA: emitted under kind=`html_report` (RESULT retention per
+               the M3-T2 KIND_RETENTION registry), NOT the "EXPORT" wording of
+               the old NEXT memo — RESULT already carries the survive-upgrade/
+               explicit-delete lifecycle, and `html_report` is the canonical
+               kind in DEFAULT_FILENAMES + CONTRACTS §2 result_refs; do not
+               "fix" this to EXPORT. GOTCHA: histogram `bins` are one LEFT
+               EDGE per bin (len == counts), not nb+1 edges — chart centers
+               derive step from edges[1]-edges[0]. GOTCHA: detector refs are
+               `rule:<rule_id>` and `metric:<column>.<measure>`
+               (detectors._metric_ref), not `measure:column` — the anchor
+               resolver matches the column set. GOTCHA: a report file is
+               ~4.8 MiB (inline Plotly); browser automation must poll
+               readyState, not rely on the navigation ack. GOTCHA: the
+               temporary `uv pip install --no-deps plotly` extraction helper
+               is still in `.venv` (uninstall commands hung on the broken pty
+               host this session) — harmless (not in requirements, excluded
+               by the spec build); remove it whenever convenient. Browser-
+               verified: 7 charts render offline, 0 console errors, box quartiles
+               match the card stats 2026-10-24. 675/675 pytest green, tsc clean.
+Session notes: M4-T1 landed the golden-snapshot harness the M2-T11 writer
+               defers to (ENGINE §10 / TESTING §2). Files:
+               `tests/golden_harness.py` (normalize_document / dump_stable /
+               emit_result_document / load_config / golden_path /
+               read_or_update_golden; VOLATILE registry enumerates ONLY
+               run.dataset.source_ref, source_snapshot.{path,modified_at},
+               engine.{duckdb_version,python_version},
+               timing.{started_at,finished_at,duration_ms→REDACTED_INT=0},
+               result_refs and per-check `executed_at`; reproducibility
+               tuple content_hash+config_hash+engine_version and every
+               metric/fingerprint/status/provenance.method stays verbatim),
+               `tests/fixtures/golden/sales_deals.{csv,config.json,golden.json}`
+               (40-row deterministic fixture, 12 duplicate deal_ids +
+               every-7th missing deal_value + constant is_new + 3-stage
+               cycle; CSV sha256 9b9cf013…c2fa3, size 1606 B),
+               `tests/test_reporting_golden.py` (8 tests: byte-diff on
+               normalized canonical JSON with compact first-mismatch
+               context; every block re-validated against its JSON Schema
+               FROM the checked-in golden, not from a live emit; volatile
+               ARE redacted / reproducibility tuple IS NOT; two-emit
+               stability; the injected FAILs (`deal_id_unique`,
+               `value_not_null`) + `stage_domain` PASS + fingerprints +
+               recommendation back-refs are present; config_hash ↔ golden
+               coupling; fixture-triple presence; harness deep-copy
+               self-check), and root `.gitattributes` freezing
+               `data_profiling_engine/tests/fixtures/golden/*` with `-text`
+               so a Windows autocrlf checkout cannot shift `content_hash`
+               (the golden's whole point). Regeneration: `DPE_UPDATE_GOLDEN=1
+               .venv/bin/python -m pytest ...test_reporting_golden.py -k
+               matches_golden` (or invoke
+               `tests.golden_harness.emit_result_document + dump_stable +
+               Path.write_text` directly, as this session did). Deliberately
+               OUT: no HTML/CSV writer changes (M4-T2/T3), no `executed_at`
+               parameter added to `profile_dataset` (would have been a
+               cross-module change; the harness redacts it instead), no
+               1M-row scale harness (BLUEPRINT Phase 1 gate is measured in
+               M7 benchmarks, not here). GOTCHA: `run.timing.duration_ms`
+               is `integer/minimum:0` in `profiling_run.schema.json`, so a
+               string placeholder would break schema validation — use
+               `REDACTED_INT=0` for any integer-typed volatile slot. GOTCHA:
+               `quality/executor.py::_now_iso` stamps `executed_at` per
+               check when `run_dataset_profiling` doesn't pass one through
+               (`profile_dataset` doesn't forward it either) — that field
+               is wall-clock and now redacted; if a future task adds an
+               `executed_at` passthrough on `profile_dataset`, drop the
+               per-check redaction so the golden regains coverage.
+               650/650 pytest green, tsc clean 2026-10-24.
 Session notes: M3-T3 landed the normalized metric-value half of ADR-008. New
                forward migration v2 (`MIGRATIONS` now ends
                `Migration(2,"m3t3_column_metric_values")`; `TARGET_VERSION`
@@ -916,8 +1010,8 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 
 ## M4 — Reporting Layer
 
-- [ ] **M4-T1** JSON result writer from contracts (golden snapshots). *Spec: ENGINE §10; TESTING §2.*
-- [ ] **M4-T2** HTML self-contained report, inline Plotly, method badges, masking default. *Spec: ENGINE §10; SECURITY §4.*
+- [x] **M4-T1** JSON result writer from contracts (golden snapshots). *Spec: ENGINE §10; TESTING §2.* ✅ FORMAL golden-snapshot harness over the M2-T11 writer (`reporting.write_profile_json`/`result_document`) — NO new writer, no contract shape change. New corpus dir `tests/fixtures/golden/` (checked-in triple: `sales_deals.csv` bytes, `sales_deals.config.json`, `sales_deals.golden.json` — 27 KB normalized). New `tests/golden_harness.py`: `normalize_document()` redacts ONLY the machine-dependent pointers (source_ref, source_snapshot.path/modified_at, engine.duckdb_version/python_version, timing.started_at/finished_at/duration_ms→0, per-check executed_at, result_refs) to stable sentinel tokens (`<VOLATILE>`, `REDACTED_INT=0` where the schema types the slot integer); the reproducibility tuple (content_hash + config_hash + engine_version + metrics + fingerprints + statuses + provenance.method) is preserved verbatim so drift is loud. `emit_result_document()` runs `profile_dataset` on the checked-in fixture and reads back the WRITTEN bytes (exercises the on-file writer, not only the in-memory dict). Regeneration path via `DPE_UPDATE_GOLDEN=1` (never set in CI). New `tests/test_reporting_golden.py` (8): byte-diff of normalized JSON against the golden (with a compact first-mismatch context on failure); every block schema-validates against its JSON Schema from disk; volatile fields ARE redacted (a future rollup change that starts leaking a machine path or wall-clock stamp into the golden fails loudly) and the reproducibility tuple is NOT; two-emit stability after normalization (TESTING §3.3); the golden carries the injected FAILs (`deal_id_unique`, `value_not_null`) + `stage_domain` PASS + fingerprints + recommendation back-refs; `config_hash(load_config(name))` matches the golden (config↔golden coupling, no drift between the two files); fixture-triple presence; harness self-check (deep copy). New `.gitattributes` freezes the golden dir with `-text` so CRLF autocrlf on Windows cannot shift `content_hash`. 650/650 pytest green, tsc clean 2026-10-24.
+- [x] **M4-T2** HTML self-contained report, inline Plotly, method badges, masking default. *Spec: ENGINE §10; SECURITY §4.* ✅ `reporting/html_report.py` renders the M4-T1 `result_document(bundle)` only (no recomputation); vendored `assets/plotly.min.js` (plotly 7.1.0, sha256-pinned test) inlined — zero external tags; every MetricValue wears its ADR-015 badge (seed/algorithm/reason in tooltip); PII := discovery `logical_type` ∈ {email, phone} (NOT semantic_type — the old NEXT memo was wrong), values masked by default in tables+charts; §10 chart vocabulary all emitted (histogram, categorical bar, missingness bar, outlier box, temporal volume); findings show ADR-016 fingerprint + working evidence back-links; `emit_html_report_artifact` → canonical `html_report` kind (`artifacts/<run>/report.html`), CLI `--html`, spec-file `datas` bumped. +25 tests, browser-verified offline. See session note above. **→ NEXT: M4-T3.**
 - [ ] **M4-T3** CSV issue export columns + artifact refs. *Spec: ENGINE §10.*
 - [ ] **M4-T4** Language decision (BLUEPRINT Q1) recorded here, then templates. *Spec: BLUEPRINT §8.*
 

@@ -49,6 +49,14 @@ duckdb_datas = collect_data_files("duckdb")
 webview_datas = collect_data_files("webview")
 webview_binaries = collect_dynamic_libs("webview")
 
+# M4-T2: the vendored Plotly.js the HTML report inlines is package data of
+# ``reporting`` — PyInstaller only auto-collects .py files, so name it (the
+# report would fail to render in the frozen app without it; SECURITY §6.2).
+reporting_assets = (
+    str(PROJECT_ROOT / "data_profiling_engine" / "reporting" / "assets"),
+    "data_profiling_engine/reporting/assets",
+)
+
 # WebView backend is selected per OS at runtime by dynamic import, so the
 # platform's backend module must be named explicitly (ADR-003: WKWebView on
 # macOS, WebView2/WinForms via pythonnet ``clr`` on Windows; the WinForms and
@@ -71,7 +79,7 @@ a = Analysis(
     [str(PROJECT_ROOT / "data_profiling_engine" / "main.py")],
     pathex=[str(PROJECT_ROOT)],
     binaries=duckdb_binaries + webview_binaries,
-    datas=[(str(FRONTEND_DIST), "frontend/dist")] + duckdb_datas + webview_datas,
+    datas=[(str(FRONTEND_DIST), "frontend/dist"), reporting_assets] + duckdb_datas + webview_datas,
     hiddenimports=[
         # Entry imports these via chains PyInstaller can follow, but the
         # spawn-method worker re-imports the target module in a fresh
