@@ -17,18 +17,51 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 Milestone : M2 — Engine CLI (spine; no UI)   (GATE M1 CONTRACTS FREEZE PASSED
           2026-10-24: M1-T1..T6 green; 9 result + 4 envelope schemas frozen,
           pydantic + TS mirrors in parity, §8 registry formalised)
-Task      : none in progress — M2-T2 done, start M2-T3 next.
-NEXT      : M2-T3 — Metric registry core + planner cost classes.
-            Open docs/ENGINE_SPEC.md §2 (execution planner), §2.1 (cost
-            classes), §3 (profiler list — the table columns become the
-            MVP-active registry rows) and §8 (mode/sampling gating).
-            Discovery output (data_profiling_engine/discovery/types.py
-            DiscoveryReport / LogicalType) is the planner's column-level
-            input; §4 selection rules decide which metrics run.
-            Land under data_profiling_engine/engine/metrics/ + a
-            MetricRegistry / MetricSpec / CostClass surface plus
-            independent reference tests (TESTING §3.1).
-Blocked by: none (M2-T1 accepted, M2-T2 accepted).
+Task      : none in progress — M2-T3 done, start M2-T4 next.
+NEXT      : M2-T4 — Profilers: statistical + missingness (+ reference tests).
+            Open docs/ENGINE_SPEC.md §3 (Statistical + Missingness rows) and
+            docs/TESTING_BENCHMARKS.md §3.1 (independent reference tests).
+            The M2-T3 registry already carries the metric rows + exact/approx
+            SQL templates + CostClass for stats.{valid_count,min,max,mean,
+            median,p25,p75,p95,p99,stddev} and missingness.{null_count,
+            blank_count,sentinel_count,missing_rate}; the planner emits
+            PlanDecision(method+params) for each. M2-T4 EXECUTES those
+            decisions: consume ExecutionPlan, run render_sql(spec, view_name,
+            column, physical_type, method) against the DuckDB view, and stamp
+            each scalar into ColumnProfile.stats / .missingness as MetricValue
+            with Provenance(**decision.provenance_kwargs()) (ADR-015 —
+            sampled needs seed, approximate needs algorithm, not_computed
+            needs reason and NO value). Land under
+            data_profiling_engine/engine/metrics/ (a profiler runner module).
+            sentinel_count has no sql_template yet (needs the config sentinel
+            value set) — add its SQL + registry template in this task.
+            Reference-test every metric vs Polars/plain-SQL/hand-computed.
+            Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
+Blocked by: none (M2-T1, M2-T2, M2-T3 accepted).
+Session notes: M2-T3 delivered data_profiling_engine/engine/metrics/__init__.py
+               (CostClass enum 4 members w/ §2.1 verbatim behaviour; MetricSpec
+               frozen dataclass — metric_id/family/contract_target/scope/
+               cost_class + applicability (logical+physical) + section +
+               approximate/full-relation/exact-under-sampling/cast-on-fetch
+               flags + sql/approx templates; 34-row MVP catalog across the 8
+               MVP-active §3 profiler families; MetricRegistry immutable w/
+               dup+inactive+unknown guards; default_registry()); engine/
+               planner.py (PlanDecision enforces §2.2 honesty in __post_init__:
+               sampled⇒seed, approximate⇒algorithm, not_computed⇒reason;
+               ExecutionPlan.computed_tasks()/skipped(); pure decide_method()
+               = the §2.1×§8 table; plan_execution() applies §4 gates
+               1(type)/2(sections)/3(mode); render_sql() single place SQL is
+               materialised — {table}/{col} quoting, approx swap, temporal
+               CAST(... AS VARCHAR) wrap). NO computation lives here yet — that
+               is M2-T4..T6. +tests/test_metric_registry_planner.py (64 tests:
+               registry integrity, contract_target paths resolved against the
+               frozen JSON Schemas via $ref-walk, catalog↔§3 family + §2.1
+               cost-class parity, table-driven decide_method vs an independent
+               dict reference transcribed from the prose, Provenance stamping,
+               selection/section gating, determinism, templated SQL executed on
+               a hand-computed DuckDB fixture incl. HLL/t-digest approx +
+               TZ CAST + odd-identifier quoting). 350/350 pytest green, tsc
+               clean 2026-10-24.
 Session notes: M2-T2 delivered data_profiling_engine/discovery/
                (types.py LogicalType+Confidence+ColumnSignals+Discovery+
                Report; signals.py bounded DuckDB aggregates + reservoir
@@ -157,6 +190,24 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
   ColumnDiscovery object, not the contract. Persisted output stays clean;
   planner/findings read the internal view. No contract change needed until
   a UI surface asks for it — then a new ADR (M2-T2 design note).
+- Planner §2.1×§8 gating: an `expensive_exact` metric stays `exact` at small N
+  under standard (a bounded DISTINCT hash is cheap) and only degrades to
+  approximate when `n_rows > LARGE_ROW_LIMIT` OR mode is `quick`; `deep` forces
+  exact (and refuses sampling for `requires_full_relation` rows ⇒
+  not_computed+reason). `prohibited_at_scale` is never exact — sampled iff a
+  sampling window exists else not_computed+reason. `decide_method()` is the
+  pure table; `plan_execution()` layers §4 gates on top. Reference test compares
+  against an INDEPENDENT dict literal transcribed from the prose, not the
+  planner's own branches (M2-T3).
+- `MetricSpec.contract_target` dotted paths (e.g. `column_profile.stats.mean`,
+  `dataset_profile.primary_key_candidates`) are validated by resolving them
+  against the JSON Schema `properties` (recursive `$ref` walk of
+  `validator_for(name).schema`), NOT against pydantic `model_fields` — the
+  `Optional[...]` annotations on models hide the sub-model type so field-walking
+  is unreliable; the schema is the frozen source of truth (M2-T3).
+- DuckDB `quantile_cont` linear-interpolation hand-values over {1,2,3}: p25=1.5,
+  median=2.0, p75=2.5 (NOT nearest-rank); `avg` ignores NULLs (3,1,2→2.0). Fixed
+  these reference literals while writing the M2-T3 template-execution test.
 ```
 
 ## M0 — Desktop Spike (gate: BLUEPRINT §5 Phase 0; acceptance: TESTING §5.2)
@@ -181,7 +232,7 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 
 - [x] **M2-T1** Connectors: CSV + Parquet → DuckDB relation, read-only, `content_hash`, row-id policy. *Spec: ENGINE §5.2 note; CONTRACTS §2.* ✅ `connectors/` — `base.py` (pluggable `Connector` ABC + `RelationHandle` + §8-coded `DatasetReadFailed`/`SourceNotAllowed`; pre-compute path allow-list + suffix guard (ADR-011 closed set), streaming sha256 `SourceSnapshot` (+`row_id_policy` extra, open-model §2), LIMIT-0 dual probe = fail-fast parse + (name, physical type) schema w/o rows, collision guards for `_row_id`/`file_row_number`), `csv_connector.py` (`row_number() OVER ()` = generated line number), `parquet_connector.py` (`file_row_number+1` = row-group+offset, plumbing stripped), `__init__.py` registry + suffix dispatch. View = read-only explicit projection + `_row_id` (scan-time eval ⇒ stable under filter, verified). +`tests/test_connectors.py` 25 tests (independent refs: hashlib/Polars/hand-computed; multi-rowgroup 300K offset check; snapshot dump → profiling_run schema-valid; read-only byte/mtime assertions). 255/255 pytest green 2026-10-24.
 - [x] **M2-T2** Discovery: physical→logical/semantic type inference + unit status. *Spec: ENGINE §4.1.* ✅ `discovery/` — `types.py` (closed LogicalType enum 18 members + Confidence high/medium/low + ColumnSignals bounded-aggregate dataclass + ColumnDiscovery + DiscoveryReport); `signals.py` (`collect_column_signals` — one scalar-aggregate pass + one bounded reservoir DISTINCT sample for VARCHAR; exact vs HLL switch at 10K; `DiscoveryError` carries §8 code `SCHEMA_INFERENCE_FAILED`); `inference.py` (physical→logical base map, VARCHAR pattern refinement email/uuid/url/phone/ISO-date(-time)/currency-shaped numeric via regex ≥90%HIGH/≥70%MEDIUM, name heuristics `_id`/`_at`/`amount|price|value`/`status|state`/`is_/has_`/freeform, length+cardinality → categorical_nominal / text_freeform / near-unique identifier, numeric low-cardinality → dimension, config overlay: PK ⇒ semantic=identifier HIGH + config_declared=True, units copied verbatim); `__init__.py` (public `discover(con, handle, config=None)`). Unit policy per ENGINE §4.1: `known` ONLY via config, `assumed` via currency symbol, else `unknown`; non-currency ⇒ no unit block. +`tests/test_discovery.py` 31 tests (physical family base, pattern promotions, name nudges, config overlay PK/units, distinct-exact↔HLL switch across 10K, empty/all-null edges, DiscoveryError→registry code, Parquet roundtrip, determinism, schema-valid dump for every column_profile emitted). 286/286 pytest green, tsc clean 2026-10-24.
-- [ ] **M2-T3** Metric registry core + planner cost classes. *Spec: ENGINE §2, §2.1.*
+- [x] **M2-T3** Metric registry core + planner cost classes. *Spec: ENGINE §2, §2.1.* ✅ `engine/metrics/__init__.py` — `CostClass` (4 §2.1 members, large-N behaviour in doc), `MetricSpec` frozen dataclass (metric_id/family/display/contract_target/scope/cost_class + §4 applicability [logical+physical] + section + supports_approximate/requires_full_relation/exact_under_sampling/cast_varchar_on_fetch flags + sql/approx templates), 34-row MVP catalog over the 8 MVP-active §3 families (relationship/relational/drift intentionally unregistered — §3 marks them Phase-2/4), immutable `MetricRegistry` (dup/non-MVP/unknown guards) + `default_registry()`. `engine/planner.py` — `PlanDecision.__post_init__` structurally enforces §2.2 sampling honesty (sampled⇒seed, approximate⇒algorithm, not_computed⇒reason) → `provenance_kwargs()` stamps straight into contract `Provenance`; pure `decide_method()` = the §2.1×§8 table; `plan_execution()` applies §4 gates 1/2/3; `render_sql()` is the single SQL-materialisation point ({table}/{col} quoting, approx swap, temporal CAST-to-VARCHAR for the no-pytz TZ probe). No computation executed here (that is M2-T4..T6). +`tests/test_metric_registry_planner.py` 64 tests (registry integrity; every `contract_target` path resolved against the frozen JSON Schemas by $ref-walking `validator_for(...).schema`; catalog↔§3-family + ↔§2.1-cost-class parity; table-driven `decide_method` vs an **independent** dict reference transcribed from §2.1/§8 prose; Provenance stamping; selection + section gating; determinism; templated SQL executed on a hand-computed DuckDB fixture — exact/HLL-approx/t-digest-approx, TZ CAST fetch, odd-identifier quoting). 350/350 pytest green, tsc clean 2026-10-24.
 - [ ] **M2-T4** Profilers: statistical + missingness (+ reference tests). *Spec: ENGINE §3; TESTING §3.1.*
 - [ ] **M2-T5** Profilers: uniqueness + categorical (+ reference tests; HLL provenance). *Spec: ENGINE §3, §2.2.*
 - [ ] **M2-T6** Profilers: distribution (histogram, outliers) + temporal single-column. *Spec: ENGINE §3.*
