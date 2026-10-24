@@ -15,21 +15,21 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 
 ```text
 Milestone : M0 — Desktop Spike
-Task      : M0-T4 DONE (PyInstaller onefile build on macOS; frozen
-          ./dist/DataProfilerEngine --smoke verified all four spike behaviours:
-          window+file:// from _MEIPASS, bridge echo, spawn worker SUCCEEDED 4/4,
-          DuckDB native ext collected — SELECT 40+2 → [(42,)])
-NEXT      : M0-T5 — Windows native-env build: same smoke on Windows +
-            WebView2-runtime detection (SECURITY §6.4, ADR-009 Win risks).
-            **→ GATE M0: M0-T1..T4 green on BOTH OS; else revise ADRs.**
-Blocked by: none (needs a native Windows machine/VM)
-Session notes: packaging spec = data_profiling_engine.spec (repo root);
-               onefile+console for Phase-0 diagnostics; frontend/dist +
-               duckdb (_duckdb.abi3.so) + webview js assets collected via
-               collect_data_files/dynamic_libs; main.py resolve_index is
-               freeze-aware (sys._MEIPASS when frozen).
-               Build: .venv/bin/python -m PyInstaller --clean --noconfirm data_profiling_engine.spec
-               Run:   ./dist/DataProfilerEngine --smoke
+Task      : M0-T5 IN PROGRESS — Windows-executable part done from macOS:
+          spec now platform-aware (win hiddenimports = edgechromium+win32+
+          winforms+clr; mac unchanged cocoa); main.py --smoke prints
+          WEBVIEW2_SMOKE_RESULT/FAILED (registry pv probe, SECURITY §6.4, no-op
+          non-Win); runbook = docs/WINDOWS_M0_T5_CHECKLIST.md. macOS regression
+          green: 35/35 pytest, onefile rebuilt, --smoke 4/4 markers.
+NEXT      : M0-T5 EXECUTION on a native Windows machine — hand
+            docs/WINDOWS_M0_T5_CHECKLIST.md to whoever has Win10/11 x64 access;
+            operator reports §4 marker lines back; macOS session verifies vs
+            TESTING §5.2 and ticks the gate. NO engine/UI code until reported.
+            **→ GATE M0: all five green on BOTH OS; else revise ADRs.**
+Blocked by: Windows machine access (BLUEPRINT Q4) — repo-side prep is complete.
+Session notes: Win build cmd: py -3.12 -m PyInstaller --clean --noconfirm
+               data_profiling_engine.spec → dist\DataProfilerEngine.exe
+               Win smoke:  dist\DataProfilerEngine.exe --smoke > smoke_win.txt 2>&1
                Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
 ```
 
@@ -62,6 +62,10 @@ Session notes: packaging spec = data_profiling_engine.spec (repo root);
   explicit `hiddenimport` (the child re-imports the target module fresh; static analysis
   from the lazy `main→facade→manager→process` chain is not enough). DuckDB ext
   `_duckdb.abi3.so` needs `hiddenimports=['duckdb','_duckdb']` + `collect_dynamic_libs`.
+- pywebview 6.x Win backend (`edgechromium`) imports `clr` (pythonnet) + WinForms at
+  module level and clr.AddReferences `webview/lib/*.dll` — those DLLs ride inside the
+  wheel, already collected by `collect_data_files("webview")`; spec keeps per-OS
+  hiddenimports in `platform_hiddenimports` (untested on Win until M0-T5 runs).
 ```
 
 ## M0 — Desktop Spike (gate: BLUEPRINT §5 Phase 0; acceptance: TESTING §5.2)
@@ -70,7 +74,8 @@ Session notes: packaging spec = data_profiling_engine.spec (repo root);
 - [x] **M0-T2** Bridge hello-world: typed facade stub with one echo command; pydantic request validation (ADR-005). *Spec: CONTRACTS §5.1–5.3; SECURITY §3.* ✅ macOS round-trip via `--smoke` + 20/20 pytest (validation, allow-list, 1 MiB cap, no input echo) 2026-10-24 — commit `a4ef86f`
 - [x] **M0-T3** Worker process: `multiprocessing` spawn + echo job + progress via status; `freeze_support()`. *Spec: CONTRACTS §6; ARCHITECTURE ADR-006.* ✅ macOS: facade worker round-trip via `--smoke` (SUCCEEDED, 4/4 steps) + 35/35 pytest ×3 (start/progress/cancel/crash→WORKER_CRASHED/timeout→JOB_TIMEOUT, §6.1 states, accepted+job_id envelope) 2026-10-24 — Windows re-verify folds into M0-T5
 - [x] **M0-T4** PyInstaller: macOS build passes M0-T1..T3 in packaged form; DuckDB native lib collected. *Spec: SECURITY §6.2; ADR-009.* ✅ macOS onefile `./dist/DataProfilerEngine --smoke` (2026-10-24): window+`file://` from `_MEIPASS`, bridge echo round-trip, spawn worker `SUCCEEDED 4/4`, DuckDB `SELECT 40+2 → [(42,)]`; 35/35 pytest still green. Spec=`data_profiling_engine.spec`; `build//dist/` gitignored. — Windows re-verify folds into M0-T5
-- [ ] **M0-T5** Windows build (native env): same gate incl. WebView2 detection. **→ GATE M0: all five green on both OS; else revise ADRs, do not proceed.**
+- [~] **M0-T5** Windows build (native env): same gate incl. WebView2 detection. **→ GATE M0: all five green on both OS; else revise ADRs, do not proceed.**
+      Repo-side prep ✅ 2026-10-24 (platform-aware spec; `WEBVIEW2_SMOKE_*` probe in `--smoke`; runbook `docs/WINDOWS_M0_T5_CHECKLIST.md`; macOS regression 35/35 + smoke 4/4). **Execution on a Win box pending** — report §4 markers, then tick gate.
 
 ## M1 — Contracts Freeze
 

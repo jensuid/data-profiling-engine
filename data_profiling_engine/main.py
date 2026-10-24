@@ -64,6 +64,36 @@ def resolve_index() -> Path:
     return index
 
 
+def _run_webview2_smoke() -> None:
+    """M0-T5 (Windows): probe the WebView2 Runtime before opening a window.
+
+    SECURITY §6.4 requires an explicit availability check (bootstrapper or
+    documented prerequisite); pywebview's edgechromium backend fails without
+    it. Reads the Evergreen runtime version out of the registry — the same
+    check the WebView2 loader performs. No-op on non-Windows OSes.
+    """
+    if sys.platform != "win32":
+        return
+    import winreg
+
+    keys = (
+        r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+        r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+    )
+    for hive, path in ((winreg.HKEY_LOCAL_MACHINE, keys[0]),
+                       (winreg.HKEY_LOCAL_MACHINE, keys[1]),
+                       (winreg.HKEY_CURRENT_USER, keys[1])):
+        try:
+            with winreg.OpenKey(hive, path) as key:
+                version, _ = winreg.QueryValueEx(key, "pv")
+            print(f"WEBVIEW2_SMOKE_RESULT: runtime_found pv={version} key={path}")
+            return
+        except OSError:
+            continue
+    print("WEBVIEW2_SMOKE_FAILED: WebView2 Runtime not found in registry "
+          "(install the Evergreen runtime or ship the bootstrapper — SECURITY §6.4)")
+
+
 def _run_duckdb_smoke() -> None:
     """M0-T4: validate DuckDB native-lib collection inside the frozen build.
 
@@ -108,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.smoke:
         # Native-lib check runs first, before the WebView, so a DuckDB
         # collection failure is visible even if the GUI path stalls.
+        _run_webview2_smoke()
         _run_duckdb_smoke()
     facade = BridgeFacade()
     window = webview.create_window(APP_TITLE, str(index), js_api=facade)

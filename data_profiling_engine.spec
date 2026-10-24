@@ -22,6 +22,7 @@ M7-T3); this spec only proves the collect/freeze pathway is viable, as ADR-009
 requires before we commit to PyInstaller.
 """
 from pathlib import Path
+import sys
 
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
@@ -48,6 +49,24 @@ duckdb_datas = collect_data_files("duckdb")
 webview_datas = collect_data_files("webview")
 webview_binaries = collect_dynamic_libs("webview")
 
+# WebView backend is selected per OS at runtime by dynamic import, so the
+# platform's backend module must be named explicitly (ADR-003: WKWebView on
+# macOS, WebView2/WinForms via pythonnet ``clr`` on Windows; the WinForms and
+# WebView2 interop DLLs ship inside the wheel's ``webview/lib`` and are
+# already collected by ``collect_data_files("webview")`` above).
+if sys.platform == "darwin":
+    platform_hiddenimports = ["webview.platforms.cocoa"]
+elif sys.platform == "win32":
+    platform_hiddenimports = [
+        "webview.platforms.edgechromium",
+        "webview.platforms.win32",
+        "webview.platforms.winforms",
+        # pythonnet is imported as `clr` (dotted name confuses static analysis).
+        "clr",
+    ]
+else:
+    platform_hiddenimports = []
+
 a = Analysis(
     [str(PROJECT_ROOT / "data_profiling_engine" / "main.py")],
     pathex=[str(PROJECT_ROOT)],
@@ -61,8 +80,7 @@ a = Analysis(
         # DuckDB C-extension + lazy function-level import in the smoke check.
         "duckdb",
         "_duckdb",
-        # macOS pywebview backend (WKWebView via PyObjC) imported dynamically.
-        "webview.platforms.cocoa",
+        *platform_hiddenimports,
     ],
     hookspath=[],
     hooksconfig={},
