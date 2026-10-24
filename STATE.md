@@ -17,27 +17,67 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 Milestone : M2 — Engine CLI (spine; no UI)   (GATE M1 CONTRACTS FREEZE PASSED
           2026-10-24: M1-T1..T6 green; 9 result + 4 envelope schemas frozen,
           pydantic + TS mirrors in parity, §8 registry formalised)
-Task      : none in progress — M2-T8 done, start M2-T9 next.
-NEXT      : M2-T9 — Recommendation engine: rule-based/template recommendations
-            + narrative, each citing EXISTING evidence only. Open docs/
-            ENGINE_SPEC.md §7 (recommendations/rule_based.py + narrative.py;
-            "no fabrication, cite evidence") and docs/CONTRACTS.md §4.3
-            (Recommendation shape: reason_type ∈ evidence|heuristic|
-            business_context_required; evidence reason ⇒ non-empty evidence_refs).
-            Implement in recommendations/. Consume ONLY the M2-T8 Finding[]
-            (each detector maps to a recommendation template: action, rationale,
-            do_not guardrails e.g. "don't zero-fill", investigation probes).
-            reason_type=evidence REQUIRES the finding's evidence_refs to be
-            carried verbatim (never invent a number/cause — AGENTS §3, CONTRACTS
-            §7); when no evidence backs a suggestion mark business_context_required
-            and phrase as an investigation question. recommendation_id "R-NNN",
-            finding_id back-ref, MVP status="proposed". Wire finding.recommendation_ids
-            to the emitted recommendations (M2-T8 left it []). Reference tests:
-            every Finding → ≥1 Recommendation citing that finding's evidence;
-            no recommendation without an existing metric/rule ref; every result
-            §4.3-schema-valid. AI/LLM is OUT of MVP (BLUEPRINT Q3).
+Task      : none in progress — M2-T9 done, start M2-T10 next.
+NEXT      : M2-T10 — Modes quick/standard/deep + sampling (reservoir, seed)
+            wiring. Open docs/ENGINE_SPEC.md §2.2 + §8 (mode → section gating +
+            method defaults; reservoir sampling w/ a fixed seed) and the M2-T4
+            note here (the profiler already runs ONE shared bounded sample
+            relation via md5('seed#‖_row_id') ORDER+LIMIT — the reservoir is
+            finalised HERE, not there). Verify the planner's §2.1×§8
+            decide_method already honours quick/standard/deep + sampling seed
+            (M2-T3/T4); M2-T10 wires the *end-to-end* mode/sampling inputs
+            through the engine CLI path so a sampled run stamps seed on every
+            sampled metric (ADR-015) and the reservoir is a real bounded
+            sample, not the ORDER+LIMIT placeholder. Do NOT add new metrics.
             Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
-Blocked by: none (M2-T1..T8 accepted).
+Blocked by: none (M2-T1..T9 accepted).
+Session notes: M2-T9 delivered the ACTING side in the recommendations/ package
+               — templates.py (ENGINE §7 closed rule/template catalog: a
+               RecommendationTemplate{kind,reason_type,action,rationale,
+               target_improvement,do_not,probe} per problem-kind; 6 rule kinds
+               keyed by finding.category + 4 profile-extreme kinds recovered
+               from the representative fact metric_ref suffix — missingness /
+               constant / duplicate-key / dominant-category + 6 defensive
+               generics = 16 templates; classify_finding_kind(Finding)→kind
+               because the frozen §4.2 Finding carries no detector_id, identity
+               is re-derived: any `rule:` evidence ref ⇒ rule kind by category,
+               else facts[0].metric_ref suffix ⇒ profile kind; a review signal
+               — accuracy_flagged rule OR dominant-category profile — is
+               reason_type=BUSINESS_CONTEXT_REQUIRED phrased as an
+               investigation question, never a proven cause, per ENGINE §5
+               "accuracy is never inferred from validity"), narrative.py
+               (composes action/rationale/target/do_not by substituting ONLY the
+               {column} slot — numbers stay in the cited evidence refs, never
+               re-typed into prose; probe folded into the action sentence; the
+               rationale quotes the evidence refs verbatim so every
+               recommendation is traceable), rule_based.py
+               (recommendation_for_finding: copies finding.evidence_refs
+               VERBATIM onto the Recommendation; reason_type=evidence REQUIRES
+               them (degrades to business_context_required if somehow empty);
+               status=proposed, schema_version='1.0', recommendation_id R-NNN,
+               finding_id back-ref), __init__.py (build_recommendations(findings)
+               → RecommendationsResult{recommendations,findings}: one rec per
+               finding (≥1 mandate met), R-NNN assigned in the already-prioritized
+               F-NNN order → deterministic; and Wires Finding.recommendation_ids
+               that M2-T8 left [] via a model_dump→set→model_validate round-trip
+               so the strict ContractModel emits the key (fields_set) and the
+               rewired finding re-validates §4.2). **No contract change** —
+               reuses frozen Recommendation pydantic + recommendation.schema.json
+               (§4.3 already frozen M1-T2) + the finding.schema.json
+               recommendation_ids array; consumes ONLY the M2-T8 Finding[].
+               +tests/test_recommendations.py (24: each detector→expected kind
+               incl. all 4 profile extremes + rule-by-category + every kind
+               resolves; evidence⇒non-empty refs & verbatim subset of the
+               finding, rationale quotes refs, dominant-category/accuracy-rule
+               ⇒business_context_required with an investigation-verb action;
+               column substituted but the observed 0.42 value NOT reproduced in
+               action; every rec §4.3-schema-valid (format on) + R-NNN +
+               finding_id back-ref + status proposed + ≥1 rec per finding;
+               recommendation_ids wiring before/after + wired finding still
+               §4.2-valid + all other fields preserved; byte-stable rerun;
+               completeness zero-fill do_not guardrail; TEMPLATES covers all 6
+               QualityDimension rule kinds). AI/LLM stays OUT of MVP
+               (BLUEPRINT Q3). 512/512 pytest green, tsc clean 2026-10-24.
 Session notes: M2-T8 delivered the INTERPRETATION side in a new findings/
                package — fingerprinting.py (ADR-016 §4.4:
                compute_fingerprint = sha256(category|scope_key|detector_id|
@@ -544,6 +584,15 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
   M2-T5's artifacts land in the M2-T6 commit. STATE.md's M2-T5 `[x]` predates
   this commit — do not assume a `[x]` task has its own commit; verify with
   `git log` when resuming.
+- A strict `ContractModel` only emits a field in `model_dump` when it is in
+  `__pydantic_fields_set__` OR is a non-None value it was given; to set an
+  OPTIONAL field (e.g. `Finding.recommendation_ids`, left `[]` by M2-T8) on an
+  already-constructed model WITHOUT re-running every validator, do
+  `Model.model_validate({**obj.model_dump(), "field": value})` — a plain
+  `model_copy(update=...)` is NOT guaranteed to register the key in
+  `fields_set`, so the strict `_dump()` would omit it. The round-trip is safe
+  because these contract models are `extra=forbid` with self-contained dumps
+  (M2-T9).
 ```
 
 ## M0 — Desktop Spike (gate: BLUEPRINT §5 Phase 0; acceptance: TESTING §5.2)
@@ -574,7 +623,7 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 - [x] **M2-T6** Profilers: distribution (histogram, outliers) + temporal single-column (+ reference tests). *Spec: ENGINE §3, §2.2; TESTING §3.1.* ✅ `engine/metrics/profiler.py` — `execute_distribution_and_temporal(con, handle, report, plan, config, registry)` runs the M2-T6 families. **Distribution**: histogram BUILT inline via a width_bucket EMULATION (`CAST(LEAST(nb, FLOOR((col-lo)/(hi-lo)*nb)+1) AS INTEGER)` — DuckDB 2.0 has no `width_bucket` scalar), 10 fixed bins over [min,max], counts aligned to bins, top-edge folds into last bin, constant→single bin, empty→honest not_computed ([] bins/counts), bin_strategy/edges in `method_params`; `skewness` renders the templated `skewness(col)` (DuckDB = adjusted Fisher–Pearson **G1**, distinct from Polars' biased g1; undefined→not_computed+reason, value ABSENT); `outlier_candidates` built via Tukey IQR/1.5 fences from one `quantile_cont` q1/q3 summary pass → `OutlierCandidates{count, method='iqr_1_5', provenance, sample_row_refs=['row:N']}` (row *references*, never raw values; omitted at count==0). **Temporal**: range via render_sql (CAST AS VARCHAR, TZ-safe), `volume_per_granularity` (date_trunc + auto granularity from span, bounded), `gaps` (expected-minus-observed `generate_series` INTERVAL), `out_of_expected_range` honest not_computed (no MVP config bound), `timezone_source` naive/utc; nested Provenance in an open dict MUST be `.model_dump(mode='json')`. Section gating: disabled `distributions`/`temporal` ⇒ whole block structurally OMITTED (dist_active/temporal_active), never zeroed; approximate-without-approx-template (quick histogram/skewness) falls back to exact SQL keeping the label; §6.4 per-metric `duckdb.Error`→`RunErrorEntry(METRIC_NOT_COMPUTED)`. + `tests/test_profilers_distribution_temporal.py` (28 tests: histogram bin-count + non-null sum invariant vs Polars, edges/strategy, top-edge/constant/empty; skewness==G1 reference + differs-from-Polars-g1 + constant not_computed; outlier IQR count vs hand Tukey + refs-are-row:N + no-outlier omit + seeded count=2; temporal range/month-volume/gaps/day-gaps/out-of-range/naive-vs-utc-tz; distributions-off & temporal-off gating; quick approximate label+algorithm; sampled gaps seed+bounded+deterministic; §6.4 broken-skewness isolation; every profile §3.2 schema-valid STANDARD/QUICK/DEEP + byte-stable rerun + numeric-has-no-temporal-vice-versa). 430/430 pytest green, tsc clean 2026-10-24.
 - [x] **M2-T7** Rule registry + compiler → one SQL per rule; statuses PASS/FAIL/WARN/ERROR. *Spec: ENGINE §5.1–5.3; CONTRACTS §4.1.* ✅ `quality/` package — `registry.py` (ENGINE §5.1 closed catalog `RuleDefinition`{measure∈count|rate|outlier, param_kind, warn_only, mvp_active}; `referential_integrity`/`date_order` mvp_active=False → ERROR), `compiler.py` (`compile_rule` → ONE DuckDB statement shaped `(violations,total,sample_row_ids,lower_bound,upper_bound)`; mirrors `render_sql` single-materialisation + ADR-017 **bound input** (every threshold/domain/condition value is a `$n` placeholder, only identifiers quoted inline); target + condition columns validated present else `RuleCompileError`→ERROR; §5.2 missing = `null OR trim=''` (sentinels deliberately excluded — ColumnProfile concern); unique = `nonnull−distinct` (per-group, not a window `SUM(grp_n-1)`); outlier_scan reuses Tukey IQR/1.5 `quantile_cont` fences into `threshold{between}`; `sample_row_ids` bounded `array_agg … ORDER BY rid LIMIT≤200` → `row:N` refs never raw values; CTE SELECT has no outer FROM so empty ⇒ one row), `executor.py` (`run_quality_checks(con,handle,config,run_id,discovery?,executed_at?)`→`QualityRunResult{checks,errors}`; status PASS(0)/FAIL(>0)/WARN(warn_only|business_note|severity==warning)/ERROR(cannot compile|execute→`RunErrorEntry(RULE_EXEC_FAILED)`+observed null, **FAIL≠ERROR**); non-error `observed=MetricValue{count|rate, exact, denominator=population}`; `schema_version`='1.0', `rule_version`='1'). +`tests/test_quality_rules.py` (29: every §5.1 MVP type vs hand verdict + type_valid direct-INTEGER FAIL; outlier WARN-not-FAIL w/ fences; business_note/warning→WARN; absent-col/Phase-2/broken-quantile/malformed-range→ERROR w/ null observed; §6.4 isolation; bound `it''s` literal; `row:N` refs + ≤200 cap on 300 rows; every result §4.1-schema-valid). **No contract change** (consumes frozen §9 rules + emits frozen §4.1 results). 459/459 pytest green, tsc clean 2026-10-24.
 - [x] **M2-T8** Findings: detectors, dedup/merge, prioritization, **fingerprint**. *Spec: ENGINE §6; CONTRACTS §4.4.* ✅ `findings/` package — `fingerprinting.py` (ADR-016 §4.4 `sha256(category\|scope_key\|detector_id\|normalized_measure)`, 0x1F/0x1E collision-safe join, scope_key=dataset_id+table?+column, identity rides rule/metric id NOT value → same problem/different numbers = same digest), `detectors.py` (§6.1 two sources: `detect_from_quality_checks` FAIL/WARN→finding w/ rule observed Provenance + [metric,rule] refs — **PASS & ERROR both emit nothing**, FAIL≠ERROR, confidence↔method exact>approx>sampled; `detect_from_profiles` rule-less extremes as WARN: near-total missingness ≥0.90, constant column distinct==1&denom≥2→UNIQUENESS, dominant category share≥0.95→ACCURACY_FLAGGED, duplicate-key auxiliary from `ProfilerResult.duplicate_group_counts` (M2-T5's contract_target=None signal); facts/interpretation/hypotheses structurally separate §7, hypotheses MVP=unverified, never invents a number), `pipeline.py` (dedup collapses same (column,category) keeping top-priority rep + unions evidence; `priority_of` = deterministic int f(severity, critical-PK, affected-share, confidence) — **ordering only, no priority field added to frozen §4.2**; sort (-priority,fingerprint)→F-001.., workflow=null). `__init__.py` `build_findings(...)` critical scope from config PK. **No contract change** (reuses frozen Finding + finding.schema.json, consumes only M2-T4..T7 evidence). +`tests/test_findings.py` (29: fingerprint stability/distinction, FAIL/WARN→find·PASS/ERROR→none, each detector past/silent at bound, dedup merge, priority determinism, every finding §4.2-schema-valid + MVP invariants, quality→findings integration). 488/488 pytest green, tsc clean 2026-10-24.
-- [ ] **M2-T9** Recommendations: rule-based templates + narrative w/ evidence refs. *Spec: ENGINE §7; CONTRACTS §4.3.*
+- [x] **M2-T9** Recommendations: rule-based templates + narrative w/ evidence refs. *Spec: ENGINE §7; CONTRACTS §4.3.* ✅ `recommendations/` package — `templates.py` (ENGINE §7 closed catalog: `RecommendationTemplate`{kind,reason_type,action,rationale,target_improvement,do_not,probe} per problem-kind; 6 rule kinds keyed by `finding.category` + 4 profile-extreme kinds (missingness/constant/duplicate-key/dominant-category) recovered from the representative fact `metric_ref` suffix + 6 defensive generics = 16; `classify_finding_kind(Finding)` re-derives detector identity (frozen §4.2 has no `detector_id`): any `rule:` ref ⇒ rule kind by category, else `facts[0].metric_ref` suffix ⇒ profile kind; accuracy_flagged rule OR dominant-category profile ⇒ `business_context_required` investigation question, never a proven cause — ENGINE §5 "accuracy is never inferred from validity"), `narrative.py` (composes text substituting ONLY `{column}` — numbers stay in the cited evidence refs, never re-typed; probe folded into action; rationale quotes refs verbatim), `rule_based.py` (`recommendation_for_finding` copies `finding.evidence_refs` **verbatim** onto the `Recommendation`, `evidence`⇒refs required, `status=proposed`, `R-NNN`, `finding_id` back-ref), `__init__.py` (`build_recommendations(findings)`→`RecommendationsResult{recommendations,findings}`: one rec per finding (≥1 mandate), deterministic `R-NNN` in F-NNN order; **wires `Finding.recommendation_ids`** M2-T8 left `[]` via a `model_dump`→set→`model_validate` round-trip so the strict ContractModel emits the key + re-validates §4.2). **No contract change** (reuses frozen §4.3 `Recommendation`+`recommendation.schema.json` M1-T2 + `finding.schema.json` `recommendation_ids`). +`tests/test_recommendations.py` (24: each detector→kind incl. all 4 profile extremes + rule-by-category + every kind resolves; evidence⇒non-empty + verbatim subset + rationale quotes refs; dominant-category/accuracy-rule→business w/ investigation-verb action; column substituted but value NOT reproduced; every rec §4.3-schema-valid + `R-NNN` + back-ref + proposed + ≥1/finding; wiring before/after + wired finding §4.2-valid + fields preserved; byte-stable; zero-fill guardrail; all 6 rule categories covered). AI/LLM OUT (BLUEPRINT Q3). 512/512 pytest green, tsc clean 2026-10-24.
 - [ ] **M2-T10** Modes quick/standard/deep + sampling (reservoir, seed) wiring. *Spec: ENGINE §2.2, §8.*
 - [ ] **M2-T11** `profiler-cli` end-to-end on `sales_deals` fixture → full contract-valid JSON. **→ GATE M2 (BLUEPRINT Phase 1).** *Spec: CONTRACTS §2–4; TESTING §2.*
 
