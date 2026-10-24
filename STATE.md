@@ -17,20 +17,50 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 Milestone : M2 — Engine CLI (spine; no UI)   (GATE M1 CONTRACTS FREEZE PASSED
           2026-10-24: M1-T1..T6 green; 9 result + 4 envelope schemas frozen,
           pydantic + TS mirrors in parity, §8 registry formalised)
-Task      : none in progress — M2-T9 done, start M2-T10 next.
-NEXT      : M2-T10 — Modes quick/standard/deep + sampling (reservoir, seed)
-            wiring. Open docs/ENGINE_SPEC.md §2.2 + §8 (mode → section gating +
-            method defaults; reservoir sampling w/ a fixed seed) and the M2-T4
-            note here (the profiler already runs ONE shared bounded sample
-            relation via md5('seed#‖_row_id') ORDER+LIMIT — the reservoir is
-            finalised HERE, not there). Verify the planner's §2.1×§8
-            decide_method already honours quick/standard/deep + sampling seed
-            (M2-T3/T4); M2-T10 wires the *end-to-end* mode/sampling inputs
-            through the engine CLI path so a sampled run stamps seed on every
-            sampled metric (ADR-015) and the reservoir is a real bounded
-            sample, not the ORDER+LIMIT placeholder. Do NOT add new metrics.
-            Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
-Blocked by: none (M2-T1..T9 accepted).
+Task      : none in progress — M2-T10 done, start M2-T11 (GATE M2) next.
+NEXT      : M2-T11 — `profiler-cli` end-to-end on a `sales_deals`-style
+            fixture → full contract-valid JSON. **→ GATE M2 (BLUEPRINT Phase 1).**
+            Open docs/CONTRACTS.md §2–4 + docs/TESTING_BENCHMARKS.md §2 and
+            reuse `orchestration.run_dataset_profiling` (M2-T10) — it already
+            returns `ProfilingPipelineResult{columns,checks,findings,
+            recommendations,errors,sampling,plan,n_rows,mode,handle}`. M2-T11
+            does the **contract rollup M2-T10 deliberately deferred**: execute
+            the `plan.dataset_decisions` (schema.row_count / column_count /
+            key_candidates — NO runner touches dataset-scope yet) to assemble
+            §3.1 DatasetProfile (row_count MetricValue + column_count +
+            primary_key_candidates + temporal_coverage + columns) and the §2
+            ProfilingRun record (dataset/source_snapshot from the handle,
+            config{config_version,config_hash,profile_mode}, engine, timing,
+            sampling=the M2-T10 RunSampling record, terminal status, error_log
+            = result.errors); then the `cli/` argparse `profile --input --config
+            --mode --out` + a JSON writer (reporting/ §10). Verify every emitted
+            object schema-validates (`schemas.validator_for`). Do NOT add new
+            metrics; no HTTP/server (ADR-005); heavy work stays off the UI
+            thread. Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
+Blocked by: none (M2-T1..T10 accepted).
+Session notes: M2-T10 finalised the reservoir (profiler._sample_relation →
+               DuckDB `USING SAMPLE RESERVOIR (n ROWS) REPEATABLE(seed)`, real
+               bounded+seeded, was the md5 ORDER+LIMIT placeholder; `block` =
+               bounded scan) AND wired the engine path end-to-end in
+               orchestration/__init__.py (run_profiling_pipeline +
+               run_dataset_profiling + open_source): config.mode/sampling/
+               sections → discover → plan_execution → the 3 M2-T4/T5/T6 passes
+               share ONE plan+reservoir → _merge_profiles composes the
+               family-disjoint blocks onto each ColumnProfile (model_copy) →
+               run_quality_checks → build_findings → build_recommendations,
+               returning ProfilingPipelineResult (columns/checks/findings w/
+               recommendation_ids wired/recommendations/errors union/RunSampling
+               record/plan). A sampled run stamps method=sampled+seed on EVERY
+               sampled metric (ADR-015), verified by walking plan decisions +
+               emitted provenance. **Deliberately NOT done (→ M2-T11):** the
+               §3.1 DatasetProfile / §2 ProfilingRun rollup — the runner never
+               executes plan.dataset_decisions (schema.row_count/column_count/
+               key_candidates have NO executor yet); M2-T11 folds the result +
+               those dataset metrics into the full contracts + JSON writer.
+               Gotcha: `_sample_relation`'s defensive DROP had to switch VIEW→
+               TABLE (same window name reused across the 3 passes). No contract
+               change, no new metric. +tests/test_orchestration_modes_sampling.py
+               (19). 531/531 pytest green, tsc clean 2026-10-24.
 Session notes: M2-T9 delivered the ACTING side in the recommendations/ package
                — templates.py (ENGINE §7 closed rule/template catalog: a
                RecommendationTemplate{kind,reason_type,action,rationale,
@@ -593,6 +623,24 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
   `fields_set`, so the strict `_dump()` would omit it. The round-trip is safe
   because these contract models are `extra=forbid` with self-contained dumps
   (M2-T9).
+- The bounded sample relation `_sample_relation` (M2-T10) is a **real seeded
+  reservoir** — `SELECT * FROM "view" USING SAMPLE RESERVOIR (size ROWS)
+  REPEATABLE (seed)` (DuckDB; deterministic per seed, differs across seeds,
+  returns-all when n<size), NOT the old md5 ORDER+LIMIT hash. `block` = a
+  bounded `LIMIT` scan for locality. GOTCHA: because the name is content-hashed
+  on (view,strategy,size,seed), `run_profiling_pipeline` builds the SAME window
+  name in all three profiler passes; the defensive pre-drop MUST be
+  `DROP TABLE IF EXISTS` (a prior pass left a TEMP TABLE of that name —
+  `DROP VIEW IF EXISTS` raises `CatalogException: ... is of type Table`).
+  `USING SAMPLE` works on a VIEW, not only tables (M2-T10).
+- `orchestration.run_profiling_pipeline` composes the three M2-T4/T5/T6 family
+  passes by MERGING their disjoint ColumnProfile blocks with
+  `profile.model_copy(update={block: value})` starting from the
+  discovery-skeleton — the passes each return a copy of the SAME base, so the
+  merge is by-index over `report.columns` and only copies a block that a pass
+  actually populated (None stays absent). `config.profiling.mode` is a plain
+  str under `use_enum_values`, re-hydrate with `ProfileMode(...)` before
+  `plan_execution` (it identity-compares against the enum) (M2-T10).
 ```
 
 ## M0 — Desktop Spike (gate: BLUEPRINT §5 Phase 0; acceptance: TESTING §5.2)
@@ -624,7 +672,7 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 - [x] **M2-T7** Rule registry + compiler → one SQL per rule; statuses PASS/FAIL/WARN/ERROR. *Spec: ENGINE §5.1–5.3; CONTRACTS §4.1.* ✅ `quality/` package — `registry.py` (ENGINE §5.1 closed catalog `RuleDefinition`{measure∈count|rate|outlier, param_kind, warn_only, mvp_active}; `referential_integrity`/`date_order` mvp_active=False → ERROR), `compiler.py` (`compile_rule` → ONE DuckDB statement shaped `(violations,total,sample_row_ids,lower_bound,upper_bound)`; mirrors `render_sql` single-materialisation + ADR-017 **bound input** (every threshold/domain/condition value is a `$n` placeholder, only identifiers quoted inline); target + condition columns validated present else `RuleCompileError`→ERROR; §5.2 missing = `null OR trim=''` (sentinels deliberately excluded — ColumnProfile concern); unique = `nonnull−distinct` (per-group, not a window `SUM(grp_n-1)`); outlier_scan reuses Tukey IQR/1.5 `quantile_cont` fences into `threshold{between}`; `sample_row_ids` bounded `array_agg … ORDER BY rid LIMIT≤200` → `row:N` refs never raw values; CTE SELECT has no outer FROM so empty ⇒ one row), `executor.py` (`run_quality_checks(con,handle,config,run_id,discovery?,executed_at?)`→`QualityRunResult{checks,errors}`; status PASS(0)/FAIL(>0)/WARN(warn_only|business_note|severity==warning)/ERROR(cannot compile|execute→`RunErrorEntry(RULE_EXEC_FAILED)`+observed null, **FAIL≠ERROR**); non-error `observed=MetricValue{count|rate, exact, denominator=population}`; `schema_version`='1.0', `rule_version`='1'). +`tests/test_quality_rules.py` (29: every §5.1 MVP type vs hand verdict + type_valid direct-INTEGER FAIL; outlier WARN-not-FAIL w/ fences; business_note/warning→WARN; absent-col/Phase-2/broken-quantile/malformed-range→ERROR w/ null observed; §6.4 isolation; bound `it''s` literal; `row:N` refs + ≤200 cap on 300 rows; every result §4.1-schema-valid). **No contract change** (consumes frozen §9 rules + emits frozen §4.1 results). 459/459 pytest green, tsc clean 2026-10-24.
 - [x] **M2-T8** Findings: detectors, dedup/merge, prioritization, **fingerprint**. *Spec: ENGINE §6; CONTRACTS §4.4.* ✅ `findings/` package — `fingerprinting.py` (ADR-016 §4.4 `sha256(category\|scope_key\|detector_id\|normalized_measure)`, 0x1F/0x1E collision-safe join, scope_key=dataset_id+table?+column, identity rides rule/metric id NOT value → same problem/different numbers = same digest), `detectors.py` (§6.1 two sources: `detect_from_quality_checks` FAIL/WARN→finding w/ rule observed Provenance + [metric,rule] refs — **PASS & ERROR both emit nothing**, FAIL≠ERROR, confidence↔method exact>approx>sampled; `detect_from_profiles` rule-less extremes as WARN: near-total missingness ≥0.90, constant column distinct==1&denom≥2→UNIQUENESS, dominant category share≥0.95→ACCURACY_FLAGGED, duplicate-key auxiliary from `ProfilerResult.duplicate_group_counts` (M2-T5's contract_target=None signal); facts/interpretation/hypotheses structurally separate §7, hypotheses MVP=unverified, never invents a number), `pipeline.py` (dedup collapses same (column,category) keeping top-priority rep + unions evidence; `priority_of` = deterministic int f(severity, critical-PK, affected-share, confidence) — **ordering only, no priority field added to frozen §4.2**; sort (-priority,fingerprint)→F-001.., workflow=null). `__init__.py` `build_findings(...)` critical scope from config PK. **No contract change** (reuses frozen Finding + finding.schema.json, consumes only M2-T4..T7 evidence). +`tests/test_findings.py` (29: fingerprint stability/distinction, FAIL/WARN→find·PASS/ERROR→none, each detector past/silent at bound, dedup merge, priority determinism, every finding §4.2-schema-valid + MVP invariants, quality→findings integration). 488/488 pytest green, tsc clean 2026-10-24.
 - [x] **M2-T9** Recommendations: rule-based templates + narrative w/ evidence refs. *Spec: ENGINE §7; CONTRACTS §4.3.* ✅ `recommendations/` package — `templates.py` (ENGINE §7 closed catalog: `RecommendationTemplate`{kind,reason_type,action,rationale,target_improvement,do_not,probe} per problem-kind; 6 rule kinds keyed by `finding.category` + 4 profile-extreme kinds (missingness/constant/duplicate-key/dominant-category) recovered from the representative fact `metric_ref` suffix + 6 defensive generics = 16; `classify_finding_kind(Finding)` re-derives detector identity (frozen §4.2 has no `detector_id`): any `rule:` ref ⇒ rule kind by category, else `facts[0].metric_ref` suffix ⇒ profile kind; accuracy_flagged rule OR dominant-category profile ⇒ `business_context_required` investigation question, never a proven cause — ENGINE §5 "accuracy is never inferred from validity"), `narrative.py` (composes text substituting ONLY `{column}` — numbers stay in the cited evidence refs, never re-typed; probe folded into action; rationale quotes refs verbatim), `rule_based.py` (`recommendation_for_finding` copies `finding.evidence_refs` **verbatim** onto the `Recommendation`, `evidence`⇒refs required, `status=proposed`, `R-NNN`, `finding_id` back-ref), `__init__.py` (`build_recommendations(findings)`→`RecommendationsResult{recommendations,findings}`: one rec per finding (≥1 mandate), deterministic `R-NNN` in F-NNN order; **wires `Finding.recommendation_ids`** M2-T8 left `[]` via a `model_dump`→set→`model_validate` round-trip so the strict ContractModel emits the key + re-validates §4.2). **No contract change** (reuses frozen §4.3 `Recommendation`+`recommendation.schema.json` M1-T2 + `finding.schema.json` `recommendation_ids`). +`tests/test_recommendations.py` (24: each detector→kind incl. all 4 profile extremes + rule-by-category + every kind resolves; evidence⇒non-empty + verbatim subset + rationale quotes refs; dominant-category/accuracy-rule→business w/ investigation-verb action; column substituted but value NOT reproduced; every rec §4.3-schema-valid + `R-NNN` + back-ref + proposed + ≥1/finding; wiring before/after + wired finding §4.2-valid + fields preserved; byte-stable; zero-fill guardrail; all 6 rule categories covered). AI/LLM OUT (BLUEPRINT Q3). 512/512 pytest green, tsc clean 2026-10-24.
-- [ ] **M2-T10** Modes quick/standard/deep + sampling (reservoir, seed) wiring. *Spec: ENGINE §2.2, §8.*
+- [x] **M2-T10** Modes quick/standard/deep + sampling (reservoir, seed) wiring. *Spec: ENGINE §2.2, §8.* ✅ Two deliverables. **(1) Reservoir finalised** in `engine/metrics/profiler.py::_sample_relation` — the preliminary `md5('seed#‖_row_id') ORDER+LIMIT` is replaced by a **real seeded reservoir**: DuckDB `USING SAMPLE RESERVOIR (size ROWS) REPEATABLE (seed)` (uniform over the whole relation, returns-all when n<size, reproducible per seed, different seed ⇒ different subset); `block` keeps locality via a bounded `LIMIT` scan (ENGINE §2.2). `REPEATABLE` binds the planner-verified seed as an int literal, never user data (ADR-017). **Gotcha:** the pre-existing defensive `DROP VIEW IF EXISTS` collided with the `TEMP TABLE` a prior pass created under the same content-hashed window name → switched to `DROP TABLE IF EXISTS` (the pipeline builds the same window across the 3 passes). **(2) Engine path wired end-to-end** in `orchestration/__init__.py` — `run_profiling_pipeline(con, handle, config, run_id)` reads `config.profiling.{mode,sampling,sections}` (re-hydrating the `use_enum_values` str `mode`→`ProfileMode`), runs discover→plan_execution(mode, n_rows=FULL count, sampling, sections)→the three M2-T4/T5/T6 passes against ONE shared plan+reservoir→`_merge_profiles` composes the family-disjoint blocks (stats/missingness | uniqueness/categorical | distribution/temporal) onto each discovery-skeleton ColumnProfile via `model_copy(update=)`→run_quality_checks (full relation)→build_findings→build_recommendations, returning `ProfilingPipelineResult{mode,n_rows,columns,checks,findings(recommendation_ids wired),recommendations,errors(§6.4 union),sampling(RunSampling record: §9 `size`→§2 `sample_size`+seed, None when disabled),plan,discovery,handle,duplicate_group_counts}`. `open_source` + `run_dataset_profiling(dataset_id, path, config, run_id)` open CSV/Parquet (ADR-011) then run. **A sampled run stamps `method=sampled`+`method_params.seed` on EVERY sampled metric end-to-end (ADR-015)** — proven by a test that walks the plan + emitted provenance. **No contract change; NO new metric; §3.1 DatasetProfile / §2 ProfilingRun rollup assembly (row_count/PK-candidates/temporal_coverage/timings) deliberately DEFERRED to M2-T11** (user-confirmed scope split; runner exposes columns + sampling record + plan for the CLI to fold). +`tests/test_orchestration_modes_sampling.py` (19: reservoir bounded/deterministic-same-seed/differs-diff-seed/returns-all/block-scan/reuse-name; standard-exact vs quick-approximate(+algorithm) vs deep-exact on the expensive metric; seed stamped on every sampled decision AND every sampled MetricValue; RunSampling populated/None; sampled run byte-stable; all-families merge onto one profile (numeric stats+distribution, varchar categorical); section-off omits blocks; findings↔recommendations wired + recommendation_ids non-empty; every column §3.2-schema-valid across quick/standard/deep; quality rule verdict unaffected by a sampled window; CSV end-to-end via run_dataset_profiling). 531/531 pytest green, tsc clean 2026-10-24.
 - [ ] **M2-T11** `profiler-cli` end-to-end on `sales_deals` fixture → full contract-valid JSON. **→ GATE M2 (BLUEPRINT Phase 1).** *Spec: CONTRACTS §2–4; TESTING §2.*
 
 ## M3 — Persistence

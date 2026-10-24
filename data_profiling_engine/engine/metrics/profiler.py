@@ -23,8 +23,10 @@ Obligations honoured here:
 - **Sampling honesty** (ENGINE §2.2): a ``sampled`` decision runs the same
   SQL against one shared bounded sample relation; the label + strategy +
   size + seed live in the Provenance, never in a different query. The
-  bounded-hash policy is a preliminary mechanism — the reservoir + seed
-  finalisation is M2-T10.
+  bounded relation is a real seeded reservoir (M2-T10): ``reservoir`` draws
+  ``size`` rows via DuckDB ``USING SAMPLE RESERVOIR (n ROWS) REPEATABLE
+  (seed)`` — uniform over the whole relation and reproducible for a seed;
+  ``block`` honours locality via an unordered bounded scan (ENGINE §2.2).
 - **Partial-failure policy** (CONTRACTS §6.4): a metric task that raises is
   recorded as ``not_computed`` + reason and a :class:`RunErrorEntry`
   (§8 ``METRIC_NOT_COMPUTED``); other tasks keep executing.
@@ -213,12 +215,21 @@ def _sample_relation(
     seed: int,
 ) -> str:
     """Build the one bounded sample relation shared by every ``sampled``
-    decision (≤ ``size`` rows — ADR-007). Deterministic per
-    (view, strategy, size, seed): ``reservoir`` uses a seeded pseudo-random
-    ordering (md5 over seed + ``_row_id``) — a preliminary approximation of
-    true reservoir sampling, finalised in M2-T10; ``block`` honours locality
-    (ENGINE §2.2) via an unordered bounded scan. The name is content-hashed
-    so identical windows reuse one relation and never clobber a user object."""
+    decision (≤ ``size`` rows — ADR-007). Finalised in M2-T10 as a *real*
+    reservoir, no longer the preliminary md5 ORDER+LIMIT hash:
+
+    - ``reservoir`` (default) draws ``size`` rows uniformly from the whole
+      relation with DuckDB ``USING SAMPLE RESERVOIR (size ROWS) REPEATABLE
+      (seed)`` — reproducible for a given seed (different seed ⇒ different
+      subset), and returns all rows when the relation is smaller than
+      ``size`` (ENGINE §2.2 "representative subsets").
+    - ``block`` honours locality via an unordered bounded scan
+      (``LIMIT size``) — only used when a metric genuinely needs it.
+
+    Deterministic per (view, strategy, size, seed); the name is content-hashed
+    so identical windows reuse one relation and never clobber a user object.
+    ``REPEATABLE`` is bound as an integer literal (a planner-verified seed,
+    never user data), so no raw value ever enters the SQL string."""
     tag = hashlib.sha256(
         f"{base_view}|{strategy}|{size}|{seed}".encode("utf-8")
     ).hexdigest()[:12]
@@ -228,10 +239,9 @@ def _sample_relation(
     else:
         body = (
             f'SELECT * FROM "{base_view}" '
-            f"ORDER BY md5(CONCAT_WS('|', 'seed#{int(seed)}', _row_id::VARCHAR)) "
-            f"LIMIT {int(size)}"
+            f"USING SAMPLE RESERVOIR ({int(size)} ROWS) REPEATABLE ({int(seed)})"
         )
-    con.execute(f'DROP VIEW IF EXISTS "{name}"')
+    con.execute(f'DROP TABLE IF EXISTS "{name}"')
     con.execute(f'CREATE OR REPLACE TEMP TABLE "{name}" AS {body}')
     return name
 
