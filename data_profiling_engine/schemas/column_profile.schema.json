@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dpe.local/schemas/column_profile.schema.json",
+  "title": "ColumnProfile",
+  "description": "CONTRACTS §3.2 — per-column profile block. Physical vs logical vs semantic type is mandatory (MVP checklist). Numeric metrics each carry Provenance. Sub-blocks (stats/distribution/categorical/temporal) are populated only when relevant to the logical/semantic type; un-computed metrics use method=not_computed + reason.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "column",
+    "ordinal",
+    "physical_type",
+    "logical_type",
+    "semantic_type"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/schemaVersion" },
+    "column": { "type": "string", "minLength": 1 },
+    "ordinal": { "type": "integer", "minimum": 0 },
+    "physical_type": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Storage/DuckDB physical type as reported by the connector (e.g. VARCHAR, DOUBLE, TIMESTAMP)."
+    },
+    "logical_type": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Logical type after discovery/inference (e.g. numeric_currency, categorical_nominal, temporal_datetime)."
+    },
+    "semantic_type": {
+      "type": "string",
+      "enum": ["identifier", "dimension", "measure", "time", "status", "text", "other"],
+      "description": "Business role of the column."
+    },
+    "unit": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "description": "Optional. When a currency/physical unit is asserted, `status` MUST be one of known|assumed|unknown (CONTRACTS §3.2 note; MVP §3.2.1). Never silently assert.",
+      "properties": {
+        "currency": { "type": "string" },
+        "status": { "type": "string", "enum": ["known", "assumed", "unknown"] }
+      }
+    },
+    "missingness": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["null_count", "blank_count", "sentinel_count", "missing_rate"],
+      "properties": {
+        "null_count": { "type": "integer", "minimum": 0 },
+        "blank_count": { "type": "integer", "minimum": 0 },
+        "sentinel_count": { "type": "integer", "minimum": 0 },
+        "missing_rate": { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/metricValue" }
+      }
+    },
+    "uniqueness": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["distinct_count", "is_unique_candidate"],
+      "properties": {
+        "distinct_count": { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/metricValue" },
+        "is_unique_candidate": { "type": "boolean" }
+      }
+    },
+    "stats": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "Numeric descriptive stats. Only keys relevant to the logical type appear; absent ones are either not applicable or carried as not_computed inside their own MetricValue.",
+      "properties": {
+        "valid_count": { "type": "integer", "minimum": 0 },
+        "min": { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/metricValue" },
+        "max": { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/metricValue" },
+        "mean": { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/metricValue" },
+        "median": { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/metricValue" },
+        "p25": { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/metricValue" },
+        "p75": { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/metricValue" },
+        "p95": { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/metricValue" },
+        "p99": { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/metricValue" },
+        "stddev": { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/metricValue" }
+      }
+    },
+    "distribution": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "histogram": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["bins", "counts", "provenance"],
+          "properties": {
+            "bins": { "type": "array", "items": { "type": ["number", "string"] } },
+            "counts": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+            "provenance": { "$ref": "https://dpe.local/schemas/provenance.schema.json" }
+          }
+        },
+        "skewness": { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/metricValue" },
+        "outlier_candidates": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["count", "method", "provenance"],
+          "properties": {
+            "count": { "type": "integer", "minimum": 0 },
+            "method": { "type": "string", "description": "Detector id, e.g. iqr_1_5." },
+            "provenance": { "$ref": "https://dpe.local/schemas/provenance.schema.json" },
+            "sample_row_refs": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Row references, never raw values (SECURITY §4 masking)."
+            }
+          }
+        }
+      }
+    },
+    "categorical": {
+      "type": ["object", "null"],
+      "description": "Populated when logical_type is categorical. Fields per CONTRACTS §3.2 Notes: categories, frequencies, rare_categories, label_inconsistencies.",
+      "additionalProperties": true,
+      "properties": {
+        "categories": { "type": "array", "items": { "type": "string" } },
+        "frequencies": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+        "rare_categories": { "type": "array", "items": { "type": "string" } },
+        "label_inconsistencies": { "type": "array" }
+      }
+    },
+    "temporal": {
+      "type": ["object", "null"],
+      "description": "Populated when logical_type is temporal. Fields per CONTRACTS §3.2 Notes: range, volume_per_granularity, gaps, out_of_expected_range, timezone_source.",
+      "additionalProperties": true,
+      "properties": {
+        "range": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "min": { "type": ["string", "null"], "format": "date-time" },
+            "max": { "type": ["string", "null"], "format": "date-time" }
+          }
+        },
+        "volume_per_granularity": { "type": ["object", "null"] },
+        "gaps": { "type": ["object", "array", "null"] },
+        "out_of_expected_range": { "type": ["object", "null"] },
+        "timezone_source": {
+          "type": ["string", "null"],
+          "description": "naive | utc | offset:+HH (CONTRACTS §3.2 Notes)."
+        }
+      }
+    },
+    "visualization_refs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Chart references; heavy payloads stay behind artifact.open (§5.4)."
+    },
+    "related_metric_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

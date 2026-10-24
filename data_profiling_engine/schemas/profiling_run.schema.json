@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dpe.local/schemas/profiling_run.schema.json",
+  "title": "ProfilingRun",
+  "description": "CONTRACTS §2 — one record per execution. Reproducibility tuple = dataset.source_snapshot.content_hash + config.config_hash + engine.engine_version + sampling.seed. Terminal status only (§6.2 note).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "dataset",
+    "config",
+    "engine",
+    "timing",
+    "status"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/schemaVersion" },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ULID / UUIDv7 (time-sortable, CONTRACTS §1)."
+    },
+    "job_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Present when the run was dispatched through the bridge/job manager; absent for pure CLI invocations."
+    },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataset_id", "source_kind", "connector", "source_ref", "source_snapshot"],
+      "properties": {
+        "dataset_id": { "type": "string", "minLength": 1 },
+        "source_kind": { "type": "string", "enum": ["file", "table", "query"] },
+        "connector": { "type": "string", "description": "MVP: csv | parquet (ADR-011)." },
+        "source_ref": { "type": "string", "minLength": 1 },
+        "source_snapshot": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["content_hash"],
+          "properties": {
+            "path": { "type": "string" },
+            "size_bytes": { "type": "integer", "minimum": 0 },
+            "modified_at": { "type": "string", "format": "date-time" },
+            "content_hash": {
+              "type": "string",
+              "pattern": "^(sha256|sha1|md5):[0-9a-fA-F]+$",
+              "description": "Algorithm-prefixed hex digest."
+            }
+          }
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["config_version", "config_hash", "profile_mode"],
+      "properties": {
+        "config_version": { "type": "string" },
+        "config_hash": {
+          "type": "string",
+          "pattern": "^(sha256|sha1|md5):[0-9a-fA-F]+$"
+        },
+        "profile_mode": { "type": "string", "enum": ["quick", "standard", "deep"] }
+      }
+    },
+    "engine": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["engine_version"],
+      "properties": {
+        "engine_version": { "type": "string" },
+        "duckdb_version": { "type": "string" },
+        "python_version": { "type": "string" }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["started_at"],
+      "properties": {
+        "started_at": { "type": "string", "format": "date-time" },
+        "finished_at": { "type": "string", "format": "date-time" },
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "sampling": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "strategy": { "type": "string", "description": "reservoir | ..." },
+        "sample_size": { "type": "integer", "minimum": 0 },
+        "seed": {
+          "type": "integer",
+          "description": "Required when enabled=true (CONTRACTS §1 reproducibility lock; BLUEPRINT §4)."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "enabled": { "const": true } },
+            "required": ["enabled"]
+          },
+          "then": { "required": ["seed", "strategy", "sample_size"] }
+        }
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["SUCCEEDED", "FAILED", "CANCELLED"],
+      "description": "Job terminal states (§6.2). Intermediate states live on the job envelope, not the run record."
+    },
+    "result_refs": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Artifact-path map; keys are stable names (profile_json, html_report, issue_csv, ...). Only present references; content never inlined."
+    },
+    "error_log": {
+      "type": "array",
+      "description": "Per-task errors preserved without failing the run (§6.4). Error objects must not contain credentials or raw sensitive values (SECURITY §5).",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string", "minLength": 1 },
+          "task": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

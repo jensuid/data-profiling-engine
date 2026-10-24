@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dpe.local/schemas/dataset_profile.schema.json",
+  "title": "DatasetProfile",
+  "description": "CONTRACTS §3.1 — dataset-level rollup produced by a run. Column-level detail lives in the `columns` array of ColumnProfile objects.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "columns"],
+  "properties": {
+    "schema_version": { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/schemaVersion" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "row_count": { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/metricValue" },
+    "column_count": { "type": "integer", "minimum": 0 },
+    "grain": {
+      "type": ["string", "null"],
+      "description": "Declared analytical grain (e.g. one_row_per_deal). Optional; comes from dataset config."
+    },
+    "primary_key_candidates": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Columns the engine believes can serve as PK; not a guarantee."
+    },
+    "temporal_coverage": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["column", "provenance"],
+      "properties": {
+        "column": { "type": "string", "minLength": 1 },
+        "min": { "type": ["string", "null"], "format": "date-time" },
+        "max": { "type": ["string", "null"], "format": "date-time" },
+        "provenance": { "$ref": "https://dpe.local/schemas/provenance.schema.json" }
+      }
+    },
+    "source_metadata": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "description": "Connector-emitted hints (delimiter, encoding, header row, parquet row-group count, ...)."
+    },
+    "columns": {
+      "type": "array",
+      "items": { "$ref": "https://dpe.local/schemas/column_profile.schema.json" },
+      "description": "One ColumnProfile per dataset column, in ordinal order."
+    }
+  }
+}

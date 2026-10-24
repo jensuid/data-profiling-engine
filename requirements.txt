@@ -2,6 +2,7 @@
 pywebview>=5.1
 duckdb>=1.1
 pydantic>=2.8
+jsonschema>=4.22  # canonical JSON Schema validation for contracts/ (M1, ADR-014; Draft 2020-12)
 polars>=1.5        # independent reference computations for correctness tests only
 
 # Test tooling (AGENTS §9: pytest tests are part of every task)

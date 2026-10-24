@@ -16,15 +16,19 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 ```text
 Milestone : M1 — Contracts Freeze   (GATE M0 PASSED 2026-10-24: M0-T1..T5
           green on BOTH OS; Win smoke = smoke_win.txt at repo root)
-Task      : none in progress — start M1.
-NEXT      : M1-T1 — JSON Schemas in schemas/: Provenance, ProfilingRun,
-            DatasetProfile, ColumnProfile. Open docs/CONTRACTS.md §1–3 only,
-            write into data_profiling_engine/schemas/. Then M1-T2..T6 per list.
+Task      : none in progress — M1-T1 done, start M1-T2 next.
+NEXT      : M1-T2 — JSON Schemas: QualityCheckResult, Finding(+fingerprint),
+            Recommendation, FindingWorkflow. Open docs/CONTRACTS.md §4
+            only (§4.1..§4.5), add files under data_profiling_engine/schemas/
+            following the pattern established in provenance.schema.json
+            ($id = https://dpe.local/schemas/<name>.schema.json, MetricValue
+            $def reused via full-URI $ref). Extend test_schemas.py with
+            positive/negative cases from §4 examples. Then M1-T3..T6 per list.
 Blocked by: none.
-Session notes: Win evidence: WEBVIEW2 pv=155.0.4283.62, DUCKDB 42,
-               WORKER SUCCEEDED 4/4, BRIDGE echo ok, SMOKE_OK file:// _MEIPASS
-               (C:\Users\user1\AppData\Local\Temp\_MEI…). Platform-aware spec
-               + WebView2 probe worked first try on Win — no ADR revision.
+Session notes: M1-T1 delivered 4 canonical Draft-2020-12 schemas +
+               `schemas/__init__.py` loader exposing `validator_for()` /
+               `validate()` backed by `referencing.Registry`; 27 new tests
+               in `tests/test_schemas.py` → 62/62 pytest green.
                Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
 ```
 
@@ -64,6 +68,19 @@ Session notes: Win evidence: WEBVIEW2 pv=155.0.4283.62, DUCKDB 42,
 - M0-T5 Win result (2026-10-24): platform-aware spec + edgechromium/clr hiddenimports
   passed the frozen smoke on Windows **first try** — no packaging fix needed; keep the
   spec's `platform_hiddenimports` block intact for later milestones.
+- Schema-pack convention (M1-T1): every file in `data_profiling_engine/schemas/`
+  is named `<snake>.schema.json`, carries a top-level `$id` under
+  `https://dpe.local/schemas/`, and cross-refs by that full URI (never `#` for
+  a `$def` that might be extracted for standalone validation). Loader is
+  `schemas/__init__.py::validator_for(name)`; add a new schema by dropping the
+  file — `_load_raw()` picks it up automatically and tests assert `$id` ↔
+  filename consistency.
+- M1-T1 added `jsonschema>=4.22` to requirements.txt (Draft 2020-12 +
+  `referencing`); installed via `uv pip install --python .venv/bin/python`.
+- CONTRACTS §2 / §3 examples in the doc use `"..."` placeholders for
+  timestamps / hashes; when turning them into pytest fixtures fill in a
+  realistic ULID-ish `run_id`, `sha256:<hex>` hash, and RFC-3339 `Z` date so
+  FormatChecker + pattern rules pass without disabling checks.
 ```
 
 ## M0 — Desktop Spike (gate: BLUEPRINT §5 Phase 0; acceptance: TESTING §5.2)
@@ -77,7 +94,7 @@ Session notes: Win evidence: WEBVIEW2 pv=155.0.4283.62, DUCKDB 42,
 
 ## M1 — Contracts Freeze
 
-- [ ] **M1-T1** JSON Schemas in `schemas/`: Provenance, ProfilingRun, DatasetProfile, ColumnProfile. *Spec: CONTRACTS §1–3.*
+- [x] **M1-T1** JSON Schemas in `schemas/`: Provenance, ProfilingRun, DatasetProfile, ColumnProfile. *Spec: CONTRACTS §1–3.* ✅ 4 Draft-2020-12 files under `data_profiling_engine/schemas/` + loader (`schemas/__init__.py`, `referencing.Registry`, `validator_for`/`validate`) + 27-test pack (`tests/test_schemas.py` covering §1.1 method rules, §2 terminal-status/sampling seed, §3.1 columns array, §3.2 unit.status/semantic_type enums, not_computed⇒no-value). 62/62 pytest green 2026-10-24.
 - [ ] **M1-T2** JSON Schemas: QualityCheckResult, Finding(+fingerprint), Recommendation, FindingWorkflow. *Spec: CONTRACTS §4.*
 - [ ] **M1-T3** Dataset-config JSON Schema + validator (rejects unknown rule keys, missing `dimension`). *Spec: CONTRACTS §9; ENGINE §5.1.*
 - [ ] **M1-T4** Pydantic models generated/hand-aligned to schemas + round-trip tests. *Spec: CONTRACTS §1.*

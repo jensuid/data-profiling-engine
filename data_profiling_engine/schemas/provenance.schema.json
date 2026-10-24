@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dpe.local/schemas/provenance.schema.json",
+  "title": "Provenance",
+  "description": "CONTRACTS §1.1 — provenance block embedded in every numeric metric/check result (ADR-015). Any computed numeric carries method + method_params; sampled requires seed; approximate requires algorithm; not_computed requires reason and must have no sibling value.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["method"],
+  "properties": {
+    "method": {
+      "type": "string",
+      "enum": ["exact", "approximate", "sampled", "not_computed"]
+    },
+    "method_params": {
+      "type": "object",
+      "description": "Free-form parameters (sampling_strategy, sample_size, population_size, seed, algorithm, confidence, ...). Conditional rules below enforce required keys per method.",
+      "additionalProperties": true
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Required when method == not_computed (CONTRACTS §1, §1.1). Examples: column_type_unsupported, source_unreadable."
+    },
+    "computed_at": { "type": "string", "format": "date-time" },
+    "engine_version": { "type": "string" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "method": { "const": "sampled" } },
+        "required": ["method"]
+      },
+      "then": {
+        "properties": {
+          "method_params": { "required": ["seed"] }
+        },
+        "required": ["method_params"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "method": { "const": "approximate" } },
+        "required": ["method"]
+      },
+      "then": {
+        "properties": {
+          "method_params": { "required": ["algorithm"] }
+        },
+        "required": ["method_params"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "method": { "const": "not_computed" } },
+        "required": ["method"]
+      },
+      "then": { "required": ["reason"] }
+    }
+  ],
+  "$defs": {
+    "metricValue": {
+      "title": "MetricValue",
+      "description": "Common pairing of a numeric value with its Provenance (used by row_count, missing_rate, distinct_count, min/max/mean/median/p95/stddev, skewness, observed, ...). When provenance.method == not_computed the value MUST be absent (CONTRACTS §1: 'never a silent null').",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provenance"],
+      "properties": {
+        "value": {
+          "description": "Any JSON scalar (number, string, boolean) or bounded structure; omitted when provenance.method == not_computed.",
+          "type": ["number", "integer", "string", "boolean", "object", "array", "null"]
+        },
+        "provenance": { "$ref": "https://dpe.local/schemas/provenance.schema.json" },
+        "denominator": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional base population for rate metrics (CONTRACTS §3.2 missing_rate)."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "provenance": {
+                "properties": { "method": { "const": "not_computed" } },
+                "required": ["method"]
+              }
+            },
+            "required": ["provenance"]
+          },
+          "then": { "not": { "required": ["value"] } }
+        }
+      ]
+    },
+    "schemaVersion": {
+      "title": "SchemaVersion",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "description": "Semver-lite MAJOR.MINOR carried by every persisted object (CONTRACTS §1)."
+    }
+  }
+}
