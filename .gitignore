@@ -25,3 +25,6 @@ artifacts/
 # OS / editor
 .DS_Store
 Thumbs.db
+
+# Windows operator smoke evidence (local only — contains machine paths/usernames)
+smoke_win.txt
