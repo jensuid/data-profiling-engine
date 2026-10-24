@@ -40,6 +40,10 @@ REQUIRED_SCHEMAS: tuple[str, ...] = (
     "profiling_run.schema.json",
     "dataset_profile.schema.json",
     "column_profile.schema.json",
+    "quality_check_result.schema.json",
+    "finding.schema.json",
+    "finding_workflow.schema.json",
+    "recommendation.schema.json",
 )
 
 

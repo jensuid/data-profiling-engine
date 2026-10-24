@@ -305,3 +305,258 @@ def test_column_profile_sampled_missing_rate_requires_seed():
     errs = S.validate("dataset_profile.schema.json", bad)
     assert any("seed" in e for e in errs), errs
 
+
+# ---- M1-T2: QualityCheckResult (§4.1) -----------------------------------
+
+QCR_FAIL = {
+    "schema_version": "1.0",
+    "run_id": "01J8Z4K2M7AAA1B2C3D4E5F6G7",
+    "rule_id": "deal_value_missing_rate",
+    "rule_version": "1",
+    "dimension": "completeness",
+    "status": "FAIL",
+    "severity": "high",
+    "column": "deal_value",
+    "observed": {"value": 0.15, "provenance": {"method": "exact"}},
+    "threshold": {"operator": "<=", "value": 0.05},
+    "failing_record_count": 3000,
+    "evidence": {"denominator": 20000, "sample_row_refs": ["row:0001"], "baseline_ref": None},
+    "error": None,
+    "executed_at": "2026-10-24T09:12:03Z",
+}
+
+QCR_ERROR = {
+    "schema_version": "1.0",
+    "run_id": "01J8Z4K2M7AAA1B2C3D4E5F6G7",
+    "rule_id": "revenue_non_negative",
+    "rule_version": "1",
+    "dimension": "validity",
+    "status": "ERROR",
+    "severity": "warning",
+    "column": "deal_value",
+    "observed": None,
+    "threshold": {"operator": ">=", "value": 0},
+    "failing_record_count": None,
+    "evidence": None,
+    "error": {"code": "RULE_EXEC_FAILED", "message": "type mismatch on deal_value"},
+    "executed_at": "2026-10-24T09:12:04Z",
+}
+
+
+def test_qcr_fail_positive():
+    assert S.validate("quality_check_result.schema.json", QCR_FAIL) == []
+
+
+def test_qcr_error_positive():
+    assert S.validate("quality_check_result.schema.json", QCR_ERROR) == []
+
+
+def test_qcr_error_status_requires_error_object():
+    bad = dict(QCR_ERROR, error=None)
+    errs = S.validate("quality_check_result.schema.json", bad)
+    assert any("error" in e for e in errs), errs
+
+
+def test_qcr_pass_forbids_error_object():
+    bad = dict(QCR_FAIL, status="PASS", error={"code": "X", "message": "y"})
+    errs = S.validate("quality_check_result.schema.json", bad)
+    assert errs, "status=PASS must not carry a populated error"
+
+
+def test_qcr_status_enum():
+    errs = S.validate("quality_check_result.schema.json", dict(QCR_FAIL, status="SKIPPED"))
+    assert any("status" in e for e in errs), errs
+
+
+def test_qcr_dimension_enum():
+    errs = S.validate("quality_check_result.schema.json", dict(QCR_FAIL, dimension="freshness"))
+    assert any("dimension" in e for e in errs), errs
+
+
+def test_qcr_dimension_accuracy_flagged_allowed():
+    # §4.1: accuracy is deliberately exposed only as accuracy_flagged, never auto-scored.
+    ok = dict(QCR_FAIL, dimension="accuracy_flagged")
+    assert S.validate("quality_check_result.schema.json", ok) == []
+
+
+def test_qcr_observed_inherits_metricvalue_not_computed_rule():
+    # observed is a MetricValue: not_computed must drop the `value` sibling.
+    bad = dict(QCR_FAIL, observed={
+        "value": 0.15,
+        "provenance": {"method": "not_computed", "reason": "column_type_unsupported"},
+    })
+    errs = S.validate("quality_check_result.schema.json", bad)
+    assert errs, "observed with method=not_computed must omit `value`"
+
+
+# ---- M1-T2: Finding + fingerprint (§4.2 / §4.4) --------------------------
+
+FINGERPRINT_OK = "sha256:" + "a" * 64
+
+FINDING_MVP = {
+    "schema_version": "1.0",
+    "finding_id": "F-001",
+    "fingerprint": FINGERPRINT_OK,
+    "run_id": "01J8Z4K2M7AAA1B2C3D4E5F6G7",
+    "title": "Deal value incomplete",
+    "summary": "15% of deal_value is empty, above the 5% configured threshold.",
+    "category": "completeness",
+    "severity": "high",
+    "confidence": "high",
+    "scope": {"column": "deal_value", "affected_records": 3000, "period": None},
+    "facts": [
+        {"metric_ref": "metric:deal_value_missing_rate", "value": 0.15,
+         "provenance": {"method": "exact"}}
+    ],
+    "interpretation": "Revenue and segment comparisons may be biased if analyzed as-is.",
+    "hypotheses": [
+        {"text": "Missingness may cluster by status/source/period",
+         "status": "unverified", "suggested_probe": "group missing rate by status"}
+    ],
+    "evidence_refs": ["metric:deal_value_missing_rate", "rule:deal_value_missing_rate"],
+    "related_finding_ids": [],
+    "recommendation_ids": ["R-001"],
+    "workflow": None,
+}
+
+
+def test_finding_positive_mvp():
+    assert S.validate("finding.schema.json", FINDING_MVP) == []
+
+
+def test_finding_fingerprint_sha256_hex_pattern():
+    for bad_fp in ["sha256:...", "sha256:ABC", "md5:" + "a" * 32, "a" * 64]:
+        errs = S.validate("finding.schema.json", dict(FINDING_MVP, fingerprint=bad_fp))
+        assert any("fingerprint" in e for e in errs), (bad_fp, errs)
+
+
+def test_finding_fingerprint_requires_lowercase_hex():
+    errs = S.validate("finding.schema.json",
+                       dict(FINDING_MVP, fingerprint="sha256:" + "A" * 64))
+    assert errs, "uppercase hex must be rejected to keep fingerprint canonical"
+
+
+def test_finding_facts_cannot_be_empty():
+    errs = S.validate("finding.schema.json", dict(FINDING_MVP, facts=[]))
+    assert any("facts" in e for e in errs), errs
+
+
+def test_finding_fact_requires_provenance():
+    bad = dict(FINDING_MVP, facts=[{"metric_ref": "metric:x", "value": 1}])
+    errs = S.validate("finding.schema.json", bad)
+    assert any("provenance" in e for e in errs), errs
+
+
+def test_finding_evidence_refs_cannot_be_empty():
+    errs = S.validate("finding.schema.json", dict(FINDING_MVP, evidence_refs=[]))
+    assert any("evidence_refs" in e for e in errs), errs
+
+
+def test_finding_hypothesis_status_enum():
+    bad = dict(FINDING_MVP, hypotheses=[{"text": "x", "status": "proven"}])
+    errs = S.validate("finding.schema.json", bad)
+    assert any("status" in e for e in errs), errs
+
+
+def test_finding_category_matches_dimension_enum():
+    errs = S.validate("finding.schema.json", dict(FINDING_MVP, category="weird"))
+    assert any("category" in e for e in errs), errs
+
+
+def test_finding_workflow_null_ok_and_object_validates():
+    # MVP: workflow = null
+    assert S.validate("finding.schema.json", dict(FINDING_MVP, workflow=None)) == []
+    # Final App: populated workflow must conform to §4.5.
+    good_wf = {"owner": "ana", "status": "acknowledged", "comments": [],
+               "resolution_evidence": None, "updated_at": "2026-10-24T10:00:00Z"}
+    assert S.validate("finding.schema.json", dict(FINDING_MVP, workflow=good_wf)) == []
+    bad_wf = {"owner": "ana", "status": "closed"}
+    errs = S.validate("finding.schema.json", dict(FINDING_MVP, workflow=bad_wf))
+    assert any("status" in e for e in errs), errs
+
+
+# ---- M1-T2: Recommendation (§4.3) ---------------------------------------
+
+RECOMMENDATION_EVIDENCE = {
+    "schema_version": "1.0",
+    "recommendation_id": "R-001",
+    "finding_id": "F-001",
+    "action": "Investigate deal_value completeness from the CRM source and sync mechanism.",
+    "rationale": "Missing rate exceeds configured threshold and can bias revenue analysis.",
+    "reason_type": "evidence",
+    "target_improvement": "Reduce unexplained missingness below threshold or document cause.",
+    "do_not": ["Do not fill empty values with zero as a first response."],
+    "evidence_refs": ["metric:deal_value_missing_rate"],
+    "status": "proposed",
+}
+
+
+def test_recommendation_positive():
+    assert S.validate("recommendation.schema.json", RECOMMENDATION_EVIDENCE) == []
+
+
+def test_recommendation_evidence_reason_requires_refs():
+    bad = dict(RECOMMENDATION_EVIDENCE, reason_type="evidence", evidence_refs=[])
+    errs = S.validate("recommendation.schema.json", bad)
+    assert any("evidence_refs" in e for e in errs), errs
+
+
+def test_recommendation_business_context_allows_no_refs():
+    ok = dict(RECOMMENDATION_EVIDENCE, reason_type="business_context_required",
+              evidence_refs=[])
+    assert S.validate("recommendation.schema.json", ok) == []
+
+
+def test_recommendation_reason_type_enum():
+    errs = S.validate("recommendation.schema.json",
+                       dict(RECOMMENDATION_EVIDENCE, reason_type="guess"))
+    assert any("reason_type" in e for e in errs), errs
+
+
+def test_recommendation_status_enum():
+    errs = S.validate("recommendation.schema.json",
+                       dict(RECOMMENDATION_EVIDENCE, status="shipped"))
+    assert any("status" in e for e in errs), errs
+
+
+# ---- M1-T2: FindingWorkflow (§4.5) --------------------------------------
+
+def test_workflow_positive():
+    good = {"owner": None, "status": "open", "comments": [],
+            "resolution_evidence": None, "updated_at": None}
+    assert S.validate("finding_workflow.schema.json", good) == []
+
+
+def test_workflow_status_enum():
+    errs = S.validate("finding_workflow.schema.json", {"status": "closed"})
+    assert any("status" in e for e in errs), errs
+
+
+def test_workflow_requires_status():
+    errs = S.validate("finding_workflow.schema.json", {"owner": "ana"})
+    assert any("status" in e for e in errs), errs
+
+
+def test_workflow_comment_shape():
+    good = {"status": "investigating", "comments": [
+        {"author": "ana", "body": "looking", "created_at": "2026-10-24T10:00:00Z"}
+    ]}
+    assert S.validate("finding_workflow.schema.json", good) == []
+    bad = {"status": "investigating", "comments": [{"author": "ana"}]}
+    errs = S.validate("finding_workflow.schema.json", bad)
+    assert errs, "comments must carry author/body/created_at"
+
+
+# ---- M1-T2: §4 registry hygiene -----------------------------------------
+
+def test_m1_t2_schema_ids_align_with_filenames():
+    """Every new M1-T2 file must appear in REQUIRED_SCHEMAS and carry the right $id."""
+    for name in (
+        "quality_check_result.schema.json",
+        "finding.schema.json",
+        "finding_workflow.schema.json",
+        "recommendation.schema.json",
+    ):
+        assert name in S.REQUIRED_SCHEMAS, name
+        assert name in S.RAW_SCHEMAS, name
+        assert S.RAW_SCHEMAS[name]["$id"].endswith(name)

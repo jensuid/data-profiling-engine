@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dpe.local/schemas/finding.schema.json",
+  "title": "Finding",
+  "description": "CONTRACTS §4.2 — a single surfaced problem. Facts / interpretation / hypotheses are structurally separated (§7): an unverified cause may NEVER be placed inside `facts`. Fingerprint (ADR-016, §4.4) gives cross-run identity: same problem, different numbers → same fingerprint.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "finding_id",
+    "fingerprint",
+    "run_id",
+    "title",
+    "summary",
+    "category",
+    "severity",
+    "confidence",
+    "scope",
+    "facts",
+    "interpretation",
+    "hypotheses",
+    "evidence_refs"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/schemaVersion" },
+    "finding_id": { "type": "string", "minLength": 1 },
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "CONTRACTS §4.4: sha256(category | scope_key | detector_id | normalized_measure). Lowercase hex digest."
+    },
+    "run_id": { "type": "string", "minLength": 1 },
+    "title": { "type": "string", "minLength": 1 },
+    "summary": { "type": "string", "minLength": 1 },
+    "category": {
+      "type": "string",
+      "enum": ["completeness", "uniqueness", "validity", "consistency", "timeliness", "accuracy_flagged"],
+      "description": "Aligns with QualityCheckResult.dimension (CONTRACTS §4.1)."
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["critical", "high", "medium", "low", "warning", "info"]
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["low", "medium", "high"],
+      "description": "Reflects method + evidence completeness (ENGINE §6.2)."
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [],
+      "properties": {
+        "column": { "type": ["string", "null"] },
+        "affected_records": { "type": ["integer", "null"], "minimum": 0 },
+        "period": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "start": { "type": ["string", "null"], "format": "date-time" },
+                "end": { "type": ["string", "null"], "format": "date-time" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "facts": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Engine-computed values with provenance only. CONTRACTS §7 forbids unverified causes here.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["metric_ref", "provenance"],
+        "properties": {
+          "metric_ref": { "type": "string", "minLength": 1 },
+          "value": { "description": "Any JSON scalar or bounded structure." },
+          "provenance": { "$ref": "https://dpe.local/schemas/provenance.schema.json" }
+        }
+      }
+    },
+    "interpretation": {
+      "type": ["string", "null"],
+      "description": "Meaning/impact if relevant to the analysis (CONTRACTS §7)."
+    },
+    "hypotheses": {
+      "type": "array",
+      "description": "Suspected causes requiring verification; every entry must be marked unverified at MVP.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text", "status"],
+        "properties": {
+          "text": { "type": "string", "minLength": 1 },
+          "status": {
+            "type": "string",
+            "enum": ["unverified", "verifying", "supported", "refuted"],
+            "description": "MVP only emits `unverified`."
+          },
+          "suggested_probe": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Stable references (metric:…, rule:…, chart:…) the finding rests on."
+    },
+    "related_finding_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "recommendation_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "workflow": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "https://dpe.local/schemas/finding_workflow.schema.json" }
+      ],
+      "description": "MVP always null (CONTRACTS §4.2 note; §4.5)."
+    }
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dpe.local/schemas/quality_check_result.schema.json",
+  "title": "QualityCheckResult",
+  "description": "CONTRACTS §4.1 — result of executing one rule against one column. Status semantics: PASS/FAIL/WARN come from the check running; ERROR means the check could not execute (never conflate FAIL and ERROR).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "rule_id",
+    "rule_version",
+    "dimension",
+    "status",
+    "severity",
+    "executed_at"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/schemaVersion" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "rule_id": { "type": "string", "minLength": 1 },
+    "rule_version": { "type": "string", "minLength": 1 },
+    "dimension": {
+      "type": "string",
+      "enum": ["completeness", "uniqueness", "validity", "consistency", "timeliness", "accuracy_flagged"],
+      "description": "Scorecard dimension (CONTRACTS §4.1; ENGINE §5.4). `accuracy` is deliberately not auto-scored."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["PASS", "FAIL", "WARN", "ERROR"]
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["critical", "high", "medium", "low", "warning", "info"]
+    },
+    "column": {
+      "type": ["string", "null"],
+      "description": "Column the rule targets; null for dataset-scoped rules."
+    },
+    "observed": {
+      "oneOf": [
+        { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/metricValue" },
+        { "type": "null" }
+      ],
+      "description": "MetricValue when the check executed. Null when status == ERROR (no value was observed)."
+    },
+    "threshold": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["operator"],
+      "properties": {
+        "operator": {
+          "type": "string",
+          "enum": ["<", "<=", ">", ">=", "==", "!=", "in", "not_in", "between", "is_null", "not_null", "matches", "unique"]
+        },
+        "value": { "description": "Bound or reference value; shape depends on operator." },
+        "upper": { "description": "Optional upper bound for `between`." }
+      }
+    },
+    "failing_record_count": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Rows violating the rule; null when not applicable or status == ERROR."
+    },
+    "evidence": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "description": "Supporting numbers/references the report will show. Sample row refs only, never raw values (SECURITY §4).",
+      "properties": {
+        "denominator": { "type": ["integer", "null"], "minimum": 0 },
+        "sample_row_refs": { "type": "array", "items": { "type": "string" } },
+        "baseline_ref": { "type": ["string", "null"] }
+      }
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "type": "string", "minLength": 1 },
+            "message": { "type": "string" }
+          }
+        }
+      ],
+      "description": "Populated only when status == ERROR. Never carries credentials or raw sensitive values (SECURITY §5)."
+    },
+    "executed_at": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "ERROR" } }, "required": ["status"] },
+      "then": {
+        "properties": { "error": { "not": { "type": "null" } } },
+        "required": ["error"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "enum": ["PASS", "FAIL", "WARN"] } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": { "error": { "type": "null" } }
+      }
+    }
+  ]
+}

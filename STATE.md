@@ -16,19 +16,21 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 ```text
 Milestone : M1 — Contracts Freeze   (GATE M0 PASSED 2026-10-24: M0-T1..T5
           green on BOTH OS; Win smoke = smoke_win.txt at repo root)
-Task      : none in progress — M1-T1 done, start M1-T2 next.
-NEXT      : M1-T2 — JSON Schemas: QualityCheckResult, Finding(+fingerprint),
-            Recommendation, FindingWorkflow. Open docs/CONTRACTS.md §4
-            only (§4.1..§4.5), add files under data_profiling_engine/schemas/
-            following the pattern established in provenance.schema.json
-            ($id = https://dpe.local/schemas/<name>.schema.json, MetricValue
-            $def reused via full-URI $ref). Extend test_schemas.py with
-            positive/negative cases from §4 examples. Then M1-T3..T6 per list.
+Task      : none in progress — M1-T2 done, start M1-T3 next.
+NEXT      : M1-T3 — Dataset-config JSON Schema + validator (rejects unknown
+            rule keys, missing `dimension`). Open docs/CONTRACTS.md §9 and
+            docs/ENGINE_SPEC.md §5.1 only. Add `dataset_config.schema.json`
+            under data_profiling_engine/schemas/ (reuse Provenance §def
+            schemaVersion, keep $id convention). Wire rejection test in
+            tests/test_schemas.py. Then M1-T4..T6 per list.
 Blocked by: none.
-Session notes: M1-T1 delivered 4 canonical Draft-2020-12 schemas +
-               `schemas/__init__.py` loader exposing `validator_for()` /
-               `validate()` backed by `referencing.Registry`; 27 new tests
-               in `tests/test_schemas.py` → 62/62 pytest green.
+Session notes: M1-T2 delivered 4 §4 schemas
+               (quality_check_result / finding / finding_workflow /
+               recommendation) + extended REQUIRED_SCHEMAS + 27 new tests
+               (§4.1 status ERROR⇔error-object coupling, §4.2 fingerprint
+               sha256-lowercase-hex pattern + facts minItems 1 + workflow
+               null|object, §4.3 evidence⇒non-empty evidence_refs, §4.5
+               comment shape). 89/89 pytest green.
                Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
 ```
 
@@ -95,7 +97,7 @@ Session notes: M1-T1 delivered 4 canonical Draft-2020-12 schemas +
 ## M1 — Contracts Freeze
 
 - [x] **M1-T1** JSON Schemas in `schemas/`: Provenance, ProfilingRun, DatasetProfile, ColumnProfile. *Spec: CONTRACTS §1–3.* ✅ 4 Draft-2020-12 files under `data_profiling_engine/schemas/` + loader (`schemas/__init__.py`, `referencing.Registry`, `validator_for`/`validate`) + 27-test pack (`tests/test_schemas.py` covering §1.1 method rules, §2 terminal-status/sampling seed, §3.1 columns array, §3.2 unit.status/semantic_type enums, not_computed⇒no-value). 62/62 pytest green 2026-10-24.
-- [ ] **M1-T2** JSON Schemas: QualityCheckResult, Finding(+fingerprint), Recommendation, FindingWorkflow. *Spec: CONTRACTS §4.*
+- [x] **M1-T2** JSON Schemas: QualityCheckResult, Finding(+fingerprint), Recommendation, FindingWorkflow. *Spec: CONTRACTS §4.* ✅ 4 Draft-2020-12 files added under `data_profiling_engine/schemas/` (§4.1/4.2/4.5/4.3) + `finding` embeds `finding_workflow` via `$ref` + `observed`/facts reuse Provenance `metricValue`. 27 new tests (§4.1 ERROR↔error coupling + status/dimension enums, §4.2 fingerprint `^sha256:[0-9a-f]{64}$` + facts/evidence_refs minItems 1 + hypothesis status enum + workflow null↔object, §4.3 `reason_type=evidence` ⇒ non-empty evidence_refs + status enum, §4.5 comment shape). 89/89 pytest green 2026-10-24.
 - [ ] **M1-T3** Dataset-config JSON Schema + validator (rejects unknown rule keys, missing `dimension`). *Spec: CONTRACTS §9; ENGINE §5.1.*
 - [ ] **M1-T4** Pydantic models generated/hand-aligned to schemas + round-trip tests. *Spec: CONTRACTS §1.*
 - [ ] **M1-T5** TS types mirroring contracts + parity test against JSON Schemas. *Spec: CONTRACTS §1; AGENTS §3.*

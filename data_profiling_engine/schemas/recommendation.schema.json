@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dpe.local/schemas/recommendation.schema.json",
+  "title": "Recommendation",
+  "description": "CONTRACTS §4.3 — an action tied to a Finding. reason_type ∈ {evidence, heuristic, business_context_required}; `evidence` REQUIRES non-empty evidence_refs (recommendations must cite existing evidence, never invent causes). AI/LLM output (Phase 4) uses the same shape.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "recommendation_id",
+    "finding_id",
+    "action",
+    "rationale",
+    "reason_type",
+    "evidence_refs",
+    "status"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "https://dpe.local/schemas/provenance.schema.json#/$defs/schemaVersion" },
+    "recommendation_id": { "type": "string", "minLength": 1 },
+    "finding_id": { "type": "string", "minLength": 1 },
+    "action": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Imperative verb-phrase stating the suggested next step."
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Why — must be grounded in evidence_refs (CONTRACTS §7)."
+    },
+    "reason_type": {
+      "type": "string",
+      "enum": ["evidence", "heuristic", "business_context_required"]
+    },
+    "target_improvement": {
+      "type": ["string", "null"],
+      "description": "Observable state after the action lands (e.g. 'missing rate back under 5%')."
+    },
+    "do_not": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Anti-patterns to avoid (e.g. 'Do not fill empty values with zero as a first response.')."
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "metric:/rule:/chart:/finding: refs backing this recommendation."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["proposed", "accepted", "rejected", "deferred", "implemented"],
+      "description": "MVP emits `proposed`; downstream transitions are Final App workflow territory."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "reason_type": { "const": "evidence" } }, "required": ["reason_type"] },
+      "then": { "properties": { "evidence_refs": { "minItems": 1 } } }
+    }
+  ]
+}

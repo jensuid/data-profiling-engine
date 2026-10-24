@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dpe.local/schemas/finding_workflow.schema.json",
+  "title": "FindingWorkflow",
+  "description": "CONTRACTS §4.5 — Final App schema, defined at M1 so the contract is stable. MVP always emits `workflow: null` on Finding; this block activates in Phase 4 without a breaking change.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status"],
+  "properties": {
+    "owner": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": { "type": "string" },
+            "display": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["open", "acknowledged", "investigating", "resolved", "accepted_risk"]
+    },
+    "comments": {
+      "type": "array",
+      "description": "Chronological workflow notes; body text is user-authored, never engine-generated findings.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["author", "body", "created_at"],
+        "properties": {
+          "author": { "type": "string" },
+          "body": { "type": "string" },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    "resolution_evidence": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string" },
+        { "type": "object", "additionalProperties": true }
+      ],
+      "description": "Free-form proof attached when status becomes `resolved`; must reference existing evidence only (CONTRACTS §7)."
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  }
+}
