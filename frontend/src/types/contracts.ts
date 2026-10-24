@@ -1,5 +1,5 @@
 /**
- * M1-T5 — TypeScript mirror of the 9 frozen JSON Schemas (CONTRACTS §1; AGENTS §3).
+ * M1-T5 — TypeScript mirror of the frozen JSON Schemas (CONTRACTS §1; AGENTS §3).
  *
  * CONTRACTS §1 requires every cross-boundary object to be implemented both as a
  * pydantic model in Python and mirrored as a TypeScript type in React, "both
@@ -27,7 +27,7 @@ export type JsonValue =
   | { [key: string]: JsonValue };
 
 // ---------------------------------------------------------------------------
-// Closed enums (CONTRACTS §1.1, §2, §3.2, §4, §9) — exactly the schema sets.
+// Closed enums (CONTRACTS §1.1, §2, §3.2, §4, §6.2, §9) — exactly the schema sets.
 // ---------------------------------------------------------------------------
 
 export const MetricMethodValues = [
@@ -165,6 +165,17 @@ export const ConditionOperatorValues = [
   "less_than",
 ] as const;
 export type ConditionOperator = (typeof ConditionOperatorValues)[number];
+
+/** CONTRACTS §6.2 — job lifecycle states (SUCCEEDED / FAILED / CANCELLED terminal). */
+export const JobStateValues = [
+  "QUEUED",
+  "RUNNING",
+  "CANCEL_REQUESTED",
+  "SUCCEEDED",
+  "FAILED",
+  "CANCELLED",
+] as const;
+export type JobState = (typeof JobStateValues)[number];
 
 // ---------------------------------------------------------------------------
 // provenance.schema.json (§1.1) + $defs/metricValue
@@ -561,8 +572,8 @@ export interface DatasetConfig {
 // ---------------------------------------------------------------------------
 // §5.2 bridge command payloads (M5-T1) — mirror of bridge/envelope.py.
 // These are request bodies wrapped in BridgeRequest.payload, and the small
-// response shapes the read commands return; they are NOT among the nine frozen
-// root schemas above, so they are validated by the pydantic models on the
+// response shapes the read commands return; they are NOT among the canonical
+// frozen root schemas above, so they are validated by the pydantic models on the
 // Python side (extra fields forbidden there) rather than by a schema file.
 // ---------------------------------------------------------------------------
 
@@ -691,4 +702,30 @@ export interface ArtifactOpenResult {
   kind?: string;
   ref: string;
   size_bytes: number;
+}
+
+// ---------------------------------------------------------------------------
+// job_status.schema.json (§5.3 polled status + §6.2 states) — M5-T3.
+//
+// One shape serves BOTH progress transports (§5.5): the UI polls
+// `profile.get_status` over the bridge, and the host may additionally push the
+// very same object through `window.__dpeJobStatus` via evaluate_js. Because the
+// payload is identical, UI code never cares which transport delivered it —
+// polling stays authoritative and a push is only a hint. `error_code` carries a
+// §8 registry code on FAILED; `result` is the bounded success output and still
+// obeys the 1 MiB cap (§5.4) — larger payloads go through paging/artifact.open.
+// ---------------------------------------------------------------------------
+
+export interface JobProgress {
+  completed_steps: number;
+  total_steps: number;
+  current_step?: string;
+}
+
+export interface JobStatus {
+  job_id: string;
+  status: JobState;
+  progress: JobProgress;
+  error_code?: string;
+  result?: { [key: string]: JsonValue };
 }

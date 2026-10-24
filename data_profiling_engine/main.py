@@ -23,7 +23,11 @@ from pathlib import Path
 
 import webview
 
-from data_profiling_engine.bridge import BridgeFacade
+from data_profiling_engine.bridge import (
+    BridgeFacade,
+    configure_status_push,
+    window_push_sink,
+)
 
 # frontend/dist is resolved relative to the repo root (dev) or the bundled
 # app directory (packaged). Under a PyInstaller freeze the bundle's read-only
@@ -142,6 +146,12 @@ def main(argv: list[str] | None = None) -> int:
         _run_duckdb_smoke()
     facade = BridgeFacade()
     window = webview.create_window(APP_TITLE, str(index), js_api=facade)
+    # Optional §5.5 progress push: every status transition is also handed to the
+    # WebView as ``window.__dpeJobStatus(<status>)``. Purely additive — a UI that
+    # ignores it keeps working by polling ``profile.get_status``, which stays
+    # authoritative, and both transports carry the identical §5.3 object. Still
+    # host→JS only: no server, no socket (ADR-005).
+    configure_status_push(window_push_sink(window))
 
     if args.smoke:
         def _run_smoke() -> None:

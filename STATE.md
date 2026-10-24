@@ -14,33 +14,57 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 ## ▶ CURRENT POSITION
 
 ```text
-Milestone : M5 — Bridge Facade + Job Manager (GATE M1 CONTRACTS FREEZE PASSED
+Milestone : M6 — UI Screens (GATE M1 CONTRACTS FREEZE PASSED
           2026-10-24; GATE M2 engine spine PASSED 2026-10-24 — profiler-cli
           end-to-end; GATE M3 persistence MET 2026-10-24 — ADR-008 fully
           landed; GATE M4 reporting COMPLETE dev-mode 2026-10-24 — packaged
-          verification deferred to M7/Phase-3)
-Task      : none in progress — M5-T1 done (the six remaining §5.2 read
-          commands: dataset.inspect / dataset.preview / quality.get_results /
-          findings.get / report.get_summary / artifact.open, served from the M3
-          stores + the M2 connector seam, paged, with the 1 MiB cap now enforced
-          on BOTH directions). The command table is complete: all nine MVP
-          commands wired, each schema-gated (`extra="forbid"`).
+          verification deferred to M7/Phase-3; M5 bridge facade COMPLETE
+          dev-mode 2026-10-25 — T1 read commands + caps, T2 job manager +
+          real profile.start worker, T3 §5.5 progress push; packaged
+          bridge/worker verification on both OS deferred to M7/Phase-3)
+Task      : none in progress — M5-T3 done (§5.5 progress push landed: ONE
+          status serialiser `canonical_status_payload` feeds both the polled
+          `profile.get_status` and the optional host→JS `evaluate_js` push, so
+          the UI is transport-agnostic; polling stays authoritative, push is a
+          coalesced hint that can never fail a job). M5 (bridge facade) is
+          COMPLETE — all nine §5.2 commands wired and observable.
 GATE M4   : reporting-layer tasks T1-T4 COMPLETE (706/706 pytest, tsc clean,
           golden byte-stable). MVP acceptance is on the PACKAGED build
           (BLUEPRINT §5 Phase-1 gate / §6), not dev mode — do not stamp M4
           "accepted" until the packaged run is verified in M7/Phase-3.
-NEXT      : M5-T3 — progress polling + optional evaluate_js push, one status
-          schema. *Spec: CONTRACTS §5.5.*
-          `profile.get_status` already returns the canonical §5.3 JobStatus
-          (M5-T2) and every read command is polled (M5-T1) — what is left is the
-          §5.5 *push* option: an optional `evaluate_js` notification on progress
-          / terminal events so the UI need not busy-poll, while ONE status schema
-          (JobStatus + ProgressEvent) stays the single definition both transports
-          serialise. Keep polling authoritative (push is a hint only); no HTTP,
-          no new command, no per-transport schema fork (ADR-005/§5.5).
+NEXT      : M6-T1 — Dataset Selection + inspect/preview screen. *Spec: BLUEPRINT
+          Phase 2; CONTRACTS §5.*
+          The bridge is complete, so this is the first UI task: build the real
+          screen on `dataset.inspect` + `dataset.preview` (both already wired,
+          paged, PII-masked by default in M5-T1) and consume the §5.5 status
+          object shape if the screen shows a run. Files to open:
+          `frontend/src/App.tsx` (HashRouter routes, ADR-013),
+          `frontend/src/pages/Home.tsx`, `frontend/src/types/contracts.ts`
+          (`DatasetInspectResult` / `DatasetPreviewResult` / `JobStatus`),
+          CONTRACTS §5.2–§5.4 for command + cap rules. Keep to MVP connectors
+          (CSV + Parquet, ADR-011), no HTTP (ADR-005), heavy work off the UI
+          thread (ADR-006).
           Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
                  (cd frontend && npx tsc --noEmit)
-Blocked by: none — M5-T1 accepted by this session's suite (753/753).
+Blocked by: none — M5-T3 accepted by this session's suite (765/765).
+Session notes: M5-T3 landed the §5.5 progress push (CONTRACTS §5.5, ADR-005/006).
+               Files: `bridge/worker/manager.py` (+`canonical_status_payload`,
+               `add_status_listener`, `_notify`, `_dispatch_loop`, `_commit` =
+               `_persist` + `_notify` on all 7 transition sites), `bridge/runtime.py`
+               (+`configure_status_push` / `status_push_enabled` / `_forward_status`
+               / `window_push_sink` / `JS_STATUS_CALLBACK="__dpeJobStatus"`,
+               manager attaches the forwarder), `bridge/facade.py` (`_status_payload`
+               now returns the canonical payload and KEEPS `job_id`),
+               `bridge/envelope.py` (owns `PAYLOAD_CAP_BYTES`), `main.py` (installs
+               the window sink), `frontend/src/types/contracts.ts` (+`JobStateValues`
+               /`JobProgress`/`JobStatus`), `tests/test_contracts_ts_parity.py`
+               (`job_status.schema.json → JobStatus`, enum set now 19),
+               `docs/CONTRACTS.md` §5.5 (binding push details). GOTCHA: the pushed
+               and polled objects are the SAME dict by construction — never fork a
+               per-transport shape. GOTCHA: a push is dropped (>1 MiB, unserialisable,
+               dead WebView) or coalesced (newest per job), so a UI must never treat
+               a missing push as a lost state; it polls. 765/765 pytest green, tsc
+               clean 2026-10-25.
 Session notes: M5-T1 landed the read side of the bridge (CONTRACTS §5.2/§5.4,
                SECURITY §3/§4). Files: `bridge/envelope.py` (+7 payload models
                `DatasetInspectPayload` / `DatasetPreviewPayload` / `PagedResult
@@ -1091,7 +1115,33 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
     `masked` flags miss cell-level PII discovered while masking.
   * Adding TS interfaces to `contracts.ts` is safe for parity, but a new
     `<Name>Values` enum bumps the hard-coded set in
-    `test_contracts_ts_parity.py` (currently 18) — mirror shapes as interfaces.
+    `test_contracts_ts_parity.py` (19 since M5-T3 mirrored `job_status`) —
+    mirror shapes as interfaces, and change an enum only in the same commit
+    that updates that set + `ROOT_INTERFACES`.
+  * The parity parser needs ONE field per line ending in `;` — a trailing
+    `// comment` after the semicolon makes the field invisible to `_FIELD_RE`
+    and the root then fails `test_top_level_property_names_match_canonical`.
+    Put such notes in the section comment above the interface.
+- M5-T3 progress-push gotchas (verified 2026-10-25):
+  * `JobManager._notify` must be called while `self._lock` is held and NEVER
+    invokes a listener itself — only the dispatcher thread may call out, so a
+    stalled/closed WebView cannot block a feeder thread or a job transition.
+  * A new status transition MUST publish via `_commit(record)` (7 call sites
+    today), never via `_persist` alone — `_persist` is now called only from
+    `_commit`, so a site that skips it silently loses its push.
+  * The polled status now INCLUDES `job_id` (both transports emit the identical
+    object); do not re-add a `pop("job_id")` in the facade.
+  * The dispatcher is a daemon thread that lives for the whole process (it
+    never exits, `while True: _wake.wait()`); only managers WITH a listener
+    spawn one, which is exactly one in the packaged app. Tests that rebind
+    `configure_runtime` therefore leave idle threads behind — harmless, but do
+    not expect a manager to be garbage-collectable.
+  * `PAYLOAD_CAP_BYTES` moved to `bridge/envelope.py` (§5.4 owns all its limits)
+    and is re-exported from `facade` — importing it from either still works.
+  * `runtime.configure_status_push` is process-global and deliberately survives
+    `configure_runtime`; forgetting to clear it in a fixture leaks the sink
+    into other tests (the `data_root` fixture in `test_bridge_progress_push.py`
+    resets both).
 ```
 
 ## M0 — Desktop Spike (gate: BLUEPRINT §5 Phase 0; acceptance: TESTING §5.2)
@@ -1143,7 +1193,7 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 
 - [x] **M5-T1** Command handlers for MVP command set; payload caps enforced. *Spec: CONTRACTS §5.2, §5.4.* ✅ All nine §5.2 commands wired. `bridge/envelope.py`: 7 new payload models (all `extra="forbid"`) — `DatasetInspectPayload`, `DatasetPreviewPayload` (`limit ≤ PREVIEW_ROW_CAP=200`, `mask_pii=True`), `PagedResultPayload` (requires `run_id` **or** `dataset_id`, `limit` 1..200, `offset ≥ 0`), `QualityGetResultsPayload` (`status`/`dimension`), `FindingsGetPayload` (`severity`/`category`), `ReportSummaryPayload`, `ArtifactOpenPayload` (`kind` XOR `ref`, `reveal=False`). `bridge/facade.py`: 6 handlers served from `runtime.get_metadata_store()` / the M2 connector seam — `dataset.inspect` (connector `build_snapshot` + `LIMIT 0` `_probe_schema`, joins stored `column_inventory` types + `profile_summary.row_count` + `last_run`; **never reads rows**, ADR-007), `dataset.preview` (DuckDB `LIMIT/OFFSET` page only, `_row_id` plumbing stripped, PII masked by stored `logical_type` column tag or a cell matching `discovery.inference.PII_PATTERNS`, `mask_pii=False` opt-out), `quality.get_results` / `findings.get` (paged ids from `list_checks`/`list_findings`, items rebuilt as contract §4.1/§4.2 objects via `load_check_results`/`load_findings`, `page.total` from new `count_checks`/`count_findings`), `report.get_summary` (`load_profiling_run` + `profile_summary` + `counts` + `check_status_counts` — counts/refs only, no big payload), `artifact.open` (ref resolvable ONLY through a recorded `run_artifacts` row → `ArtifactStore.open_path` confinement; returns an ack `{run_id,kind,ref,size_bytes}`, never content; `reveal` uses the OS native viewer, best-effort). Caps: request envelope cap + **new response cap** in `bridge_send` (`BRIDGE_PAYLOAD_TOO_LARGE` when the serialised result >1 MiB); handler filter vocabularies validated so a typo'd filter is typed `BRIDGE_REQUEST_INVALID`, not an empty page. `_resolve_source_path` applies the SECURITY §3 allow-list (`SOURCE_NOT_ALLOWED`); `_connector_error_result` maps connector codes onto §8; `_json_safe` coerces Decimal/date/bytes; `_error()` now derives `retryable` from `errors.is_retryable(code)` (§8) instead of hard-coding False. No new metric, no HTTP (ADR-005), no new §8 code, no architecture change. `contracts.ts` mirrors the payloads + result shapes (no new `<Name>Values` enum, so the 18-enum parity test still passes). +`tests/test_bridge_read_commands.py` (38, seeded by a REAL in-process `profile_dataset` run + ArtifactStore writes + `save_run`, `configure_runtime(root)` redirect). 753/753 pytest green, tsc clean 2026-10-25. Gotchas logged in GOTCHAS. **→ NEXT: M5-T3.**
 - [x] **M5-T2** Job manager: lifecycle, cancel, timeout, crash detection, recovery. *Spec: CONTRACTS §6; ADR-006.* ✅ Real write path live. `bridge/worker/profile_job.py::run_profile_job` = spawn-safe worker entry (all-positional primitive args, ADR-006): runs the FULL M2-M4 spine via `orchestration.rollup.profile_dataset` in the worker, emits + persists the run (ArtifactStore + `MetadataStore.save_run` on a worker-thread store), reports `ProgressEvent`/`TerminalEvent` over the IPC queue, honors cancel at step boundaries. `manager.py`: `_launch` generalized (echo spike + real job share one lifecycle), `start_profile_job` (persist=True, `PROFILE_JOB_TIMEOUT_SECONDS=1800`, QUEUED row mirrored to SQLite so `runs.job_id` resolves — `register_dataset`→`create_job` ordering FK-safe), `_persist` feeder-thread-safe (short-lived per-call store, canonical §5.3 `_canonical_status` conversion before write), `recover_interrupted_jobs` (orphaned open rows ⇒ honest FAILED/WORKER_CRASHED, §6.3) invoked once when `runtime.get_profile_manager()` first materializes. `bridge/runtime.py` = process-wide context singleton (`configure_runtime` seam redirects data root + rebuilds store/manager; tests use tmp_path, packaged app uses OS default). `envelope.py`: `ProfileStartPayload` (validated before spawn; invalid config rejected at the boundary, AGENTS §5). `facade.py`: `profile.start` / `profile.get_status` / `profile.cancel` handlers; spike commands behind `enable_spike_commands` (default env `DPE_ENABLE_SPIKE_COMMANDS`, OFF in packaged build). `rollup.profile_dataset` gained optional `job_id` threaded into `build_profiling_run` so the run row links to the job — CLI/golden path leaves it None (field absent per contract, golden byte-identical, verified). NO HTTP (ADR-005), no architecture change; status payloads are canonical §5.3 `JobStatus` ≤ bridge caps. +`tests/test_bridge_profile.py` (9: e2e profile.start→SUCCEEDED with schema-valid persisted run + artifacts on disk, invalid-config rejection, cancel → CANCELLED, unknown job, spike-off-by-default, recovery, payload validation, status canonical shape, timeout path). Spike fixtures updated to pass the enable flag. 715/715 pytest green, tsc clean 2026-10-25. Gotchas logged in GOTCHAS. **→ NEXT: M5-T1.**
-- [ ] **M5-T3** Progress polling + optional evaluate_js push, one status schema. *Spec: CONTRACTS §5.5.*
+- [x] **M5-T3** Progress polling + optional evaluate_js push, one status schema. *Spec: CONTRACTS §5.5.* ✅ ONE serialiser feeds both transports: `worker/manager.py::canonical_status_payload(status)` = `_canonical_status(...).model_dump(mode="json", exclude_none=True)` — the facade's poll (`_status_payload`) and every push come out of it, so `job_id` is back INSIDE the polled object (§5.3 sample carries it; a push has no envelope). Manager observers: `add_status_listener` (idempotent, lazily starts ONE daemon `job-status-push` thread), `_notify` (coalesces newest-status-per-`job_id`, snapshot only, under the lock), `_dispatch_loop` (delivers outside the lock, swallows listener faults); all 7 transition sites now publish via the new `_commit(record)` = `_persist` (SQLite mirror §6.3) + `_notify`, so a push can never alter or fail a job. `runtime.py`: `configure_status_push(sink)` / `status_push_enabled()` / `window_push_sink(window)` (JSON-dumps the status, DROPS >1 MiB instead of truncating §5.4, emits the fixed `window.__dpeJobStatus && __dpeJobStatus(<json>);` — only our own object interpolated, SECURITY §3; WebView errors swallowed) and `get_profile_manager()` attaches `_forward_status` to every manager it hands out, so a host that installs no sink stays inert. `main.py` installs the sink right after `webview.create_window`. `envelope.py` now OWNS `PAYLOAD_CAP_BYTES` (moved out of the facade) so request, response and push gate on one number. Contracts: `contracts.ts` mirrors `job_status.schema.json` (`JobStateValues` + `JobProgress` + `JobStatus`), parity `ROOT_INTERFACES` gained `job_status.schema.json → JobStatus` and the enum-set test is now **19**; `docs/CONTRACTS.md` §5.5 gained the binding push details (callback name, coalescing/drop rules, poll authoritative) — no new command, no new §8 code, no HTTP, no per-transport schema fork (ADR-005/§5.5). +`tests/test_bridge_progress_push.py` (11: pushed object == polled object and both schema-clean, absence fidelity + monotonic progress, burst collapses to newest, listener-free manager queues nothing, exploding sink cannot fail a job, no-sink inert, `configure_runtime` keeps the host sink, one forwarder per fresh manager, sink expression JSON round-trip, oversized push dropped, dead window + unserialisable status swallowed). 765/765 pytest green, tsc clean 2026-10-25. Gotchas logged. **→ NEXT: M6-T1.**
 
 ## M6 — UI Screens (one task = one screen)
 

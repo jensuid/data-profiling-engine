@@ -32,6 +32,7 @@ __all__ = [
     "BridgeRequest",
     "BridgeErrorObject",
     "BridgeResponse",
+    "PAYLOAD_CAP_BYTES",
     "EchoPayload",
     "WorkerEchoJobPayload",
     "JobIdPayload",
@@ -46,6 +47,14 @@ __all__ = [
     "ReportSummaryPayload",
     "ArtifactOpenPayload",
 ]
+
+
+# CONTRACTS §5.4 — 1 MiB per serialised message. The cap binds *every* message
+# crossing the bridge, so it is enforced on the request envelope and the
+# response in :mod:`facade`, and on an optional §5.5 ``evaluate_js`` push in
+# :mod:`runtime`. Owned here (beside the other §5.4 limits) so all three
+# transports gate on one number.
+PAYLOAD_CAP_BYTES = 1 * 1024 * 1024
 
 
 class EchoPayload(BaseModel):

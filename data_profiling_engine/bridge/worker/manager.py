@@ -10,6 +10,11 @@ Feeder-thread invariant: worker events are buffered and applied *in order*
 per job; we only declare the process dead once it has exited AND the buffer
 has been dry for a full poll cycle — so a terminal event racing process
 teardown is never misread as a crash (SUCCEEDED wins over FAILED).
+
+§5.5 push observers (M5-T3): every transition a job goes through is also handed
+to registered listeners as the canonical status dict, on a dedicated dispatcher
+thread — never under the manager lock and never on the feeder thread, so a slow
+or dead WebView cannot stall a job. Polling stays authoritative; push is a hint.
 """
 from __future__ import annotations
 
@@ -20,7 +25,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from multiprocessing.context import SpawnContext
-from typing import Any
+from typing import Any, Callable
 
 from .. import errors
 from .events import ProgressEvent, TerminalEvent
@@ -35,6 +40,9 @@ DEFAULT_JOB_TIMEOUT_SECONDS = 300.0
 PROFILE_JOB_TIMEOUT_SECONDS = 1800.0
 _FORCE_KILL_GRACE_SECONDS = 2.0
 _POLL_INTERVAL_SECONDS = 0.05
+
+#: What a §5.5 observer receives: one canonical §5.3 status object, by value.
+StatusListener = Callable[["dict[str, Any]"], None]
 
 
 @dataclass
@@ -72,6 +80,64 @@ class JobManager:
         # Optional SQLite mirror for real job state (§6.3). The spike manager
         # runs with it ``None`` (pure in-memory status slot).
         self._store = metadata_store
+        # §5.5 push observers. Dispatch is deferred to one lazy daemon thread so
+        # a listener (a WebView round-trip) never runs while the manager lock is
+        # held and never blocks the feeder thread that folds worker events.
+        self._listeners: list[StatusListener] = []
+        self._pending: dict[str, dict[str, Any]] = {}
+        self._wake = threading.Event()
+        self._dispatcher: threading.Thread | None = None
+
+    def add_status_listener(self, listener: StatusListener) -> None:
+        """Subscribe to status pushes for every job this manager owns (§5.5).
+
+        Idempotent per callable. The dispatcher thread starts on the first
+        listener, so an app that only polls pays nothing. The payload is exactly
+        what ``profile.get_status`` returns (see :func:`canonical_status_payload`)
+        — one schema, so the UI cannot care which transport delivered it."""
+        with self._lock:
+            if any(existing is listener for existing in self._listeners):
+                return
+            self._listeners.append(listener)
+            if self._dispatcher is None:
+                self._dispatcher = threading.Thread(
+                    target=self._dispatch_loop, daemon=True, name="job-status-push"
+                )
+                self._dispatcher.start()
+
+    def _notify(self, record: _JobRecord) -> None:
+        """Queue the record's current status for observers. Must be called while
+        ``self._lock`` is held (right after each transition is mirrored), so it
+        only takes an in-memory snapshot — no listener is invoked here.
+
+        Coalesced by job id: the newest status wins, so a burst of progress
+        events collapses into one push and a terminal transition can never be
+        dropped behind a stale one. A consumer that missed an intermediate step
+        still sees the truth by polling."""
+        if not self._listeners:
+            return
+        self._pending[record.status.job_id] = canonical_status_payload(record.status)
+        self._wake.set()
+
+    def _dispatch_loop(self) -> None:
+        """Deliver queued statuses outside the lock; listener faults are theirs.
+
+        A push is a hint (§5.5): an exception from the host sink (closed window,
+        stalled WebView) is swallowed rather than surfacing as a job failure —
+        the job's own state and the SQLite mirror are unaffected."""
+        while True:
+            self._wake.wait()
+            self._wake.clear()
+            with self._lock:
+                batch = list(self._pending.values())
+                self._pending.clear()
+                listeners = list(self._listeners)
+            for payload in batch:
+                for listener in listeners:
+                    try:
+                        listener(payload)
+                    except Exception:  # noqa: BLE001 — push never fails a job
+                        pass
 
     # ---- public API (called from facade / bridge threads) ----
 
@@ -206,6 +272,14 @@ class JobManager:
         record.thread.start()
         return job_id
 
+    def _commit(self, record: _JobRecord) -> None:
+        """Publish one status transition: mirror it into the store (§6.3) **and**
+        queue it for the §5.5 push observers. Called while ``self._lock`` is
+        held; neither half may fail a job — the mirror is the durable record and
+        the push is only a hint the UI can always replace by polling."""
+        self._persist(record)
+        self._notify(record)
+
     def _persist(self, record: _JobRecord) -> None:
         """Mirror the record's current status into the store (no-op for the
         in-memory spike). Must be called while holding ``self._lock``; the
@@ -259,7 +333,7 @@ class JobManager:
             record.status = record.status.model_copy(
                 update={"status": JobState.CANCEL_REQUESTED}
             )
-            self._persist(record)
+            self._commit(record)
             cancel_event = record.cancel_event
         if cancel_event is not None:
             cancel_event.set()
@@ -377,7 +451,7 @@ class JobManager:
                 record.status = record.status.model_copy(
                     update={"status": JobState.RUNNING}
                 )
-                self._persist(record)
+                self._commit(record)
 
     def _apply(self, job_id: str, event: ProgressEvent | TerminalEvent) -> bool:
         """Fold one worker event into the status slot; True if terminal."""
@@ -400,7 +474,7 @@ class JobManager:
                 if record.status.status is not JobState.CANCEL_REQUESTED:
                     update["status"] = JobState.RUNNING
                 record.status = record.status.model_copy(update=update)
-                self._persist(record)
+                self._commit(record)
                 return False
             assert isinstance(event, TerminalEvent)
             record.terminal_seen = True
@@ -410,7 +484,7 @@ class JobManager:
             if event.status is JobState.FAILED and event.error_code:
                 update["error_code"] = event.error_code
             record.status = record.status.model_copy(update=update)
-            self._persist(record)
+            self._commit(record)
             return True
 
     def _deadline_hit(self, job_id: str) -> bool:
@@ -428,7 +502,7 @@ class JobManager:
                 record.status = record.status.model_copy(
                     update={"status": JobState.CANCEL_REQUESTED}
                 )
-                self._persist(record)
+                self._commit(record)
                 if record.cancel_event is not None:
                     record.cancel_event.set()
             return hit
@@ -452,7 +526,7 @@ class JobManager:
                 record.status = record.status.model_copy(
                     update={"status": JobState.FAILED, "error_code": errors.JOB_TIMEOUT}
                 )
-                self._persist(record)
+                self._commit(record)
 
     def _mark_crashed(self, job_id: str) -> None:
         with self._lock:
@@ -468,7 +542,7 @@ class JobManager:
             record.status = record.status.model_copy(
                 update={"status": JobState.FAILED, "error_code": code}
             )
-            self._persist(record)
+            self._commit(record)
 
 
 def _now() -> float:
@@ -514,6 +588,17 @@ def _canonical_status(status: JobStatus):
     if status.result is not None:
         data["result"] = status.result
     return CanonicalJobStatus.model_validate(data)
+
+
+def canonical_status_payload(status: JobStatus) -> dict[str, Any]:
+    """Runtime ``JobStatus`` → the canonical §5.3 status object, as a dict.
+
+    The single serialisation point for a status: the polled
+    ``profile.get_status`` result and every §5.5 push payload come out of here,
+    so the two transports are interchangeable for the UI (same keys, absent
+    slots omitted rather than null, ``job_id`` always present because a push
+    carries no envelope)."""
+    return _canonical_status(status).model_dump(mode="json", exclude_none=True)
 
 
 def _connector_for(source_path: str | None) -> str:

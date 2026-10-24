@@ -41,6 +41,10 @@ ROOT_INTERFACES = {
     "finding_workflow.schema.json": "FindingWorkflow",
     "recommendation.schema.json": "Recommendation",
     "dataset_config.schema.json": "DatasetConfig",
+    # M5-T3: the §5.3 status object is mirrored too — one shape serves both the
+    # polled `profile.get_status` and the optional §5.5 host→JS push, so the UI
+    # type has to exist on the TS side regardless of transport.
+    "job_status.schema.json": "JobStatus",
 }
 
 _ENUM_RE = re.compile(
@@ -107,14 +111,14 @@ def ts_interfaces(ts_text: str) -> dict[str, dict]:
     return ifaces
 
 
-def test_all_18_contract_enums_are_mirrored(ts_enums: dict[str, list[str]]):
+def test_all_19_contract_enums_are_mirrored(ts_enums: dict[str, list[str]]):
     """Every enum declared in models.py must exist on the TS side too."""
     expected = {
         "MetricMethod", "ProfileMode", "ReportLanguage", "RunStatus", "SourceKind",
         "SemanticType", "UnitStatus", "QualityDimension", "CheckStatus", "Severity",
         "ThresholdOperator", "FindingConfidence", "HypothesisStatus",
         "WorkflowStatus", "ReasonType", "RecommendationStatus", "RuleType",
-        "ConditionOperator",
+        "ConditionOperator", "JobState",
     }
     assert set(ts_enums) == expected
 

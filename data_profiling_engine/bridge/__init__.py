@@ -5,7 +5,9 @@ backed by the spawn-method worker in :mod:`bridge.worker`. M5-T2 lands the real
 ``profile.start`` / ``profile.get_status`` / ``profile.cancel`` trio over the
 store-backed job manager; the spike commands stay available only behind
 ``BridgeFacade(enable_spike_commands=True)``. The app host binds its user-data
-root with :func:`configure_runtime` before serving the bridge.
+root with :func:`configure_runtime` before serving the bridge, and may enable the
+optional §5.5 progress push with :func:`configure_status_push` +
+:func:`window_push_sink` once it has a window (polling stays authoritative).
 """
 from .envelope import (
     BridgeErrorObject,
@@ -17,7 +19,7 @@ from .envelope import (
     WorkerEchoJobPayload,
 )
 from .facade import COMMANDS, PAYLOAD_CAP_BYTES, SPIKE_COMMANDS, BridgeFacade
-from .runtime import configure_runtime
+from .runtime import configure_runtime, configure_status_push, window_push_sink
 
 __all__ = [
     "BridgeErrorObject",
@@ -32,4 +34,6 @@ __all__ = [
     "PAYLOAD_CAP_BYTES",
     "WorkerEchoJobPayload",
     "configure_runtime",
+    "configure_status_push",
+    "window_push_sink",
 ]

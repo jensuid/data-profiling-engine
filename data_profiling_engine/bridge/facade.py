@@ -20,6 +20,9 @@ store-backed job manager (M5-T2), and the six read commands
 ``findings.get`` / ``report.get_summary`` / ``artifact.open``) are served from
 the M3 stores with paging and the §5.4 caps enforced on **both** directions
 (request at the envelope, response re-checked before it is handed back) — M5-T1.
+Progress (§5.5) is polled here and is authoritative; the optional host→JS push
+lives in :mod:`runtime` and emits the *same* §5.3 status object this module
+returns, which is what lets UI code stay transport-agnostic — M5-T3.
 """
 from __future__ import annotations
 
@@ -37,6 +40,7 @@ from pydantic import BaseModel, ValidationError
 
 from . import errors, runtime
 from .envelope import (
+    PAYLOAD_CAP_BYTES,
     PREVIEW_ROW_CAP,
     ArtifactOpenPayload,
     BridgeErrorObject,
@@ -53,9 +57,8 @@ from .envelope import (
     WorkerEchoJobPayload,
 )
 from .worker import default_manager
-
-# CONTRACTS §5.4 — 1 MiB per serialised message.
-PAYLOAD_CAP_BYTES = 1 * 1024 * 1024
+# One §5.3 status shape for both transports (poll here, push in runtime).
+from .worker.manager import canonical_status_payload
 
 
 Handler = Callable[[dict[str, Any]], dict[str, Any]]
@@ -98,14 +101,15 @@ def _status_payload(manager: Any, job_id: str) -> dict[str, Any]:
     """Poll the manager's thread-safe status slot (§5.3/§5.5 shape).
 
     Shared by the spike ``job.get_status`` and the real ``profile.get_status``:
-    one status schema, transport-agnostic (the only difference is *which*
-    manager owns the job)."""
+    ONE status schema, transport-agnostic (the only difference is *which*
+    manager owns the job). ``canonical_status_payload`` is the same function the
+    §5.5 push path uses, so the object the UI polls and the object it is pushed
+    are identical in shape — ``job_id`` included, because a push carries no
+    envelope."""
     status = manager.get_status(job_id)
     if status is None:
         return _error_result(job_id, errors.JOB_NOT_FOUND, "unknown job id")
-    result = status.model_dump(mode="json", exclude_none=True)
-    result.pop("job_id", None)  # envelope already identifies the job
-    return result
+    return canonical_status_payload(status)
 
 
 def _job_status_handler(payload: dict[str, Any]) -> dict[str, Any]:

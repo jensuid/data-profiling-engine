@@ -297,6 +297,12 @@ Error:
 
 Because pywebview is request/response (ADR-003/005), progress is delivered by **polling `profile.get_status`** from the UI, with optional host→JS `evaluate_js` push events using the same status object shape. Both paths share one schema so the UI code is transport-agnostic.
 
+Binding details of the push option (M5-T3, no new command or schema):
+
+- The pushed body is exactly the §5.3 polled status object (`job_status.schema.json`), `job_id` included — a push carries no response envelope, so nothing may be dropped or added relative to the polled form. One serialiser serves both transports.
+- The host delivers a push by evaluating a fixed expression that calls the optional global `window.__dpeJobStatus(status)`; the UI defines that callback to receive hints and may ignore it entirely. No caller-supplied text reaches the JS expression (SECURITY §3).
+- Polling stays **authoritative**: a push is a hint, may be coalesced (newest status per job wins) or dropped (e.g. when it would exceed the §5.4 1 MiB cap), and a push failure never changes a job's state or surfaces as an error.
+
 ## 6. Job lifecycle
 
 ### 6.1 State machine
