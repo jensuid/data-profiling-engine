@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dpe.local/schemas/bridge_response.schema.json",
+  "title": "BridgeResponse",
+  "description": "CONTRACTS §5.3 response envelope returned to JS. `status` discriminates the body: `ok` carries `result` (sync commands), `accepted` carries `job_id` (long jobs), `error` carries `error`. Exactly one body slot is populated per §5.4; unused slots are absent, never null.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request_id", "status"],
+  "properties": {
+    "request_id": {
+      "type": "string",
+      "maxLength": 128,
+      "description": "Correlation id copied from the request; an empty string is allowed only for a pre-envelope failure the facade could not attribute to a valid request."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ok", "accepted", "error"]
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Command result body; present iff status == ok."
+    },
+    "job_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Async job handle; present iff status == accepted (§5.2 accepted + job_id)."
+    },
+    "error": {
+      "$ref": "https://dpe.local/schemas/bridge_error.schema.json",
+      "description": "Typed error body; present iff status == error."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "ok" } }, "required": ["status"] },
+      "then": {
+        "required": ["result"],
+        "not": { "anyOf": [ { "required": ["job_id"] }, { "required": ["error"] } ] }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "accepted" } }, "required": ["status"] },
+      "then": {
+        "required": ["job_id"],
+        "not": { "anyOf": [ { "required": ["result"] }, { "required": ["error"] } ] }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "error" } }, "required": ["status"] },
+      "then": {
+        "required": ["error"],
+        "not": { "anyOf": [ { "required": ["result"] }, { "required": ["job_id"] } ] }
+      }
+    }
+  ]
+}

@@ -61,6 +61,42 @@ ROUND_TRIP_CASES = [
     ),
     ("recommendation.schema.json", M.Recommendation, RECOMMENDATION_EVIDENCE),
     ("dataset_config.schema.json", M.DatasetConfig, CONFIG_EXAMPLE),
+    # M1-T6 bridge/job envelopes (CONTRACTS §5.3)
+    (
+        "bridge_request.schema.json",
+        M.BridgeRequest,
+        {"command": "profile.start", "request_id": "req-1", "payload": {"dataset_id": "ds_1", "profile_mode": "standard"}},
+    ),
+    (
+        "bridge_response.schema.json",
+        M.BridgeResponse,
+        {"request_id": "req-1", "status": "accepted", "job_id": "job_1"},
+    ),
+    (
+        "bridge_response.schema.json",
+        M.BridgeResponse,
+        {"request_id": "req-2", "status": "ok", "result": {"message": "ping"}},
+    ),
+    (
+        "bridge_response.schema.json",
+        M.BridgeResponse,
+        {"request_id": "req-3", "status": "error", "error": {"code": "DATASET_READ_FAILED", "message": "Dataset could not be read.", "retryable": False}},
+    ),
+    (
+        "bridge_error.schema.json",
+        M.BridgeErrorObject,
+        {"code": "BRIDGE_REQUEST_INVALID", "message": "invalid envelope", "retryable": False},
+    ),
+    (
+        "job_status.schema.json",
+        M.JobStatus,
+        {"job_id": "job_1", "status": "RUNNING", "progress": {"completed_steps": 3, "total_steps": 8, "current_step": "profiling:distributions"}},
+    ),
+    (
+        "job_status.schema.json",
+        M.JobStatus,
+        {"job_id": "job_2", "status": "FAILED", "progress": {"completed_steps": 1, "total_steps": 4, "current_step": ""}, "error_code": "WORKER_CRASHED"},
+    ),
 ]
 
 
@@ -267,6 +303,11 @@ CANONICAL_ROOTS = {
     "finding_workflow.schema.json": M.FindingWorkflow,
     "recommendation.schema.json": M.Recommendation,
     "dataset_config.schema.json": M.DatasetConfig,
+    # M1-T6 bridge/job envelopes
+    "bridge_request.schema.json": M.BridgeRequest,
+    "bridge_response.schema.json": M.BridgeResponse,
+    "bridge_error.schema.json": M.BridgeErrorObject,
+    "job_status.schema.json": M.JobStatus,
 }
 
 
@@ -303,6 +344,9 @@ def test_required_sets_match_canonical():
          ["proposed", "accepted", "rejected", "deferred", "implemented"]),
         ("finding_workflow.schema.json", "status",
          ["open", "acknowledged", "investigating", "resolved", "accepted_risk"]),
+        ("bridge_response.schema.json", "status", ["ok", "accepted", "error"]),
+        ("job_status.schema.json", "status",
+         ["QUEUED", "RUNNING", "CANCEL_REQUESTED", "SUCCEEDED", "FAILED", "CANCELLED"]),
     ],
 )
 def test_enum_values_parity(schema_name, property_path, enum_values):

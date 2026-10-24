@@ -1,23 +1,45 @@
-"""Bridge-layer error codes (CONTRACTS §5 / §8, spike subset for M0-T2).
+"""Bridge-layer error-code aliases (CONTRACTS §5 / §8).
 
-The full registry lives in CONTRACTS §8 and is formalised as a Python module
-in M1-T6. For this spike we only need the codes the facade actually emits, so
-they are kept as plain string constants here. See STATE.md GOTCHA for the
-extra code we introduce (``BRIDGE_REQUEST_INVALID``) that M1-T6 must promote.
+The full, canonical registry now lives in
+:data:`data_profiling_engine.errors` (promoted in M1-T6). This module keeps the
+short names the bridge facade / job handlers already import (``errors.REQUEST_INVALID``
+etc.) as thin aliases onto the canonical ``ErrorCode`` values, so there is a
+single source of truth and no drift between bridge and job event codes.
 """
 from __future__ import annotations
 
-# CONTRACTS §8 (existing).
-COMMAND_UNKNOWN = "BRIDGE_COMMAND_UNKNOWN"
-PAYLOAD_TOO_LARGE = "BRIDGE_PAYLOAD_TOO_LARGE"
-SOURCE_NOT_ALLOWED = "SOURCE_NOT_ALLOWED"
-WORKER_CRASHED = "WORKER_CRASHED"
-JOB_TIMEOUT = "JOB_TIMEOUT"
+from data_profiling_engine.errors import (
+    ERROR_REGISTRY,
+    ErrorCode,
+    ErrorInfo,
+    is_registered,
+    is_retryable,
+    lookup,
+)
 
-# Extensible per CONTRACTS §8 — spike introduces this for envelope/payload
-# schema validation failures. M1-T6 folds it into the registry module + doc.
-REQUEST_INVALID = "BRIDGE_REQUEST_INVALID"
+# CONTRACTS §8 (bridge + job codes the facade emits).
+COMMAND_UNKNOWN = ErrorCode.BRIDGE_COMMAND_UNKNOWN.value
+PAYLOAD_TOO_LARGE = ErrorCode.BRIDGE_PAYLOAD_TOO_LARGE.value
+SOURCE_NOT_ALLOWED = ErrorCode.SOURCE_NOT_ALLOWED.value
+WORKER_CRASHED = ErrorCode.WORKER_CRASHED.value
+JOB_TIMEOUT = ErrorCode.JOB_TIMEOUT.value
 
-# Spike (M0-T3): polled status / cancel for an id the manager does not know.
-# Same promotion path as REQUEST_INVALID — M1-T6 must fold it into §8.
-JOB_NOT_FOUND = "JOB_NOT_FOUND"
+# Promoted in M1-T6 from the M0-T2 / M0-T3 spike into the formal registry.
+REQUEST_INVALID = ErrorCode.BRIDGE_REQUEST_INVALID.value
+JOB_NOT_FOUND = ErrorCode.JOB_NOT_FOUND.value
+
+__all__ = [
+    "COMMAND_UNKNOWN",
+    "PAYLOAD_TOO_LARGE",
+    "SOURCE_NOT_ALLOWED",
+    "WORKER_CRASHED",
+    "JOB_TIMEOUT",
+    "REQUEST_INVALID",
+    "JOB_NOT_FOUND",
+    "ErrorCode",
+    "ErrorInfo",
+    "ERROR_REGISTRY",
+    "is_registered",
+    "is_retryable",
+    "lookup",
+]

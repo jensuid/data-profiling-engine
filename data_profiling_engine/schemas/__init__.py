@@ -49,6 +49,10 @@ REQUIRED_SCHEMAS: tuple[str, ...] = (
     "finding_workflow.schema.json",
     "recommendation.schema.json",
     "dataset_config.schema.json",
+    "bridge_request.schema.json",
+    "bridge_response.schema.json",
+    "bridge_error.schema.json",
+    "job_status.schema.json",
 )
 
 

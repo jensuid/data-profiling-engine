@@ -5,48 +5,32 @@ command name, request id and free-form payload; a matching ``BridgeResponse``
 whose ``status`` discriminates ok / accepted / error. Payload size is capped
 by the facade (CONTRACTS §5.4); field-level caps live in per-command payload
 models. Extra fields are forbidden everywhere — SECURITY §3.
+
+M1-T6 freezes the three envelope models as canonical contracts, so they are
+imported from :mod:`data_profiling_engine.schemas.models` (validated against
+``schemas/bridge_*.schema.json``) rather than redefined here. Only the
+*spike-only*, per-command payload models below remain local — they are not part
+of CONTRACTS §5.3 (``echo`` / worker-trio stand-ins for the §5.2 commands).
 """
 from __future__ import annotations
 
-from typing import Any, Literal
-
 from pydantic import BaseModel, ConfigDict, Field
 
+# Canonical §5.3 envelope models (single source of truth: schemas/models.py).
+from data_profiling_engine.schemas.models import (
+    BridgeErrorObject,
+    BridgeRequest,
+    BridgeResponse,
+)
 
-class BridgeRequest(BaseModel):
-    """Envelope every JS→Python call must match (CONTRACTS §5.3)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    command: str = Field(min_length=1, max_length=64)
-    request_id: str = Field(min_length=1, max_length=128)
-    payload: dict[str, Any] = Field(default_factory=dict)
-
-
-class BridgeErrorObject(BaseModel):
-    """Error detail; never carries stack traces or raw sensitive values."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    code: str
-    message: str = Field(max_length=512)
-    retryable: bool = False
-
-
-class BridgeResponse(BaseModel):
-    """Envelope returned to JS. One of ``result`` or ``error`` is populated.
-
-    ``job_id`` exists for the async commands defined in CONTRACTS §5.2; the
-    M0-T3 spike job commands emit it ahead of the real ``profile.start``.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    request_id: str
-    status: Literal["ok", "accepted", "error"]
-    result: dict[str, Any] | None = None
-    job_id: str | None = None
-    error: BridgeErrorObject | None = None
+__all__ = [
+    "BridgeRequest",
+    "BridgeErrorObject",
+    "BridgeResponse",
+    "EchoPayload",
+    "WorkerEchoJobPayload",
+    "JobIdPayload",
+]
 
 
 class EchoPayload(BaseModel):

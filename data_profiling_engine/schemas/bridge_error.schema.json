@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dpe.local/schemas/bridge_error.schema.json",
+  "title": "BridgeErrorObject",
+  "description": "CONTRACTS §5.3 error detail embedded in a BridgeResponse (status=error) and reused for job failure hints. Carries a §8 registry code; NEVER credentials or raw sensitive values (SECURITY §5). `code` is an open uppercase identifier so the registry stays extensible (§8) rather than a hard enum.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["code", "message"],
+  "properties": {
+    "code": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]*$",
+      "minLength": 1,
+      "description": "A CONTRACTS §8 registry code (e.g. BRIDGE_REQUEST_INVALID, DATASET_READ_FAILED)."
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Human-readable, non-echoing; must not contain stack traces or raw input (SECURITY §3)."
+    },
+    "retryable": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether retrying the same command may succeed; mirrors the §8 Retryable column."
+    }
+  }
+}

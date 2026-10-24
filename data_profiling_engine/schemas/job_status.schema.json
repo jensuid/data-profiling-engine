@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dpe.local/schemas/job_status.schema.json",
+  "title": "JobStatus",
+  "description": "CONTRACTS §5.3 polled-status object + §6.2 job states. Delivered both by polling `profile.get_status` and by optional host→JS push (§5.5) — one shared schema keeps the UI transport-agnostic. `error_code` carries a §8 registry code on failure (WORKER_CRASHED / JOB_TIMEOUT); `result` is the bounded job output on success. Absent slots are omitted, never null.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["job_id", "status", "progress"],
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "status": {
+      "type": "string",
+      "enum": ["QUEUED", "RUNNING", "CANCEL_REQUESTED", "SUCCEEDED", "FAILED", "CANCELLED"],
+      "description": "CONTRACTS §6.2; SUCCEEDED/FAILED/CANCELLED are terminal."
+    },
+    "progress": { "$ref": "https://dpe.local/schemas/job_status.schema.json#/$defs/progress" },
+    "error_code": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]*$",
+      "minLength": 1,
+      "description": "§8 registry code on FAILED (e.g. WORKER_CRASHED, JOB_TIMEOUT)."
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Bounded job output on success; must respect the 1 MiB bridge cap (§5.4) or be fetched via paging / artifact.open."
+    }
+  },
+  "$defs": {
+    "progress": {
+      "title": "JobProgress",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["completed_steps", "total_steps"],
+      "properties": {
+        "completed_steps": { "type": "integer", "minimum": 0 },
+        "total_steps": { "type": "integer", "minimum": 0 },
+        "current_step": { "type": "string" }
+      }
+    }
+  }
+}

@@ -216,6 +216,30 @@ class ConditionOperator(str, Enum):
     LESS_THAN = "less_than"
 
 
+class BridgeResponseStatus(str, Enum):
+    """bridge_response.status discriminator (CONTRACTS §5.3/§5.4)."""
+
+    OK = "ok"
+    ACCEPTED = "accepted"
+    ERROR = "error"
+
+
+class JobState(str, Enum):
+    """CONTRACTS §6.2 job states; SUCCEEDED/FAILED/CANCELLED terminal.
+
+    The M0-T3 spike runtime keeps its own enum-based model (lifecycle code
+    relies on member identity + ``is_terminal``); this canonical mirror is
+    the frozen wire shape (bridge_response schema parity + M5-T2 target).
+    """
+
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    CANCEL_REQUESTED = "CANCEL_REQUESTED"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
@@ -982,6 +1006,101 @@ class DatasetConfig(_StrictModel):
         return v
 
 
+# ---------------------------------------------------------------------------
+# bridge / job envelopes (CONTRACTS §5.3, §6.2) — M1-T6
+# ---------------------------------------------------------------------------
+
+_ERROR_CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+
+class BridgeRequest(_StrictModel):
+    """CONTRACTS §5.3 request envelope. One JS→Python call; ``command`` is
+    resolved against the §5.2 allow-list by the facade, ``payload`` against the
+    command-specific schema. Extra top-level fields forbidden (SECURITY §3)."""
+
+    command: str = Field(min_length=1, max_length=64)
+    request_id: str = Field(min_length=1, max_length=128)
+    payload: Dict[str, Any] = Field(default_factory=dict)
+
+
+class BridgeErrorObject(_StrictModel):
+    """CONTRACTS §5.3 error detail; never stack traces or raw sensitive values
+    (SECURITY §5). ``code`` is a §8 registry code (open, extensible)."""
+
+    code: str
+    message: str = Field(min_length=1, max_length=512)
+    retryable: bool = False
+
+    @field_validator("code")
+    @classmethod
+    def _code_shape(cls, v: str) -> str:
+        if not _ERROR_CODE_RE.match(v):
+            raise ValueError("error code must be an uppercase §8 identifier")
+        return v
+
+
+class BridgeResponse(_StrictModel):
+    """CONTRACTS §5.3 response envelope. ``status`` discriminates exactly one
+    body slot: ``ok``→``result``, ``accepted``→``job_id``, ``error``→``error``
+    (§5.4). Unused slots are absent, never null."""
+
+    request_id: str = Field(max_length=128)
+    status: BridgeResponseStatus
+    result: Optional[Dict[str, Any]] = None
+    job_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    error: Optional[BridgeErrorObject] = None
+
+    @model_validator(mode="after")
+    def _discriminate_body(self) -> "BridgeResponse":
+        has_result = "result" in self.model_fields_set and self.result is not None
+        has_job = "job_id" in self.model_fields_set and self.job_id is not None
+        has_error = "error" in self.model_fields_set and self.error is not None
+        if self.status == BridgeResponseStatus.OK:
+            if not has_result:
+                raise ValueError("status=ok requires a populated result")
+            if has_job or has_error:
+                raise ValueError("status=ok must not carry job_id or error")
+        elif self.status == BridgeResponseStatus.ACCEPTED:
+            if not has_job:
+                raise ValueError("status=accepted requires job_id")
+            if has_result or has_error:
+                raise ValueError("status=accepted must not carry result or error")
+        else:  # ERROR
+            if not has_error:
+                raise ValueError("status=error requires a populated error")
+            if has_result or has_job:
+                raise ValueError("status=error must not carry result or job_id")
+        return self
+
+
+class JobProgress(_StrictModel):
+    """CONTRACTS §5.3 progress block, embedded in JobStatus."""
+
+    completed_steps: int = Field(default=0, ge=0)
+    total_steps: int = Field(default=0, ge=0)
+    current_step: Optional[str] = None
+
+
+class JobStatus(_StrictModel):
+    """CONTRACTS §5.3 polled-status object (§6.2 states). ``error_code`` carries
+    a §8 registry code on failure; ``result`` is the bounded job output on
+    success. The M0-T3 spike runtime model is separate (enum identity for the
+    lifecycle); this is the frozen wire shape validated against the schema."""
+
+    job_id: str = Field(min_length=1, max_length=128)
+    status: JobState
+    progress: JobProgress
+    error_code: Optional[str] = Field(default=None, min_length=1)
+    result: Optional[Dict[str, Any]] = None
+
+    @field_validator("error_code")
+    @classmethod
+    def _code_shape(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not _ERROR_CODE_RE.match(v):
+            raise ValueError("error_code must be an uppercase §8 identifier")
+        return v
+
+
 __all__ = [
     # enums
     "MetricMethod",
@@ -1001,6 +1120,8 @@ __all__ = [
     "RecommendationStatus",
     "RuleType",
     "ConditionOperator",
+    "BridgeResponseStatus",
+    "JobState",
     # provenance
     "Provenance",
     "MetricValue",
@@ -1049,4 +1170,10 @@ __all__ = [
     "RuleCondition",
     "DatasetConfigRule",
     "DatasetConfig",
+    # bridge / job envelopes (M1-T6)
+    "BridgeRequest",
+    "BridgeErrorObject",
+    "BridgeResponse",
+    "JobProgress",
+    "JobStatus",
 ]
