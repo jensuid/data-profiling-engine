@@ -6,7 +6,8 @@ Built **only** from the structured run result — never re-runs statistics
 ``ProfilingRun`` (§2), the ``DatasetProfile`` (§3.1) and every quality /
 finding / recommendation object, emitted as one contract-shaped document for
 programmatic use. The self-contained HTML report landed in M4-T2
-(:mod:`reporting.html_report`); the CSV issue export lands in M4-T3.
+(:mod:`reporting.html_report`) and the CSV issue export in M4-T3
+(:mod:`reporting.csv_export`).
 
 Determinism is a contract obligation here, not a nicety: the same input +
 config + engine version must produce a byte-identical file (TESTING §3.3), so
