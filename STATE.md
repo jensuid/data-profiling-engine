@@ -22,31 +22,49 @@ Milestone : M6 — UI Screens (GATE M1 CONTRACTS FREEZE PASSED
           dev-mode 2026-10-25 — T1 read commands + caps, T2 job manager +
           real profile.start worker, T3 §5.5 progress push; packaged
           bridge/worker verification on both OS deferred to M7/Phase-3)
-Task      : none in progress — M5-T3 done (§5.5 progress push landed: ONE
-          status serialiser `canonical_status_payload` feeds both the polled
-          `profile.get_status` and the optional host→JS `evaluate_js` push, so
-          the UI is transport-agnostic; polling stays authoritative, push is a
-          coalesced hint that can never fail a job). M5 (bridge facade) is
-          COMPLETE — all nine §5.2 commands wired and observable.
+Task      : none in progress — M6-T1 done (Dataset Selection screen: bridge
+          client `api.ts`, `DatasetSelection.tsx` page calling
+          `dataset.inspect` + `dataset.preview`, routing wired in App.tsx).
+          M5 is COMPLETE, M6 UI screens started. Frontend compiles clean;
+          Python suite unchanged (all changes frontend-only).
 GATE M4   : reporting-layer tasks T1-T4 COMPLETE (706/706 pytest, tsc clean,
           golden byte-stable). MVP acceptance is on the PACKAGED build
           (BLUEPRINT §5 Phase-1 gate / §6), not dev mode — do not stamp M4
           "accepted" until the packaged run is verified in M7/Phase-3.
-NEXT      : M6-T1 — Dataset Selection + inspect/preview screen. *Spec: BLUEPRINT
-          Phase 2; CONTRACTS §5.*
-          The bridge is complete, so this is the first UI task: build the real
-          screen on `dataset.inspect` + `dataset.preview` (both already wired,
-          paged, PII-masked by default in M5-T1) and consume the §5.5 status
-          object shape if the screen shows a run. Files to open:
-          `frontend/src/App.tsx` (HashRouter routes, ADR-013),
-          `frontend/src/pages/Home.tsx`, `frontend/src/types/contracts.ts`
-          (`DatasetInspectResult` / `DatasetPreviewResult` / `JobStatus`),
-          CONTRACTS §5.2–§5.4 for command + cap rules. Keep to MVP connectors
-          (CSV + Parquet, ADR-011), no HTTP (ADR-005), heavy work off the UI
-          thread (ADR-006).
-          Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
-                 (cd frontend && npx tsc --noEmit)
-Blocked by: none — M5-T3 accepted by this session's suite (765/765).
+NEXT      : M6-T2 — Run Configuration (mode, sampling, config upload w/
+          validation errors). *Spec: CONTRACTS §9.*
+          The Dataset Selection screen lets the user confirm a file; the next
+          screen collects profile mode + optional DatasetConfig YAML upload and
+          validates it before offering a `profile.start` button. Files to open:
+          `frontend/src/pages/` (new RunConfig.tsx),
+          `frontend/src/types/contracts.ts` (`DatasetConfig`, `ConfigProfiling`,
+          `DatasetConfigRule`),
+          `docs/CONTRACTS.md` §9 (config schema),
+          `frontend/src/bridge/api.ts` (`bridgeStartJob` already wired),
+          `data_profiling_engine/bridge/facade.py` (`_validate_config` pattern
+          to mirror client-side validation hints).
+          Test:  cd frontend && npx tsc --noEmit
+                 .venv/bin/python -m pytest data_profiling_engine/tests -q
+Blocked by: none.
+Session notes: M6-T1 landed the first real UI screen (Dataset Selection).
+               Files: `frontend/src/bridge/api.ts` (typed §5.3 bridge client:
+               `BridgeRequest`/`BridgeResponse`/`BridgeError`/`bridgeSend`/
+               `bridgeStartJob`/`onPushedJobStatus`/`bridgeAvailable`),
+               `frontend/src/pages/DatasetSelection.tsx` (path input, inspect
+               panel with metadata grid + columns table + "last_run" badge,
+               paged preview with PII mask toggle + lock icons + row counter),
+               `frontend/src/App.tsx` (route `/` → DatasetSelection, nav label
+               "Dataset"), `frontend/src/styles.css` (+~150 lines UI styles).
+               No new Python/contract code; existing 765 tests unchanged.
+               tsc clean, vite build 5.6s, frontend/dist regenerated.
+               GOTCHA: pywebview v6 injects the js_api's public methods via
+               `util.inject_pywebview` → `finish.js` → `window.pywebview._createApi`;
+               the `create_file_dialog` on the Python Window object is NOT
+               automatically available in JS. To add a "Browse" button the host
+               must either expose a `select_file` method on the facade or call
+               `create_file_dialog` from the Python side and push the path via
+               `evaluate_js`. Kept as text input for now; revisit in M6-T2.
+               765/765 pytest green, tsc clean, vite build clean 2026-10-25.
 Session notes: M5-T3 landed the §5.5 progress push (CONTRACTS §5.5, ADR-005/006).
                Files: `bridge/worker/manager.py` (+`canonical_status_payload`,
                `add_status_listener`, `_notify`, `_dispatch_loop`, `_commit` =
@@ -1142,6 +1160,14 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
     `configure_runtime`; forgetting to clear it in a fixture leaks the sink
     into other tests (the `data_root` fixture in `test_bridge_progress_push.py`
     resets both).
+- pywebview v6 `create_file_dialog` is a method on the Python `Window` object,
+  NOT automatically injected into JS. `util.inject_pywebview` reflects only the
+  public methods on the `js_api` instance (our `BridgeFacade`). To add a native
+  "Browse" button to the UI: either add a typed method to the facade that
+  invokes `window.create_file_dialog(...)` on the Python side and returns the
+  selected path to JS, or trigger the dialog from a Python-side hook and push
+  the path via `evaluate_js`. The text-input path entry shipped in M6-T1 is the
+  interim until this is done.
 ```
 
 ## M0 — Desktop Spike (gate: BLUEPRINT §5 Phase 0; acceptance: TESTING §5.2)
@@ -1197,7 +1223,7 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 
 ## M6 — UI Screens (one task = one screen)
 
-- [ ] **M6-T1** Dataset Selection + inspect/preview. *Spec: BLUEPRINT Phase 2; CONTRACTS §5.*
+- [x] **M6-T1** Dataset Selection + inspect/preview. *Spec: BLUEPRINT Phase 2; CONTRACTS §5.* ✅ First real UI screen. `bridge/api.ts` (typed §5.3 envelope client: `BridgeRequest`/`BridgeResponse`/`BridgeError`; `bridgeSend<R>` unwraps ok→result; `bridgeStartJob` returns job_id; `onPushedJobStatus` registers the optional §5.5 `__dpeJobStatus` push sink; `bridgeAvailable` detects shell). `DatasetSelection.tsx`: path text input → `dataset.inspect` metadata grid (file, connector, size, content_hash, columns table w/ logical+semantic types when stored run exists, last_run badge, row_count + method tag) → auto `dataset.preview` (50-row paged, PII mask toggle, lock icons, masking_applied info, prev/next). `App.tsx`: route `/` → DatasetSelection. `styles.css`: +150 lines (path-row, meta-grid, inspect/preview-panel, table-scroll, pager, error-box, banner-warn, mask-toggle, last-run-badge, dark-mode variants). No Python changes, no new §5.2 commands, no new enum, 765 tests green, tsc clean, vite build 5.6s. **→ NEXT: M6-T2.**
 - [ ] **M6-T2** Run Configuration (mode, sampling, config upload w/ validation errors). *Spec: CONTRACTS §9.*
 - [ ] **M6-T3** Run Progress (status/percent/cancel). *Spec: CONTRACTS §6.*
 - [ ] **M6-T4** Report View: Overview + Column Profiling. *Spec: expected-output §3.1–3.2.*
