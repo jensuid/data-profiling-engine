@@ -1,0 +1,35 @@
+{
+  "config_version": 3,
+  "dataset": {
+    "name": "sales_deals",
+    "grain": "one_row_per_deal",
+    "primary_key": ["deal_id"]
+  },
+  "profiling": {
+    "mode": "standard"
+  },
+  "quality_checks": [
+    {
+      "id": "deal_id_unique",
+      "rule": "unique",
+      "column": "deal_id",
+      "dimension": "uniqueness",
+      "severity": "critical"
+    },
+    {
+      "id": "value_not_null",
+      "rule": "not_null",
+      "column": "deal_value",
+      "dimension": "completeness",
+      "severity": "high"
+    },
+    {
+      "id": "stage_domain",
+      "rule": "valid_domain",
+      "column": "stage",
+      "dimension": "validity",
+      "severity": "warning",
+      "value": ["Prospecting", "Closed Won", "Negotiation"]
+    }
+  ]
+}

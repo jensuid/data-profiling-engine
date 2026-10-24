@@ -1,0 +1,6 @@
+# Freeze line endings for the golden corpus so the reproducibility tuple
+# (sha256 content_hash + size_bytes) in every `*.golden.json` stays
+# byte-portable across macOS/Linux/Windows checkouts and autocrlf=true
+# configurations. `-text` disables ALL end-of-line conversion for the
+# directory. See TESTING_BENCHMARKS.md §2 "golden result files" and §3.3.
+data_profiling_engine/tests/fixtures/golden/* -text

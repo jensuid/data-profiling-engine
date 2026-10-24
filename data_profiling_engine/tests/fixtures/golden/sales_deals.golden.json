@@ -1,0 +1,939 @@
+{
+  "checks": [
+    {
+      "column": "deal_id",
+      "dimension": "uniqueness",
+      "error": null,
+      "evidence": {
+        "denominator": 40,
+        "sample_row_refs": [
+          "row:1",
+          "row:2",
+          "row:3",
+          "row:4",
+          "row:5",
+          "row:6",
+          "row:7",
+          "row:8",
+          "row:9",
+          "row:10",
+          "row:11",
+          "row:12",
+          "row:29",
+          "row:30",
+          "row:31",
+          "row:32",
+          "row:33",
+          "row:34",
+          "row:35",
+          "row:36",
+          "row:37",
+          "row:38",
+          "row:39",
+          "row:40"
+        ]
+      },
+      "executed_at": "<VOLATILE>",
+      "failing_record_count": 12,
+      "observed": {
+        "denominator": 40,
+        "provenance": {
+          "method": "exact"
+        },
+        "value": 12
+      },
+      "rule_id": "deal_id_unique",
+      "rule_version": "1",
+      "run_id": "run-golden",
+      "schema_version": "1.0",
+      "severity": "critical",
+      "status": "FAIL",
+      "threshold": {
+        "operator": "unique"
+      }
+    },
+    {
+      "column": "deal_value",
+      "dimension": "completeness",
+      "error": null,
+      "evidence": {
+        "denominator": 40,
+        "sample_row_refs": [
+          "row:1",
+          "row:8",
+          "row:15",
+          "row:22",
+          "row:29",
+          "row:36"
+        ]
+      },
+      "executed_at": "<VOLATILE>",
+      "failing_record_count": 6,
+      "observed": {
+        "denominator": 40,
+        "provenance": {
+          "method": "exact"
+        },
+        "value": 6
+      },
+      "rule_id": "value_not_null",
+      "rule_version": "1",
+      "run_id": "run-golden",
+      "schema_version": "1.0",
+      "severity": "high",
+      "status": "FAIL",
+      "threshold": {
+        "operator": "not_null"
+      }
+    },
+    {
+      "column": "stage",
+      "dimension": "validity",
+      "error": null,
+      "evidence": {
+        "denominator": 40
+      },
+      "executed_at": "<VOLATILE>",
+      "failing_record_count": 0,
+      "observed": {
+        "denominator": 40,
+        "provenance": {
+          "method": "exact"
+        },
+        "value": 0
+      },
+      "rule_id": "stage_domain",
+      "rule_version": "1",
+      "run_id": "run-golden",
+      "schema_version": "1.0",
+      "severity": "warning",
+      "status": "PASS",
+      "threshold": {
+        "operator": "in",
+        "value": [
+          "Prospecting",
+          "Closed Won",
+          "Negotiation"
+        ]
+      }
+    }
+  ],
+  "findings": [
+    {
+      "category": "uniqueness",
+      "confidence": "high",
+      "evidence_refs": [
+        "metric:deal_id_unique",
+        "rule:deal_id_unique",
+        "metric:deal_id.uniqueness.duplicate_group_count"
+      ],
+      "facts": [
+        {
+          "metric_ref": "metric:deal_id_unique",
+          "provenance": {
+            "method": "exact"
+          },
+          "value": 12
+        },
+        {
+          "metric_ref": "metric:deal_id.uniqueness.duplicate_group_count",
+          "provenance": {
+            "method": "exact",
+            "reason": "duplicate-key grouping count (uniqueness auxiliary)"
+          },
+          "value": 12
+        }
+      ],
+      "finding_id": "F-001",
+      "fingerprint": "sha256:bc8f63f5631914e2855c736be20116b7e9c2555a11ab7d692f304d122a6f0f17",
+      "hypotheses": [
+        {
+          "status": "unverified",
+          "suggested_probe": "inspect the duplicated key values and their source rows",
+          "text": "The uniqueness issue may cluster by source, status, or period."
+        }
+      ],
+      "interpretation": "Duplicated key values can double-count records joined on this field.",
+      "recommendation_ids": [
+        "R-001"
+      ],
+      "related_finding_ids": [],
+      "run_id": "run-golden",
+      "schema_version": "1.0",
+      "scope": {
+        "affected_records": 12,
+        "column": "deal_id"
+      },
+      "severity": "critical",
+      "summary": "Rule 'deal_id_unique' on deal_id measured 12; status FAIL.",
+      "title": "deal_id uniqueness rule violated",
+      "workflow": null
+    },
+    {
+      "category": "completeness",
+      "confidence": "high",
+      "evidence_refs": [
+        "metric:value_not_null",
+        "rule:value_not_null"
+      ],
+      "facts": [
+        {
+          "metric_ref": "metric:value_not_null",
+          "provenance": {
+            "method": "exact"
+          },
+          "value": 6
+        }
+      ],
+      "finding_id": "F-002",
+      "fingerprint": "sha256:b9d17f2de5598994c0101547bf473f96a02ce3c9142992eccf8ca8c9894fab0c",
+      "hypotheses": [
+        {
+          "status": "unverified",
+          "suggested_probe": "group the missing rate by status / source / period",
+          "text": "The completeness issue may cluster by source, status, or period."
+        }
+      ],
+      "interpretation": "Absent values bias counts and aggregates that rely on this field.",
+      "recommendation_ids": [
+        "R-002"
+      ],
+      "related_finding_ids": [],
+      "run_id": "run-golden",
+      "schema_version": "1.0",
+      "scope": {
+        "affected_records": 6,
+        "column": "deal_value"
+      },
+      "severity": "high",
+      "summary": "Rule 'value_not_null' on deal_value measured 6; status FAIL.",
+      "title": "deal_value completeness rule violated",
+      "workflow": null
+    },
+    {
+      "category": "accuracy_flagged",
+      "confidence": "medium",
+      "evidence_refs": [
+        "metric:is_new.categorical.frequencies"
+      ],
+      "facts": [
+        {
+          "metric_ref": "metric:is_new.categorical.frequencies",
+          "provenance": {
+            "method": "exact"
+          },
+          "value": 1.0
+        }
+      ],
+      "finding_id": "F-003",
+      "fingerprint": "sha256:9aeaa48eec7427763145f9b1e21e639687cdfaa41992f0521a20b89516fe82f9",
+      "hypotheses": [
+        {
+          "status": "unverified",
+          "suggested_probe": "confirm the pattern against the business definition before acting",
+          "text": "The accuracy_flagged issue may cluster by source, status, or period."
+        }
+      ],
+      "interpretation": "This is a review signal, not a proven error; verify against source intent.",
+      "recommendation_ids": [
+        "R-003"
+      ],
+      "related_finding_ids": [],
+      "run_id": "run-golden",
+      "schema_version": "1.0",
+      "scope": {
+        "affected_records": 40,
+        "column": "is_new"
+      },
+      "severity": "warning",
+      "summary": "100% of is_new's non-null values fall in a single category; near-constant distribution warrants review.",
+      "title": "is_new: 100% of is_new's non-null values fall in a single category; near-constant distribution warrants review",
+      "workflow": null
+    },
+    {
+      "category": "uniqueness",
+      "confidence": "medium",
+      "evidence_refs": [
+        "metric:stage.uniqueness.duplicate_group_count"
+      ],
+      "facts": [
+        {
+          "metric_ref": "metric:stage.uniqueness.duplicate_group_count",
+          "provenance": {
+            "method": "exact",
+            "reason": "duplicate-key grouping count (uniqueness auxiliary)"
+          },
+          "value": 3
+        }
+      ],
+      "finding_id": "F-004",
+      "fingerprint": "sha256:0ede1d017f2247471a0c8b4a1f58ffc033dd0e04159267bdfff0d98008485907",
+      "hypotheses": [
+        {
+          "status": "unverified",
+          "suggested_probe": "inspect the duplicated key values and their source rows",
+          "text": "The uniqueness issue may cluster by source, status, or period."
+        }
+      ],
+      "interpretation": "Duplicated key values can double-count records joined on this field.",
+      "recommendation_ids": [
+        "R-004"
+      ],
+      "related_finding_ids": [],
+      "run_id": "run-golden",
+      "schema_version": "1.0",
+      "scope": {
+        "affected_records": 3,
+        "column": "stage"
+      },
+      "severity": "warning",
+      "summary": "stage has 3 duplicated key values; likely not a unique identifier.",
+      "title": "stage: stage has 3 duplicated key values; likely not a unique identifier",
+      "workflow": null
+    },
+    {
+      "category": "uniqueness",
+      "confidence": "medium",
+      "evidence_refs": [
+        "metric:is_new.uniqueness.duplicate_group_count"
+      ],
+      "facts": [
+        {
+          "metric_ref": "metric:is_new.uniqueness.duplicate_group_count",
+          "provenance": {
+            "method": "exact",
+            "reason": "duplicate-key grouping count (uniqueness auxiliary)"
+          },
+          "value": 1
+        }
+      ],
+      "finding_id": "F-005",
+      "fingerprint": "sha256:91c4e1e88b8af4be9a20dc03baf2b6a26bbcfc83c651135f46d9bdd4b1f73795",
+      "hypotheses": [
+        {
+          "status": "unverified",
+          "suggested_probe": "inspect the duplicated key values and their source rows",
+          "text": "The uniqueness issue may cluster by source, status, or period."
+        }
+      ],
+      "interpretation": "Duplicated key values can double-count records joined on this field.",
+      "recommendation_ids": [
+        "R-005"
+      ],
+      "related_finding_ids": [],
+      "run_id": "run-golden",
+      "schema_version": "1.0",
+      "scope": {
+        "affected_records": 1,
+        "column": "is_new"
+      },
+      "severity": "warning",
+      "summary": "is_new has 1 duplicated key values; likely not a unique identifier.",
+      "title": "is_new: is_new has 1 duplicated key values; likely not a unique identifier",
+      "workflow": null
+    }
+  ],
+  "profile": {
+    "column_count": 5,
+    "columns": [
+      {
+        "categorical": {
+          "categories": [
+            "DEAL-0000",
+            "DEAL-0001",
+            "DEAL-0002",
+            "DEAL-0003",
+            "DEAL-0004",
+            "DEAL-0005",
+            "DEAL-0006",
+            "DEAL-0007",
+            "DEAL-0008",
+            "DEAL-0009",
+            "DEAL-0010",
+            "DEAL-0011",
+            "DEAL-0012",
+            "DEAL-0013",
+            "DEAL-0014",
+            "DEAL-0015",
+            "DEAL-0016",
+            "DEAL-0017",
+            "DEAL-0018",
+            "DEAL-0019",
+            "DEAL-0020",
+            "DEAL-0021",
+            "DEAL-0022",
+            "DEAL-0023",
+            "DEAL-0024",
+            "DEAL-0025",
+            "DEAL-0026",
+            "DEAL-0027"
+          ],
+          "frequencies": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "label_inconsistencies": [],
+          "rare_categories": [
+            "DEAL-0012",
+            "DEAL-0013",
+            "DEAL-0014",
+            "DEAL-0015",
+            "DEAL-0016",
+            "DEAL-0017",
+            "DEAL-0018",
+            "DEAL-0019",
+            "DEAL-0020",
+            "DEAL-0021",
+            "DEAL-0022",
+            "DEAL-0023",
+            "DEAL-0024",
+            "DEAL-0025",
+            "DEAL-0026",
+            "DEAL-0027"
+          ]
+        },
+        "column": "deal_id",
+        "logical_type": "string",
+        "missingness": {
+          "blank_count": 0,
+          "missing_rate": {
+            "denominator": 40,
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 0.0
+          },
+          "null_count": 0,
+          "sentinel_count": 0
+        },
+        "ordinal": 0,
+        "physical_type": "VARCHAR",
+        "schema_version": "1.0",
+        "semantic_type": "identifier",
+        "uniqueness": {
+          "distinct_count": {
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 28
+          },
+          "is_unique_candidate": false
+        },
+        "unit": null
+      },
+      {
+        "column": "created_at",
+        "logical_type": "temporal_date",
+        "missingness": {
+          "blank_count": 0,
+          "missing_rate": {
+            "denominator": 40,
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 0.0
+          },
+          "null_count": 0,
+          "sentinel_count": 0
+        },
+        "ordinal": 1,
+        "physical_type": "DATE",
+        "schema_version": "1.0",
+        "semantic_type": "time",
+        "temporal": {
+          "gaps": {
+            "count": 0,
+            "granularity": "month",
+            "missing_periods": [],
+            "provenance": {
+              "method": "exact",
+              "method_params": {
+                "granularity": "month"
+              }
+            }
+          },
+          "out_of_expected_range": {
+            "provenance": {
+              "method": "not_computed",
+              "reason": "no expected temporal range declared in dataset config; ENGINE §3 out_of_range requires a declared bound (MVP §9 has none)"
+            }
+          },
+          "range": {
+            "max": "2024-12-24",
+            "min": "2024-01-01"
+          },
+          "timezone_source": "naive",
+          "volume_per_granularity": {
+            "buckets": [
+              {
+                "count": 4,
+                "period": "2024-01-01 00:00:00"
+              },
+              {
+                "count": 4,
+                "period": "2024-02-01 00:00:00"
+              },
+              {
+                "count": 4,
+                "period": "2024-03-01 00:00:00"
+              },
+              {
+                "count": 4,
+                "period": "2024-04-01 00:00:00"
+              },
+              {
+                "count": 3,
+                "period": "2024-05-01 00:00:00"
+              },
+              {
+                "count": 3,
+                "period": "2024-06-01 00:00:00"
+              },
+              {
+                "count": 3,
+                "period": "2024-07-01 00:00:00"
+              },
+              {
+                "count": 3,
+                "period": "2024-08-01 00:00:00"
+              },
+              {
+                "count": 3,
+                "period": "2024-09-01 00:00:00"
+              },
+              {
+                "count": 3,
+                "period": "2024-10-01 00:00:00"
+              },
+              {
+                "count": 3,
+                "period": "2024-11-01 00:00:00"
+              },
+              {
+                "count": 3,
+                "period": "2024-12-01 00:00:00"
+              }
+            ],
+            "granularity": "month",
+            "provenance": {
+              "method": "exact",
+              "method_params": {
+                "granularity": "month"
+              }
+            }
+          }
+        },
+        "uniqueness": {
+          "distinct_count": {
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 40
+          },
+          "is_unique_candidate": true
+        },
+        "unit": null
+      },
+      {
+        "categorical": {
+          "categories": [
+            "Prospecting",
+            "Closed Won",
+            "Negotiation"
+          ],
+          "frequencies": [
+            14,
+            13,
+            13
+          ],
+          "label_inconsistencies": [],
+          "rare_categories": []
+        },
+        "column": "stage",
+        "logical_type": "categorical_nominal",
+        "missingness": {
+          "blank_count": 0,
+          "missing_rate": {
+            "denominator": 40,
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 0.0
+          },
+          "null_count": 0,
+          "sentinel_count": 0
+        },
+        "ordinal": 2,
+        "physical_type": "VARCHAR",
+        "schema_version": "1.0",
+        "semantic_type": "status",
+        "uniqueness": {
+          "distinct_count": {
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 3
+          },
+          "is_unique_candidate": false
+        },
+        "unit": null
+      },
+      {
+        "column": "deal_value",
+        "distribution": {
+          "histogram": {
+            "bins": [
+              1007.0,
+              1033.6,
+              1060.2,
+              1086.8,
+              1113.4,
+              1140.0,
+              1166.6,
+              1193.2,
+              1219.8,
+              1246.4
+            ],
+            "counts": [
+              4,
+              3,
+              4,
+              3,
+              3,
+              3,
+              4,
+              3,
+              3,
+              4
+            ],
+            "provenance": {
+              "method": "exact",
+              "method_params": {
+                "bin_count": 10,
+                "bin_strategy": "fixed_width",
+                "lower_edge": 1007,
+                "upper_edge": 1273
+              }
+            }
+          },
+          "outlier_candidates": {
+            "count": 0,
+            "method": "iqr_1_5",
+            "provenance": {
+              "method": "exact",
+              "method_params": {
+                "iqr_multiplier": 1.5,
+                "quantile_method": "quantile_cont"
+              }
+            }
+          },
+          "skewness": {
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 0.010008184350860498
+          }
+        },
+        "logical_type": "numeric_currency",
+        "missingness": {
+          "blank_count": 0,
+          "missing_rate": {
+            "denominator": 40,
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 0.15
+          },
+          "null_count": 6,
+          "sentinel_count": 0
+        },
+        "ordinal": 3,
+        "physical_type": "BIGINT",
+        "schema_version": "1.0",
+        "semantic_type": "measure",
+        "stats": {
+          "max": {
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 1273
+          },
+          "mean": {
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 1138.9705882352941
+          },
+          "median": {
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 1136.5
+          },
+          "min": {
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 1007
+          },
+          "p25": {
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 1071.75
+          },
+          "p75": {
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 1208.25
+          },
+          "p95": {
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 1261.4499999999998
+          },
+          "p99": {
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 1270.69
+          },
+          "stddev": {
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 81.23459678483684
+          },
+          "valid_count": 34
+        },
+        "uniqueness": {
+          "distinct_count": {
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 34
+          },
+          "is_unique_candidate": true
+        },
+        "unit": {
+          "status": "unknown"
+        }
+      },
+      {
+        "categorical": {
+          "categories": [
+            "1"
+          ],
+          "frequencies": [
+            40
+          ],
+          "label_inconsistencies": [],
+          "rare_categories": []
+        },
+        "column": "is_new",
+        "logical_type": "categorical_nominal",
+        "missingness": {
+          "blank_count": 0,
+          "missing_rate": {
+            "denominator": 40,
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 0.0
+          },
+          "null_count": 0,
+          "sentinel_count": 0
+        },
+        "ordinal": 4,
+        "physical_type": "BIGINT",
+        "schema_version": "1.0",
+        "semantic_type": "dimension",
+        "uniqueness": {
+          "distinct_count": {
+            "provenance": {
+              "method": "exact"
+            },
+            "value": 1
+          },
+          "is_unique_candidate": false
+        },
+        "unit": null
+      }
+    ],
+    "grain": "one_row_per_deal",
+    "primary_key_candidates": [
+      "created_at",
+      "deal_value"
+    ],
+    "row_count": {
+      "provenance": {
+        "method": "exact"
+      },
+      "value": 40
+    },
+    "run_id": "run-golden",
+    "schema_version": "1.0",
+    "source_metadata": {
+      "connector": "csv",
+      "delimiter": "auto",
+      "encoding": "auto"
+    },
+    "temporal_coverage": {
+      "column": "created_at",
+      "max": "2024-12-24",
+      "min": "2024-01-01",
+      "provenance": {
+        "method": "exact"
+      }
+    }
+  },
+  "recommendations": [
+    {
+      "action": "Find the upstream process that lets deal_id repeat and enforce the key constraint where the records are created. Inspect the duplicated deal_id values and trace them to their source rows.",
+      "do_not": [
+        "Do not delete duplicate rows before confirming they are not distinct real records.",
+        "Do not relax the uniqueness rule just to silence the finding."
+      ],
+      "evidence_refs": [
+        "metric:deal_id_unique",
+        "rule:deal_id_unique",
+        "metric:deal_id.uniqueness.duplicate_group_count"
+      ],
+      "finding_id": "F-001",
+      "rationale": "A uniqueness rule on deal_id was violated, so joins or aggregations keyed on this field can double-count records. Evidence: metric:deal_id_unique, rule:deal_id_unique, metric:deal_id.uniqueness.duplicate_group_count.",
+      "reason_type": "evidence",
+      "recommendation_id": "R-001",
+      "schema_version": "1.0",
+      "status": "proposed",
+      "target_improvement": "deal_id satisfies its uniqueness rule, or the repetitions are confirmed as legitimate and the key expectation is corrected."
+    },
+    {
+      "action": "Trace the completeness gap on deal_value back to its source system and sync mechanism, then backfill the field or document why the values are legitimately absent. Group the missing rate on deal_value by status / source / period to localise where the gap is introduced.",
+      "do_not": [
+        "Do not fill empty values with zero as a first response.",
+        "Do not drop rows only to make the field appear complete."
+      ],
+      "evidence_refs": [
+        "metric:value_not_null",
+        "rule:value_not_null"
+      ],
+      "finding_id": "F-002",
+      "rationale": "A quality rule on deal_value failed its completeness bound, so counts and aggregates that rely on this field under-cover the real records. Evidence: metric:value_not_null, rule:value_not_null.",
+      "reason_type": "evidence",
+      "recommendation_id": "R-002",
+      "schema_version": "1.0",
+      "status": "proposed",
+      "target_improvement": "Unexplained missingness on deal_value sits below the configured threshold, or every remaining gap has a documented cause."
+    },
+    {
+      "action": "Confirm whether the near-single-category distribution in is_new is expected for this dataset. Check whether is_new collapsed to one category at the source or through a filtering/mapping step.",
+      "do_not": [
+        "Do not rebalance or re-label categories just to force the distribution to spread."
+      ],
+      "evidence_refs": [
+        "metric:is_new.categorical.frequencies"
+      ],
+      "finding_id": "F-003",
+      "rationale": "Almost all non-null values of is_new fall in one category; this is a review signal (accuracy is never inferred from validity), not a proven defect. Evidence: metric:is_new.categorical.frequencies.",
+      "reason_type": "business_context_required",
+      "recommendation_id": "R-003",
+      "schema_version": "1.0",
+      "status": "proposed",
+      "target_improvement": "A business owner confirms the dominant is_new distribution is expected, or identifies the mapping that collapsed it."
+    },
+    {
+      "action": "Verify whether stage is intended to be a unique identifier; if so, trace the duplicated key values to their source. Inspect the duplicated stage values and compare them against the dataset's declared grain.",
+      "do_not": [
+        "Do not assume the duplicates are errors — they may reflect the true record grain."
+      ],
+      "evidence_refs": [
+        "metric:stage.uniqueness.duplicate_group_count"
+      ],
+      "finding_id": "F-004",
+      "rationale": "Duplicated key values were measured on stage with no rule configured, so it may not be a reliable join key at the intended grain. Evidence: metric:stage.uniqueness.duplicate_group_count.",
+      "reason_type": "evidence",
+      "recommendation_id": "R-004",
+      "schema_version": "1.0",
+      "status": "proposed",
+      "target_improvement": "stage is confirmed unique at its grain, or documented as non-unique so joins and aggregations stop treating it as a key."
+    },
+    {
+      "action": "Verify whether is_new is intended to be a unique identifier; if so, trace the duplicated key values to their source. Inspect the duplicated is_new values and compare them against the dataset's declared grain.",
+      "do_not": [
+        "Do not assume the duplicates are errors — they may reflect the true record grain."
+      ],
+      "evidence_refs": [
+        "metric:is_new.uniqueness.duplicate_group_count"
+      ],
+      "finding_id": "F-005",
+      "rationale": "Duplicated key values were measured on is_new with no rule configured, so it may not be a reliable join key at the intended grain. Evidence: metric:is_new.uniqueness.duplicate_group_count.",
+      "reason_type": "evidence",
+      "recommendation_id": "R-005",
+      "schema_version": "1.0",
+      "status": "proposed",
+      "target_improvement": "is_new is confirmed unique at its grain, or documented as non-unique so joins and aggregations stop treating it as a key."
+    }
+  ],
+  "run": {
+    "config": {
+      "config_hash": "sha256:9e9c673cfc6ad89ddf91e93cd920077a194798ca6ab95fc65dfd82ad1ff54af2",
+      "config_version": "3",
+      "profile_mode": "standard"
+    },
+    "dataset": {
+      "connector": "csv",
+      "dataset_id": "sales_deals",
+      "source_kind": "file",
+      "source_ref": "<VOLATILE>",
+      "source_snapshot": {
+        "content_hash": "sha256:9b9cf013deddce0be4edc9a8c36fc92becf1c17e301b5e1143a83e91c17c2fa3",
+        "modified_at": "<VOLATILE>",
+        "path": "<VOLATILE>",
+        "row_id_policy": "csv:_row_id",
+        "size_bytes": 1606
+      }
+    },
+    "engine": {
+      "duckdb_version": "<VOLATILE>",
+      "engine_version": "0.1.0",
+      "python_version": "<VOLATILE>"
+    },
+    "run_id": "run-golden",
+    "schema_version": "1.0",
+    "status": "SUCCEEDED",
+    "timing": {
+      "duration_ms": 0,
+      "finished_at": "<VOLATILE>",
+      "started_at": "<VOLATILE>"
+    },
+    "warnings": []
+  }
+}
