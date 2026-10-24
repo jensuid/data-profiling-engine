@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dpe.local/schemas/dataset_config.schema.json",
+  "title": "DatasetConfig",
+  "description": "CONTRACTS §9 — dataset configuration (input contract), validated by this schema BEFORE any profiling starts. Unknown/unvalidatable config or rule keys are hard errors (additionalProperties=false everywhere per §9); GX-style shape only, no GX dependency (ADR-012). YAML source is parsed to this JSON shape before validation; `value` semantics (e.g. missing_rate_max threshold 0.05 = fraction) stay engine-side per ENGINE §5.1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["config_version", "dataset", "profiling", "quality_checks"],
+  "properties": {
+    "config_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "CONTRACTS §9 example carries `config_version: 3` (integer). The config hash lands later on ProfilingRun.config (§2)."
+    },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "grain": { "type": "string", "minLength": 1 },
+        "primary_key": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Declared PK columns; enables uniqueness/key checks without guessing (ENGINE §5 §orchestration point 4)."
+        },
+        "units": {
+          "type": "object",
+          "description": "Per-column unit assertions, keyed by column name. status shares the ColumnProfile.unit.status enum (CONTRACTS §3.2) — never silently assert.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["status"],
+            "properties": {
+              "currency": { "type": "string", "minLength": 1 },
+              "status": { "type": "string", "enum": ["known", "assumed", "unknown"] }
+            }
+          }
+        }
+      }
+    },
+    "profiling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["quick", "standard", "deep"],
+          "description": "Cost-class gate (ENGINE §2.1, §8)."
+        },
+        "sampling": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["enabled"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "strategy": { "type": "string", "description": "reservoir | ... (ENGINE §8; M2-T10 wiring)." },
+            "size": { "type": "integer", "minimum": 1 },
+            "seed": { "type": "integer" }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": { "enabled": { "const": true } },
+                "required": ["enabled"]
+              },
+              "then": { "required": ["strategy", "size", "seed"] }
+            }
+          ],
+          "description": "enabled=true requires strategy+size+seed — same reproducibility lock as ProfilingRun.sampling (§2), key name is `size` per the §9 example."
+        },
+        "sections": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Requested profile sections (ENGINE orchestration §5 point 2; §9 example: schema, descriptive_statistics, missing_values, uniqueness, distributions). Names are resolved by the metric registry at planning time — unknown entries are rejected there, not by this input schema."
+        }
+      }
+    },
+    "quality_checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/rule" }
+    }
+  },
+  "$defs": {
+    "rule": {
+      "title": "DatasetConfigRule",
+      "description": "CONTRACTS §9 rule entry; ENGINE §5.1 MVP catalog. Extractable $def per schema-pack convention so rule-level validation can run standalone.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "rule", "column", "dimension", "severity"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "rule": {
+          "type": "string",
+          "enum": [
+            "not_null",
+            "unique",
+            "missing_rate_max",
+            "greater_than_or_equal",
+            "less_than_or_equal",
+            "range",
+            "valid_domain",
+            "type_valid",
+            "conditional_not_null",
+            "referential_integrity",
+            "date_order",
+            "outlier_scan"
+          ],
+          "description": "Closed MVP catalog (ENGINE §5.1). referential_integrity/date_order are declared Phase 2/deep — valid config, gated at execution."
+        },
+        "column": { "type": "string", "minLength": 1 },
+        "dimension": {
+          "type": "string",
+          "enum": ["completeness", "uniqueness", "validity", "consistency", "timeliness", "accuracy_flagged"],
+          "description": "REQUIRED for scorecard rollup (§9 bullet 1; ENGINE §5.4). Same enum as QualityCheckResult.dimension (§4.1)."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["critical", "high", "medium", "low", "warning", "info"],
+          "description": "Same enum as QualityCheckResult.severity (§4.1)."
+        },
+        "value": {
+          "description": "Rule parameter; shape depends on `rule` type (bound, fraction, allowed set — per §9 example written inline as `value:`). Semantics enforced by the rule compiler (M2-T7), not this schema."
+        },
+        "threshold": {
+          "type": ["object", "number", "integer", "string", "boolean", "null"],
+          "description": "Alternative threshold slot from the GX-style shape (§5.1 declares `threshold` as a rule attribute); `value`/`threshold` are both permitted, neither mandatory in the generic case."
+        },
+        "condition": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["column", "operator", "value"],
+          "properties": {
+            "column": { "type": "string", "minLength": 1 },
+            "operator": { "type": "string", "enum": ["equals", "not_equals", "in", "not_in", "greater_than", "less_than"] },
+            "value": {}
+          },
+          "description": "Matcher for conditional rules; required when rule == conditional_not_null (§9 example, ENGINE §5.2 compiled FILTER)."
+        },
+        "business_note": {
+          "type": "string",
+          "description": "Semantics-aware handling hint, e.g. negative revenue valid for refunds → review not hard-fail (§9 bullet 2; ENGINE §5.3 WARN)."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "rule": { "enum": ["missing_rate_max", "greater_than_or_equal", "less_than_or_equal"] } }, "required": ["rule"] },
+          "then": { "anyOf": [ { "required": ["value"] }, { "required": ["threshold"] } ] },
+          "description": "Threshold-carrying bounds/rate rules must provide their parameter (per-type enforcement is M2-T7 compiler; the §9 exemplars must validate)."
+        },
+        {
+          "if": { "properties": { "rule": { "const": "range" } }, "required": ["rule"] },
+          "then": { "anyOf": [ { "required": ["value"] }, { "required": ["threshold"] } ] }
+        },
+        {
+          "if": { "properties": { "rule": { "const": "valid_domain" } }, "required": ["rule"] },
+          "then": { "anyOf": [ { "required": ["value"] }, { "required": ["threshold"] } ] }
+        },
+        {
+          "if": { "properties": { "rule": { "const": "conditional_not_null" } }, "required": ["rule"] },
+          "then": { "required": ["condition"] }
+        }
+      ]
+    }
+  }
+}

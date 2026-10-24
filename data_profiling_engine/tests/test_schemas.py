@@ -4,7 +4,9 @@ Covers CONTRACTS §1 (conventions + Provenance), §2 (ProfilingRun),
 §3.1 (DatasetProfile), §3.2 (ColumnProfile). Positive cases mirror the
 literal examples in the doc; negative cases enforce the binding rules
 ADR-015/016 rely on (sampled ⇒ seed, approximate ⇒ algorithm,
-not_computed ⇒ reason & no value, terminal-status enum, etc.).
+not_computed ⇒ reason & no value, terminal-status enum, etc.). M1-T3 adds
+CONTRACTS §9 dataset-config rejection tests (unknown rule keys, missing
+`dimension`, closed rule catalog).
 """
 from __future__ import annotations
 
@@ -560,3 +562,159 @@ def test_m1_t2_schema_ids_align_with_filenames():
         assert name in S.REQUIRED_SCHEMAS, name
         assert name in S.RAW_SCHEMAS, name
         assert S.RAW_SCHEMAS[name]["$id"].endswith(name)
+
+
+# ---- M1-T3: Dataset config input contract (CONTRACTS §9) -----------------
+
+# Literal transcription of the §9 YAML example (parsed to JSON before validation).
+CONFIG_EXAMPLE = {
+    "config_version": 3,
+    "dataset": {
+        "name": "sales_deals",
+        "grain": "one_row_per_deal",
+        "primary_key": ["deal_id"],
+        "units": {"deal_value": {"currency": "USD", "status": "assumed"}},
+    },
+    "profiling": {
+        "mode": "standard",
+        "sampling": {"enabled": False, "strategy": "reservoir", "size": 100000, "seed": 20261024},
+        "sections": ["schema", "descriptive_statistics", "missing_values", "uniqueness", "distributions"],
+    },
+    "quality_checks": [
+        {"id": "deal_id_not_null", "rule": "not_null", "column": "deal_id",
+         "dimension": "completeness", "severity": "critical"},
+        {"id": "deal_id_unique", "rule": "unique", "column": "deal_id",
+         "dimension": "uniqueness", "severity": "critical"},
+        {"id": "deal_value_missing_rate", "rule": "missing_rate_max", "column": "deal_value",
+         "value": 0.05, "dimension": "completeness", "severity": "high"},
+        {"id": "revenue_non_negative", "rule": "greater_than_or_equal", "column": "deal_value",
+         "value": 0, "dimension": "validity", "severity": "warning",
+         "business_note": "negative may be valid for refunds; flagged for review, not auto-fail"},
+        {"id": "closed_won_has_closed_at", "rule": "conditional_not_null", "column": "closed_at",
+         "condition": {"column": "status", "operator": "equals", "value": "Closed Won"},
+         "dimension": "completeness", "severity": "high"},
+    ],
+}
+
+
+def test_config_positive_literal_example():
+    """The verbatim §9 exemplar must validate — including per-rule conditionals."""
+    assert S.validate("dataset_config.schema.json", CONFIG_EXAMPLE) == []
+
+
+def test_config_rejects_unknown_top_level_key():
+    bad = dict(CONFIG_EXAMPLE, extra_section={"x": 1})
+    errs = S.validate("dataset_config.schema.json", bad)
+    assert any("<root>" in e or "extra_section" in e for e in errs), errs
+
+
+def test_config_rejects_unknown_rule_key():
+    bad = copy.deepcopy(CONFIG_EXAMPLE)
+    bad["quality_checks"][0]["expect"] = "no nulls"  # GX-ish but not in §9
+    errs = S.validate("dataset_config.schema.json", bad)
+    assert any("quality_checks/0" in e for e in errs), errs
+
+
+def test_config_rejects_missing_dimension():
+    bad = copy.deepcopy(CONFIG_EXAMPLE)
+    bad["quality_checks"][2].pop("dimension")
+    errs = S.validate("dataset_config.schema.json", bad)
+    assert any("dimension" in e for e in errs), errs
+
+
+def test_config_rejects_unknown_rule_type():
+    # ENGINE §5.1 catalog is closed — no rogue rule names pre-execution.
+    bad = copy.deepcopy(CONFIG_EXAMPLE)
+    bad["quality_checks"][0]["rule"] = "not_empty"
+    errs = S.validate("dataset_config.schema.json", bad)
+    assert any("rule" in e for e in errs), errs
+
+
+@pytest.mark.parametrize("rule_type", ["referential_integrity", "date_order", "outlier_scan",
+                                        "valid_domain", "type_valid", "range",
+                                        "less_than_or_equal", "unique"])
+def test_config_accepts_full_rule_catalog(rule_type):
+    bad = copy.deepcopy(CONFIG_EXAMPLE)
+    rule = bad["quality_checks"][1]  # swap the `unique` exemplar
+    rule["rule"] = rule_type
+    if rule_type in ("range", "valid_domain", "less_than_or_equal", "outlier_scan"):
+        rule["value"] = [0, 100]
+    assert S.validate("dataset_config.schema.json", bad) == []
+
+
+def test_config_rejects_dimension_enum_mismatch():
+    bad = copy.deepcopy(CONFIG_EXAMPLE)
+    bad["quality_checks"][0]["dimension"] = "freshness"
+    errs = S.validate("dataset_config.schema.json", bad)
+    assert any("dimension" in e for e in errs), errs
+
+
+def test_config_rejects_invalid_severity():
+    bad = copy.deepcopy(CONFIG_EXAMPLE)
+    bad["quality_checks"][0]["severity"] = "blocker"
+    errs = S.validate("dataset_config.schema.json", bad)
+    assert any("severity" in e for e in errs), errs
+
+
+def test_config_rejects_mode_enum():
+    bad = copy.deepcopy(CONFIG_EXAMPLE)
+    bad["profiling"]["mode"] = "turbo"
+    errs = S.validate("dataset_config.schema.json", bad)
+    assert any("mode" in e for e in errs), errs
+
+
+def test_config_sampling_enabled_requires_seed_strategy_size():
+    for dropped in ("seed", "strategy", "size"):
+        bad = copy.deepcopy(CONFIG_EXAMPLE)
+        bad["profiling"]["sampling"]["enabled"] = True
+        bad["profiling"]["sampling"].pop(dropped)
+        errs = S.validate("dataset_config.schema.json", bad)
+        assert any(dropped in e for e in errs), (dropped, errs)
+
+
+def test_config_sampling_disabled_allows_missing_seed():
+    bad = copy.deepcopy(CONFIG_EXAMPLE)
+    bad["profiling"]["sampling"] = {"enabled": False}
+    assert S.validate("dataset_config.schema.json", bad) == []
+
+
+def test_config_rejects_bad_unit_status():
+    bad = copy.deepcopy(CONFIG_EXAMPLE)
+    bad["dataset"]["units"]["deal_value"]["status"] = "asserted"
+    errs = S.validate("dataset_config.schema.json", bad)
+    assert any("status" in e for e in errs), errs
+
+
+def test_config_rejects_empty_quality_checks():
+    errs = S.validate("dataset_config.schema.json", dict(CONFIG_EXAMPLE, quality_checks=[]))
+    assert any("quality_checks" in e for e in errs), errs
+
+
+def test_config_conditional_not_null_requires_condition():
+    bad = copy.deepcopy(CONFIG_EXAMPLE)
+    bad["quality_checks"][4].pop("condition")
+    errs = S.validate("dataset_config.schema.json", bad)
+    assert any("condition" in e for e in errs), errs
+
+
+def test_config_threshold_rules_require_value():
+    bad = copy.deepcopy(CONFIG_EXAMPLE)
+    bad["quality_checks"][2].pop("value")
+    errs = S.validate("dataset_config.schema.json", bad)
+    assert any("value" in e or "threshold" in e for e in errs), errs
+
+
+def test_config_rule_def_standalone_validation():
+    """#/$defs/rule is extractable per schema-pack convention (no `#` refs to extractable defs)."""
+    sub = S.BY_ID["https://dpe.local/schemas/dataset_config.schema.json"]["$defs"]["rule"]
+    v = Draft202012Validator(sub, registry=S.REGISTRY)
+    assert list(v.iter_errors(CONFIG_EXAMPLE["quality_checks"][0])) == []
+    assert list(v.iter_errors({"id": "x", "rule": "not_null", "column": "c", "severity": "low"})), \
+        "dimension is required on every rule"
+
+
+def test_m1_t3_schema_id_hygiene():
+    name = "dataset_config.schema.json"
+    assert name in S.REQUIRED_SCHEMAS
+    assert name in S.RAW_SCHEMAS
+    assert S.RAW_SCHEMAS[name]["$id"].endswith(name)

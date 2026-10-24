@@ -2,7 +2,8 @@
 
 M1-T1 scope: Provenance, ProfilingRun, DatasetProfile, ColumnProfile.
 M1-T2 adds QualityCheckResult / Finding / Recommendation / FindingWorkflow;
-M1-T3 adds the dataset-config schema; M1-T6 adds bridge/job envelopes.
+M1-T3 adds the dataset-config schema (CONTRACTS §9, validated before any run);
+M1-T6 adds bridge/job envelopes.
 
 Every schema file in this directory follows ``<name>.schema.json`` and carries
 a stable ``$id`` under ``https://dpe.local/schemas/``. Cross-file ``$ref``
@@ -44,6 +45,7 @@ REQUIRED_SCHEMAS: tuple[str, ...] = (
     "finding.schema.json",
     "finding_workflow.schema.json",
     "recommendation.schema.json",
+    "dataset_config.schema.json",
 )
 
 
