@@ -9,7 +9,7 @@
  * authority: an invalid config is still rejected there with CONFIG_INVALID
  * before any worker spawns (AGENTS §5). No HTTP, no new bridge command
  * (ADR-005, §5.2): one accepted envelope yields the §5.3 job id, which is
- * handed to the shared store for the M6-T3 progress screen.
+ * handed to the shared store and tracked live on /progress (M6-T3).
  */
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -434,8 +434,8 @@ export default function RunConfig() {
         {startError && <div className="error-box">{startError}</div>}
         {acceptedJobId && (
           <div className="banner-ok">
-            Profile job accepted — <code>{acceptedJobId}</code>. Progress tracking
-            arrives with the Run Progress screen (M6-T3); the job id is kept for it.
+            Profile job accepted — <code>{acceptedJobId}</code>. Track it live on
+            the <Link to="/progress">Progress</Link> screen.
           </div>
         )}
       </div>

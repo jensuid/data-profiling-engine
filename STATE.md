@@ -22,33 +22,60 @@ Milestone : M6 — UI Screens (GATE M1 CONTRACTS FREEZE PASSED
           dev-mode 2026-10-25 — T1 read commands + caps, T2 job manager +
           real profile.start worker, T3 §5.5 progress push; packaged
           bridge/worker verification on both OS deferred to M7/Phase-3)
-Task      : none in progress — M6-T2 done (Run Configuration screen: profile
-          mode, sampling w/ required seed, §9 config upload (YAML/JSON) +
-          form-built config, live client-side validation errors, Start →
-          `profile.start`). Job id parked in the shared selection store for
-          M6-T3. M5 COMPLETE; M6-T1+T2 landed. Frontend compiles clean;
-          Python suite unchanged (all changes frontend-only + one npm dep).
+Task      : none in progress — M6-T3 done (Run Progress screen: /progress,
+          polls profile.get_status authoritative @700ms + __dpeJobStatus push
+          hints merged via state-rank gate, §6.2 state badge + progress bar +
+          current_step, Cancel -> profile.cancel with CANCEL_REQUESTED lock
+          until polled terminal, SUCCEEDED bounded result summary from
+          _bounded_result incl. run_id/counts). M5 COMPLETE; M6-T1+T2+T3
+          landed. Frontend compiles clean; Python suite unchanged (all
+          changes frontend-only).
 GATE M4   : reporting-layer tasks T1-T4 COMPLETE (706/706 pytest, tsc clean,
           golden byte-stable). MVP acceptance is on the PACKAGED build
           (BLUEPRINT §5 Phase-1 gate / §6), not dev mode — do not stamp M4
           "accepted" until the packaged run is verified in M7/Phase-3.
-NEXT      : M6-T3 — Run Progress (status/percent/cancel). *Spec: CONTRACTS §6.*
-          RunConfig already starts the job and writes `{jobId, datasetId,
-          sourcePath, startedAt}` to the shared store. Build the progress
-          screen: poll `profile.get_status` (authoritative §5.5) + optional
-          `onPushedJobStatus` hints, render §6.2 state + `progress`
-          (completed/total_steps, current_step), Cancel → `profile.cancel`
-          (CANCEL_REQUESTED is not a guarantee — only the polled terminal state
-          confirms it).
-          Files to open: `frontend/src/pages/` (new RunProgress.tsx),
-          `frontend/src/state/selection.ts` (`useStartedJob`),
-          `frontend/src/bridge/api.ts` (`bridgeSend`/`onPushedJobStatus`),
-          `docs/CONTRACTS.md` §5.3/§5.5/§6, `frontend/src/types/contracts.ts`
-          (`JobStatus`), `frontend/src/App.tsx` (route — nav already has Run;
-          consider /run vs /progress split).
+NEXT      : M6-T4 — Report View: Overview + Column Profiling.
+          *Spec: expected-output §3.1–3.2 (references/), CONTRACTS §3/§5.2.*
+          The SUCCEEDED JobStatus `result` (worker profile_job._bounded_result)
+          carries `{run_id, dataset_id, result_refs, row_count, column_count,
+          finding_count, check_count, recommendation_count, error_count}` —
+          that is the handover into the report screen (StartedJob store does NOT
+          carry run_id yet; decide in M6-T4 whether to extend it or re-fetch via
+          report.get_summary). Build on the existing /report Placeholder route:
+          `report.get_summary` + `dataset.inspect`-style reads; column-level
+          profiles come from the persisted run document — check whether a
+          §5.2 command already pages them out (findings.get /
+          quality.get_results exist; a column-profile read path may need an
+          M5-style handler — if so STOP and raise it, AGENTS §5/§8, do not
+          invent a command silently).
+          Files to open: `docs/CONTRACTS.md` §3.1–3.2 + §5.2,
+          `references/expected_output_data_profiling_engine_mvp_vs_final_obsidian.md`
+          §3.1–3.2, `frontend/src/pages/Placeholder.tsx` + `App.tsx` (/report
+          route), `frontend/src/bridge/api.ts`, `frontend/src/types/contracts.ts`
+          (`DatasetProfile`/`ColumnProfile`), `bridge/facade.py`
+          (_report_summary_handler + what read commands exist for columns).
           Test:  cd frontend && npx tsc --noEmit
                  .venv/bin/python -m pytest data_profiling_engine/tests -q
 Blocked by: none.
+Session notes: M6-T3 landed the Run Progress screen (CONTRACTS §5.5, §6).
+               Files: `frontend/src/pages/RunProgress.tsx` (poll
+               `profile.get_status` every 700ms — authoritative; optional
+               `onPushedJobStatus` hints merged through the SAME apply() gate;
+               state-rank ref (QUEUED<RUNNING<CANCEL_REQUESTED<terminal) stops
+               a late/older transport message from regressing the bar, the ONE
+               legal backwards case being a polled RUNNING after
+               CANCEL_REQUESTED per §6.5; progress bar + completed/total_steps +
+               current_step; Cancel -> `profile.cancel`, button locks on
+               optimistic CANCEL_REQUESTED until a polled terminal confirms;
+               JOB_NOT_FOUND stops the poll with an explicit message — §8 says
+               not-retryable; SUCCEEDED renders the bounded `_bounded_result`
+               summary — the poll's `result` field sits DIRECTLY on the JobStatus
+               object, bridgeSend<R=JobStatus> returns it unwrapped, no extra
+               envelope), `App.tsx` (+/progress route, nav "Progress"),
+               `RunConfig.tsx` (accepted-job banner now links to /progress),
+               `styles.css` (+62 lines progress bar/state badges).
+               No Python/contract change; 765/765 pytest green, tsc clean,
+               vite build clean 2026-10-25.
 Session notes: M6-T2 landed the Run Configuration screen (CONTRACTS §9).
                Files: `frontend/src/pages/RunConfig.tsx` (mode radios;
                sampling toggle + strategy/size/seed — seed REQUIRED when
@@ -1209,6 +1236,13 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
   against `S.validate("dataset_config.schema.json", …)`. The server check
   (CONFIG_INVALID at profile.start) is always the authority — a stale mirror
   only mis-hints the UI, it can never admit a bad config.
+- profile.get_status polls and __dpeJobStatus pushes return the SAME unwrapped
+  §5.3 JobStatus object — `bridgeSend` already strips the envelope, so
+  `status.result` (the worker's bounded `_bounded_result`: run_id, dataset_id,
+  result_refs, counts) sits DIRECTLY on it; never re-wrap. Merging both
+  transports needs a monotonic state-rank gate (a slow poll CAN arrive after a
+  newer push). JOB_NOT_FOUND surfaces as a thrown BridgeError (handler
+  __bridge_error__ → error envelope), not a status object — catch-and-stop.
 ```
 
 ## M0 — Desktop Spike (gate: BLUEPRINT §5 Phase 0; acceptance: TESTING §5.2)
@@ -1266,7 +1300,7 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 
 - [x] **M6-T1** Dataset Selection + inspect/preview. *Spec: BLUEPRINT Phase 2; CONTRACTS §5.* ✅ First real UI screen. `bridge/api.ts` (typed §5.3 envelope client: `BridgeRequest`/`BridgeResponse`/`BridgeError`; `bridgeSend<R>` unwraps ok→result; `bridgeStartJob` returns job_id; `onPushedJobStatus` registers the optional §5.5 `__dpeJobStatus` push sink; `bridgeAvailable` detects shell). `DatasetSelection.tsx`: path text input → `dataset.inspect` metadata grid (file, connector, size, content_hash, columns table w/ logical+semantic types when stored run exists, last_run badge, row_count + method tag) → auto `dataset.preview` (50-row paged, PII mask toggle, lock icons, masking_applied info, prev/next). `App.tsx`: route `/` → DatasetSelection. `styles.css`: +150 lines (path-row, meta-grid, inspect/preview-panel, table-scroll, pager, error-box, banner-warn, mask-toggle, last-run-badge, dark-mode variants). No Python changes, no new §5.2 commands, no new enum, 765 tests green, tsc clean, vite build 5.6s. **→ NEXT: M6-T2.**
 - [x] **M6-T2** Run Configuration (mode, sampling, config upload w/ validation errors). *Spec: CONTRACTS §9.* ✅ `RunConfig.tsx` + `config/validation.ts` (client §9 mirror — js-yaml parse, schema-mirrored validator, form→document builder) + `state/selection.ts` (cross-screen dataset/job stores). Mode always sent as the §5.3 `profile_mode` override (worker folds it in, so validated==run); sampling enabled ⇒ strategy+size+seed enforced (ADR-015); uploaded invalid doc blocks Start locally AND server `CONFIG_INVALID` stays authority (no worker spawns on bad config); §9 exemplar validated 0-error on both sides. New dep js-yaml. No Python/contract change; 765/765 pytest green, tsc clean, vite build clean 2026-10-25. **→ NEXT: M6-T3.**
-- [ ] **M6-T3** Run Progress (status/percent/cancel). *Spec: CONTRACTS §6.*
+- [x] **M6-T3** Run Progress (status/percent/cancel). *Spec: CONTRACTS §6.* ✅ `RunProgress.tsx` (/progress): polls `profile.get_status` @700ms (authoritative §5.5) + merges `onPushedJobStatus` hints through one state-rank gate (QUEUED<RUNNING<CANCEL_REQUESTED<terminal — a late message never regresses the bar; the only legal backwards move is a polled RUNNING after CANCEL_REQUESTED, §6.5); §6.2 badge + progress bar (completed/total_steps, current_step); Cancel → `profile.cancel`, locks on optimistic CANCEL_REQUESTED until a polled terminal confirms; JOB_NOT_FOUND (not-retryable §8) stops the poll with an explicit message; SUCCEEDED renders the bounded `_bounded_result` summary (run_id, counts, artifact ref names). `App.tsx` +route/nav, `RunConfig.tsx` banner links to /progress, `styles.css` +62. No Python/contract change; 765/765 pytest green, tsc clean, vite build clean 2026-10-25. **→ NEXT: M6-T4.**
 - [ ] **M6-T4** Report View: Overview + Column Profiling. *Spec: expected-output §3.1–3.2.*
 - [ ] **M6-T5** Report View: Visualizations + Quality Assessment. *Spec: expected-output §3.3–3.4.*
 - [ ] **M6-T6** Report View: Findings & Recommendations + Export actions. *Spec: expected-output §3.4–3.5.*
