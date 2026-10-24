@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import Sequence, Tuple
 
 from data_profiling_engine.recommendations.rule_based import recommendation_for_finding
+from data_profiling_engine.recommendations.templates import DEFAULT_LANGUAGE
 from data_profiling_engine.schemas.models import Finding, Recommendation
 
 
@@ -59,19 +60,26 @@ def _wire(finding: Finding, recommendation_ids: Sequence[str]) -> Finding:
     return Finding.model_validate(data)
 
 
-def build_recommendations(findings: Sequence[Finding]) -> RecommendationsResult:
+def build_recommendations(
+    findings: Sequence[Finding], language: str = DEFAULT_LANGUAGE
+) -> RecommendationsResult:
     """Generate one evidence-citing recommendation per finding and wire the
     finding → recommendation back-reference (ENGINE §6 step 5 / §7).
 
     ``recommendation_id`` is a deterministic run-local ``R-NNN`` assigned in the
     order the (already-prioritized) findings arrive, so the mapping is stable
     across reruns of the same evidence.
+
+    ``language`` (ADR-018 / BLUEPRINT Q1) selects the narrative template language
+    — ``"en"`` (default, shipped) or ``"id"`` (Indonesian). It only changes the
+    human-readable strings; ids, evidence refs, ``reason_type`` and the
+    Recommendation shape are identical across languages.
     """
     recommendations: list[Recommendation] = []
     wired: list[Finding] = []
     for idx, finding in enumerate(findings, start=1):
         rid = f"R-{idx:03d}"
-        rec = recommendation_for_finding(finding, rid)
+        rec = recommendation_for_finding(finding, rid, language)
         recommendations.append(rec)
         wired.append(_wire(finding, [rid]))
     return RecommendationsResult(

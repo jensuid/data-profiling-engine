@@ -41,6 +41,9 @@ export type MetricMethod = (typeof MetricMethodValues)[number];
 export const ProfileModeValues = ["quick", "standard", "deep"] as const;
 export type ProfileMode = (typeof ProfileModeValues)[number];
 
+export const ReportLanguageValues = ["en", "id"] as const;
+export type ReportLanguage = (typeof ReportLanguageValues)[number];
+
 export const RunStatusValues = ["SUCCEEDED", "FAILED", "CANCELLED"] as const;
 export type RunStatus = (typeof RunStatusValues)[number];
 
@@ -552,4 +555,5 @@ export interface DatasetConfig {
   dataset: ConfigDataset;
   profiling: ConfigProfiling;
   quality_checks: DatasetConfigRule[];
+  language?: ReportLanguage;
 }

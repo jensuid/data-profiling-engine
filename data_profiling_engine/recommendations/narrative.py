@@ -13,15 +13,23 @@ from __future__ import annotations
 
 from typing import List, Tuple
 
-from data_profiling_engine.recommendations.templates import RecommendationTemplate
+from data_profiling_engine.recommendations.templates import (
+    DEFAULT_LANGUAGE,
+    RecommendationTemplate,
+)
 from data_profiling_engine.schemas.models import Finding
 
+# Dataset-level subject label per narrative language (ADR-018). A real column
+# name is always substituted verbatim; only the *fallback* for a scope with no
+# single column is localized (never a fabricated column name).
+_DATASET_LABEL = {"en": "the dataset", "id": "dataset ini"}
 
-def subject_column(finding: Finding) -> str:
+
+def subject_column(finding: Finding, language: str = DEFAULT_LANGUAGE) -> str:
     """The column the recommendation acts on, or a dataset-level label when the
     finding scope has no single column (never fabricates a column name)."""
     column = finding.scope.column if finding.scope is not None else None
-    return column or "the dataset"
+    return column or _DATASET_LABEL.get(language, _DATASET_LABEL[DEFAULT_LANGUAGE])
 
 
 def compose_action(template: RecommendationTemplate, column: str) -> str:

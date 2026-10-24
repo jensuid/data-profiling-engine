@@ -18,8 +18,11 @@ from data_profiling_engine import schemas as S
 from data_profiling_engine.findings import build_findings
 from data_profiling_engine.recommendations import build_recommendations
 from data_profiling_engine.recommendations.templates import (
+    DEFAULT_LANGUAGE,
     TEMPLATES,
+    TEMPLATES_BY_LANGUAGE,
     classify_finding_kind,
+    templates_for_language,
 )
 from data_profiling_engine.schemas.models import (
     ColumnProfile,
@@ -306,3 +309,102 @@ class TestDeterminismAndGuardrails:
         from data_profiling_engine.schemas.models import QualityDimension
         for dim in QualityDimension:
             assert f"rule:{dim.value}" in TEMPLATES
+
+
+# ---------------------------------------------------------------------------
+# M4-T4 — bilingual narrative (ADR-018 / BLUEPRINT Q1). English is the shipped
+# default; Indonesian is opt-in via ``DatasetConfig.language``. Only the
+# human-readable strings change — ids / evidence / reason_type / shape do not.
+# ---------------------------------------------------------------------------
+
+
+class TestNarrativeLanguage:
+    _COMPLETENESS = dict(checks=[_check("amount_missing_rate", "completeness", "FAIL", "amount")])
+
+    def _findings(self):
+        return _findings(**self._COMPLETENESS)
+
+    def test_default_language_is_english(self):
+        assert DEFAULT_LANGUAGE == "en"
+        rec = build_recommendations(self._findings()).recommendations[0]
+        assert rec.action.startswith("Trace the completeness gap")
+
+    def test_explicit_en_equals_default_byte_identical(self):
+        a = [r.model_dump_json() for r in build_recommendations(self._findings()).recommendations]
+        b = [r.model_dump_json() for r in build_recommendations(self._findings(), "en").recommendations]
+        assert a == b
+
+    def test_indonesian_narrative_is_opt_in(self):
+        rec = build_recommendations(self._findings(), "id").recommendations[0]
+        assert "Telusuri celah kelengkapan" in rec.action
+        assert "amount" in rec.action  # real column name substituted verbatim
+
+    def test_indonesian_recommendation_still_schema_valid(self):
+        rec = build_recommendations(self._findings(), "id").recommendations[0]
+        assert S.validate("recommendation.schema.json", rec.model_dump()) == []
+
+    def test_only_strings_differ_across_languages(self):
+        en = build_recommendations(self._findings(), "en").recommendations[0]
+        idi = build_recommendations(self._findings(), "id").recommendations[0]
+        # identity + evidence + policy fields are language-independent...
+        assert en.recommendation_id == idi.recommendation_id
+        assert en.finding_id == idi.finding_id
+        assert en.reason_type == idi.reason_type
+        assert en.evidence_refs == idi.evidence_refs
+        assert en.status == idi.status
+        # ...only the human-readable narrative differs
+        assert en.action != idi.action
+        assert en.rationale != idi.rationale
+
+    def test_business_context_policy_is_language_independent(self):
+        # accuracy_flagged is a review signal (business_context_required) in BOTH
+        # catalogs — never a proven defect, in either language.
+        for lang in ("en", "id"):
+            tpl = templates_for_language(lang)[classify_finding_kind(
+                _only_finding(profiles=[_col("status", 1, categories=["Won", "Lost"], frequencies=[99, 1])])
+            )]
+            assert tpl.reason_type == ReasonType.BUSINESS_CONTEXT_REQUIRED
+
+    def test_catalogs_share_identical_kind_keys(self):
+        assert set(TEMPLATES_BY_LANGUAGE["en"]) == set(TEMPLATES_BY_LANGUAGE["id"])
+
+    def test_templates_for_language_none_is_default_en(self):
+        assert templates_for_language(None) is TEMPLATES_BY_LANGUAGE["en"]
+
+    def test_unsupported_language_is_hard_error_not_silent_fallback(self):
+        import pytest
+        with pytest.raises(ValueError, match="unsupported recommendation language"):
+            templates_for_language("de")
+
+    def test_enum_member_accepted_as_language(self):
+        from data_profiling_engine.schemas.models import ReportLanguage
+        rec = build_recommendations(self._findings(), ReportLanguage.ID).recommendations[0]
+        assert "Telusuri" in rec.action
+
+    def test_config_language_flows_and_roundtrips(self):
+        cfg = DatasetConfig.model_validate({
+            "config_version": 3, "dataset": {"name": DS},
+            "profiling": {"mode": "standard"},
+            "quality_checks": [
+                {"id": "r1", "rule": "not_null", "column": "amount",
+                 "dimension": "completeness", "severity": "high"}
+            ],
+            "language": "id",
+        })
+        assert cfg.language == "id"
+        assert S.validate("dataset_config.schema.json", cfg.model_dump()) == []
+        assert cfg.model_dump()["language"] == "id"
+
+    def test_config_language_omitted_when_unset_is_backward_compatible(self):
+        # an untouched `language` is dropped from the dump (== shipped "en"), so
+        # config_hash / golden of pre-existing configs stay byte-identical.
+        cfg = DatasetConfig.model_validate({
+            "config_version": 3, "dataset": {"name": DS},
+            "profiling": {"mode": "standard"},
+            "quality_checks": [
+                {"id": "r1", "rule": "not_null", "column": "amount",
+                 "dimension": "completeness", "severity": "high"}
+            ],
+        })
+        assert cfg.language is None
+        assert "language" not in cfg.model_dump()

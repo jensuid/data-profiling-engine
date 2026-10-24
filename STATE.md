@@ -17,30 +17,78 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 Milestone : M4 — Reporting Layer (GATE M1 CONTRACTS FREEZE PASSED 2026-10-24;
           GATE M2 engine spine PASSED 2026-10-24 — profiler-cli end-to-end;
           GATE M3 persistence MET 2026-10-24 — ADR-008 fully landed)
-Task      : none in progress — M4-T2 done (self-contained HTML report:
-          vendored inline Plotly.js, ADR-015 method badges on every number,
-          SECURITY §4 PII masking default, charts from stored metrics only,
-          ArtifactStore emit under canonical html_report kind). Reporting
-          layer still owes CSV export (M4-T3), language/templates (M4-T4).
-GATE M4   : not yet — T3/T4 outstanding.
-NEXT      : M4-T3 — CSV issue export: one row per failing/warning item with
-          columns `finding_id, rule_id, column, status, severity, observed,
-          threshold, affected_records, evidence_ref` (ENGINE §10 "CSV issue
-          export" bullet, verbatim). *Spec: ENGINE §10; SECURITY §4 (masking
-          applies to CSV too — "HTML/CSV export" in TESTING §8 acceptance).*
-          Read `docs/ENGINE_SPEC.md` §10 + `data_profiling_engine/reporting/
-          __init__.py` + `html_report.py` (same bundle-input discipline) +
-          `schemas/models.py` Finding/QualityCheckResult first. Build in
-          `reporting/` (new module `csv_export.py`), consume the SAME
-          `ProfileBundle`; row source = findings whose check FAILED/WARNED
-          (map finding → originating rule_id via its `rule:` evidence_refs /
-          facts); emit via ArtifactStore kind=`issue_csv` (canonical name
-          `issues.csv` is already registered in DEFAULT_FILENAMES + CONTRACTS
-          §2 result_refs example). No new metric; no HTML/JSON changes; no
-          UI; no HTTP (ADR-005).
+Task      : none in progress — M4-T4 done (report/narrative language, BLUEPRINT
+          Q1 ratified → ADR-018). Metric labels stay English; recommendation
+          narrative now bilingual EN + ID, switched by the new optional
+          top-level `DatasetConfig.language` ∈ {en, id}; shipped DEFAULT "en"
+          (omitted-when-unset, so config_hash + golden + all prior recommendation
+          tests stay byte-identical; `id` is opt-in). Recommendation contract
+          SHAPE (§4.3) unchanged — only the human-readable strings differ.
+GATE M4   : reporting-layer tasks T1-T4 COMPLETE (706/706 pytest, tsc clean,
+          golden byte-stable). MVP acceptance is on the PACKAGED build
+          (BLUEPRINT §5 Phase-1 gate / §6), not dev mode — do not stamp M4
+          "accepted" until the packaged run is verified in M7/Phase-3.
+NEXT      : M5 — Bridge facade wraps M2-M4 behind commands (BLUEPRINT §6).
+          Verify end-to-end that the pywebview facade + worker propagate the
+          M4 reporting outputs (html_report / issue_csv / golden JSON) AND the
+          new `DatasetConfig.language` field: config flows facade → worker →
+          orchestration.run_pipeline(config) → build_recommendations(language=
+          config.language). Open `bridge/facade.py`, `bridge/worker/*`,
+          `schemas/bridge_request.schema.json` allow-list + `docs/CONTRACTS`
+          §5 before coding. No new metric; no HTTP (ADR-005); keep TS parity.
           Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
-Blocked by: none — M4-T2 accepted by this session's suite (675/675, tsc clean,
-          browser-verified offline render).
+                 (cd frontend && npx tsc --noEmit)
+Blocked by: none — M4-T4 accepted by this session's suite (706/706).
+Session notes: M4-T4 landed the report/narrative language decision
+               (ADR-018; BLUEPRINT Q1 ACCEPTED). Files:
+               `recommendations/templates.py` (bilingual catalog:
+               `_RULE/_PROFILE/_GENERIC_TEMPLATES_ID` added, `_build_templates(
+               tpls)` now per-language, `TEMPLATES_BY_LANGUAGE`, `TEMPLATES` kept
+               as the EN view for back-compat, `templates_for_language(lang)`
+               hard-errors on unsupported, `DEFAULT_LANGUAGE="en"`,
+               `SUPPORTED_LANGUAGES`), `recommendations/narrative.py`
+               (`subject_column(finding, language)` — only the dataset-level
+               fallback label is localized: en "the dataset" / id "dataset ini"),
+               `recommendations/rule_based.py` + `recommendations/__init__.py`
+               (`language` param threaded, default en), `orchestration/__init__.py`
+               (`build_recommendations(..., language=config.language)`),
+               `schemas/models.py` (`ReportLanguage` enum + `DatasetConfig.
+               language: Optional[ReportLanguage]=None`), `dataset_config.schema.json`
+               (optional `language` enum [en,id]), `frontend/src/types/contracts.ts`
+               (`ReportLanguageValues` + `language?:`), `tests/test_contracts_ts_parity.py`
+               (enum set 17→18), `tests/test_recommendations.py` (+12
+               `TestNarrativeLanguage`), docs BLUEPRINT Q1 / CONTRACTS §9 /
+               ARCHITECTURE ADR-018. GOTCHA: `DatasetConfig.language` MUST be
+               Optional-with-None (not default "en") so an unset field is dropped
+               by `ContractModel._dump` — a non-None default changes `config_hash`
+               and breaks the golden byte-diff + §9 round-trip tests. GOTCHA:
+               adding the `ReportLanguage` TS enum bumps the hard-coded
+               `test_all_17_contract_enums_are_mirrored` set → rename/extend to 18.
+               GOTCHA: `templates_for_language` accepts str / enum / None; the
+               worker sees `config.language` as a plain str under use_enum_values
+               (or None). Unsupported language raises, never silently falls back.
+               706/706 pytest green; tsc clean; golden unchanged (en default).
+Session notes: M4-T3 landed the CSV issue export (ENGINE §10, SECURITY §4).
+               Files: `reporting/csv_export.py` (render_issue_csv /
+               write_issue_csv / emit_issue_csv_artifact; ISSUE_CSV_COLUMNS
+               pinned verbatim to §10), `tests/test_reporting_csv.py` (19),
+               `cli/__init__.py` (+`--csv OUT` on `profile`),
+               `reporting/__init__.py` docstring updated. GOTCHA: a rule
+               finding's originating rule is recoverable ONLY from its
+               `rule:<rule_id>` evidence ref — the rule-derived *fact* ref is
+               `metric:<rule_id>` and a profile-extreme ref is
+               `metric:<column>.<measure>`; match the `rule:` prefix, not the
+               `metric:` one, when joining finding→check. GOTCHA: profile-
+               extreme findings (near-total missingness, dominant category,
+               duplicate keys) carry NO `rule:` ref and are NOT tracker issues
+               by design, so the issue CSV has fewer rows than the findings
+               list. GOTCHA: SECURITY §4 masking is a no-op here by
+               construction — an issue row never carries a raw source value,
+               only ids/names/aggregates/config-thresholds — do not add a
+               mask_pii flag that would be dead code. GOTCHA: emit under
+               kind=`issue_csv` (RESULT retention, already registered in
+               DEFAULT_FILENAMES + KIND_RETENTION) — no new kind needed.
+               694/694 pytest green.
 Session notes: M4-T2 landed the self-contained HTML report (ENGINE §10,
                SECURITY §4). Files: `reporting/html_report.py`
                (render_html_report / write_html_report /
@@ -1012,7 +1060,7 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 
 - [x] **M4-T1** JSON result writer from contracts (golden snapshots). *Spec: ENGINE §10; TESTING §2.* ✅ FORMAL golden-snapshot harness over the M2-T11 writer (`reporting.write_profile_json`/`result_document`) — NO new writer, no contract shape change. New corpus dir `tests/fixtures/golden/` (checked-in triple: `sales_deals.csv` bytes, `sales_deals.config.json`, `sales_deals.golden.json` — 27 KB normalized). New `tests/golden_harness.py`: `normalize_document()` redacts ONLY the machine-dependent pointers (source_ref, source_snapshot.path/modified_at, engine.duckdb_version/python_version, timing.started_at/finished_at/duration_ms→0, per-check executed_at, result_refs) to stable sentinel tokens (`<VOLATILE>`, `REDACTED_INT=0` where the schema types the slot integer); the reproducibility tuple (content_hash + config_hash + engine_version + metrics + fingerprints + statuses + provenance.method) is preserved verbatim so drift is loud. `emit_result_document()` runs `profile_dataset` on the checked-in fixture and reads back the WRITTEN bytes (exercises the on-file writer, not only the in-memory dict). Regeneration path via `DPE_UPDATE_GOLDEN=1` (never set in CI). New `tests/test_reporting_golden.py` (8): byte-diff of normalized JSON against the golden (with a compact first-mismatch context on failure); every block schema-validates against its JSON Schema from disk; volatile fields ARE redacted (a future rollup change that starts leaking a machine path or wall-clock stamp into the golden fails loudly) and the reproducibility tuple is NOT; two-emit stability after normalization (TESTING §3.3); the golden carries the injected FAILs (`deal_id_unique`, `value_not_null`) + `stage_domain` PASS + fingerprints + recommendation back-refs; `config_hash(load_config(name))` matches the golden (config↔golden coupling, no drift between the two files); fixture-triple presence; harness self-check (deep copy). New `.gitattributes` freezes the golden dir with `-text` so CRLF autocrlf on Windows cannot shift `content_hash`. 650/650 pytest green, tsc clean 2026-10-24.
 - [x] **M4-T2** HTML self-contained report, inline Plotly, method badges, masking default. *Spec: ENGINE §10; SECURITY §4.* ✅ `reporting/html_report.py` renders the M4-T1 `result_document(bundle)` only (no recomputation); vendored `assets/plotly.min.js` (plotly 7.1.0, sha256-pinned test) inlined — zero external tags; every MetricValue wears its ADR-015 badge (seed/algorithm/reason in tooltip); PII := discovery `logical_type` ∈ {email, phone} (NOT semantic_type — the old NEXT memo was wrong), values masked by default in tables+charts; §10 chart vocabulary all emitted (histogram, categorical bar, missingness bar, outlier box, temporal volume); findings show ADR-016 fingerprint + working evidence back-links; `emit_html_report_artifact` → canonical `html_report` kind (`artifacts/<run>/report.html`), CLI `--html`, spec-file `datas` bumped. +25 tests, browser-verified offline. See session note above. **→ NEXT: M4-T3.**
-- [ ] **M4-T3** CSV issue export columns + artifact refs. *Spec: ENGINE §10.*
+- [x] **M4-T3** CSV issue export columns + artifact refs. *Spec: ENGINE §10; SECURITY §4.* ✅ New `reporting/csv_export.py` (render/write/emit) consumes the SAME `ProfileBundle` via `result_document`-free typed objects, zero recomputation. Header verbatim from §10: `finding_id, rule_id, column, status, severity, observed, threshold, affected_records, evidence_ref`. Row source = findings joined to their originating **FAIL/WARN** check via the finding's `rule:<rule_id>` evidence ref (detectors only make rule findings from FAIL/WARN, so PASS/ERROR never appear — FAIL≠ERROR honored); a profile-extreme finding has no `rule:` ref ⇒ no row; a merged finding carrying two rules ⇒ two rows sharing `finding_id`. `observed` cell always names its ADR-015 `method` (+ seed/algorithm for sampled/approximate; `not_computed`→reason, never a blank-as-zero). SECURITY §4 satisfied by construction: an issue row carries only rule ids, column *names*, aggregate metrics and config thresholds — no raw source value is ever emitted (test asserts an email column leaks no value). Deterministic byte output (`csv` `lineterminator=\n`, `QUOTE_MINIMAL` quotes comma-bearing thresholds). `emit_issue_csv_artifact` → canonical `issue_csv` kind (`artifacts/<run>/issues.csv`, already in `DEFAULT_FILENAMES`/`KIND_RETENTION`=RESULT/CONTRACTS §2 result_refs). CLI `+--csv OUT` on `profile` (JSON/HTML paths untouched). +19 tests `tests/test_reporting_csv.py` (header verbatim, golden e2e = exactly the 2 FAIL rules, WARN-in/PASS-out/ERROR-out, merged→2 rows, sampled seed, not_computed reason, between `0..100`, dataset-scope column fallback + affected_records from finding scope, comma-quoting, no-PII-leak, writer parents, ArtifactStore canonical ref, CLI flag). 694/694 pytest green. **→ NEXT: M4-T4.**
 - [ ] **M4-T4** Language decision (BLUEPRINT Q1) recorded here, then templates. *Spec: BLUEPRINT §8.*
 
 ## M5 — Bridge Facade + Job Manager (full)

@@ -26,9 +26,27 @@ a proven defect.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
-from data_profiling_engine.schemas.models import Finding, ReasonType
+from data_profiling_engine.schemas.models import (
+    Finding,
+    ReasonType,
+    ReportLanguage,
+)
+
+# ---------------------------------------------------------------------------
+# Narrative language axis (ADR-018 / BLUEPRINT Q1).
+#
+# Metric *labels* stay English; only the recommendation narrative strings are
+# bilingual. ``en`` is the shipped default so golden / existing output is byte
+# identical; ``id`` (Indonesian) is opt-in via ``DatasetConfig.language``. Both
+# catalogs share the SAME kind tokens and per-kind ``reason_type`` — the
+# Recommendation *contract shape* (§4.3) never changes, only the wording does.
+# ---------------------------------------------------------------------------
+
+DEFAULT_LANGUAGE = ReportLanguage.EN.value
+SUPPORTED_LANGUAGES: Tuple[str, ...] = tuple(lang.value for lang in ReportLanguage)
+
 
 # ---------------------------------------------------------------------------
 # Kind identity tokens.
@@ -234,16 +252,185 @@ _GENERIC_TEMPLATES: Tuple[RecommendationTemplate, ...] = tuple(
 )
 
 
-def _build_templates() -> Dict[str, RecommendationTemplate]:
+# ---------------------------------------------------------------------------
+# Indonesian narrative catalog (ADR-018 / BLUEPRINT Q1). Same kind tokens and
+# same per-kind ``reason_type`` as the English catalog above — a review signal
+# stays ``business_context_required`` regardless of language, and a concrete
+# measured breach stays ``evidence``. Only the human-readable strings are
+# translated; the ``{column}`` slot and the no-fabrication law (numbers live in
+# the cited evidence, not the template) are preserved verbatim. The ``cat``
+# quality-dimension token in the generic fallbacks is a technical identifier and
+# is intentionally left English in both languages.
+# ---------------------------------------------------------------------------
+
+_RULE_TEMPLATES_ID: Tuple[RecommendationTemplate, ...] = (
+    _t(
+        rule_kind("completeness"), _EV,
+        "Telusuri celah kelengkapan pada {column} kembali ke sistem sumber dan mekanisme sinkronisasinya, lalu isi kembali nilai yang hilang atau dokumentasikan mengapa nilai itu memang sah tidak ada.",
+        "Sebuah aturan quality pada {column} melewati batas kelengkapan yang dikonfigurasi, sehingga hitungan dan agregasi yang bergantung pada kolom ini tidak mencakup seluruh catatan nyata.",
+        "Kelengkapan yang tidak terjelaskan pada {column} berada di bawah ambang yang dikonfigurasi, atau setiap celah yang tersisa memiliki penyebab yang terdokumentasi.",
+        (
+            "Jangan mengisi nilai kosong dengan nol sebagai respons pertama.",
+            "Jangan menghapus baris hanya agar kolom tampak lengkap.",
+        ),
+        "Kelompokkan tingkat missing pada {column} berdasarkan status / sumber / periode untuk melokalisasi di mana celah itu muncul.",
+    ),
+    _t(
+        rule_kind("uniqueness"), _EV,
+        "Temukan proses hulu yang membuat {column} berulang dan tegakkan batasan key di tempat catatan dibuat.",
+        "Aturan keunikan pada {column} dilanggar, sehingga join atau agregasi yang berkey pada kolom ini dapat menghitung ganda catatan.",
+        "{column} memenuhi aturan keunikannya, atau pengulangan itu terkonfirmasi sah dan ekspektasi key-nya dikoreksi.",
+        (
+            "Jangan menghapus baris duplikat sebelum memastikan baris itu bukan catatan nyata yang berbeda.",
+            "Jangan melonggarkan aturan keunikan hanya untuk membungkam temuan.",
+        ),
+        "Periksa nilai {column} yang terduplikasi dan telusuri ke baris sumbernya.",
+    ),
+    _t(
+        rule_kind("validity"), _EV,
+        "Bandingkan nilai {column} yang menyimpang dengan domain/format yang diharapkan dan perbaiki di sumbernya atau di lapisan mapping.",
+        "Nilai pada {column} berada di luar aturan validitas yang dikonfigurasi, sehingga logika hilir yang mengasumsikan domain itu dapat gagal atau salah mengelompokkannya.",
+        "{column} sesuai dengan domain/format yang dinyatakan, atau definisi domain dikoreksi agar cocok dengan data nyata.",
+        (
+            "Jangan memaksa nilai tidak valid ke tipe yang diharapkan hanya agar lolos aturan.",
+            "Jangan memperluas domain yang diizinkan sebelum nilai yang menyimpang dipahami.",
+        ),
+        "Ambil sampel baris {column} yang tidak valid dan bandingkan dengan domain yang diharapkan.",
+    ),
+    _t(
+        rule_kind("consistency"), _EV,
+        "Rekonsiliasi {column} dengan kolom berpasangan yang bertentangan dengannya, lalu perbaiki proses atau mapping yang membuat keduanya menyimpang.",
+        "Aturan konsistensi lintas-kolom yang melibatkan {column} gagal, sehingga kolom-kolom berpasangan dapat menyatakan status yang bertentangan untuk catatan yang sama.",
+        "Kolom-kolom berpasangan sepakat pada setiap catatan, atau sebuah pengecualian terdokumentasi menyatakan di mana keduanya boleh berbeda secara sah.",
+        (
+            "Jangan menimpa satu kolom dari kolom lain sebelum memastikan sisi mana yang otoritatif.",
+        ),
+        "Bandingkan kolom-kolom berpasangan di seluruh baris {column} yang melanggar untuk melihat sisi mana yang menyimpang.",
+    ),
+    _t(
+        rule_kind("timeliness"), _EV,
+        "Periksa ritme ingestion/pembaruan di balik {column} dan tutup keterlambatan atau periode hilang yang membuat data menjadi basi.",
+        "Aturan temporal/timeliness pada {column} gagal, sehingga analisis berbasis periode pada kolom ini dapat melewatkan atau salah menempatkan jendela waktu.",
+        "{column} mencakup periode yang diharapkan tanpa celah yang tidak terjelaskan atau jendela yang basi.",
+        (
+            "Jangan menginterpolasi periode yang hilang agar deret waktu tampak berlanjut.",
+        ),
+        "Buat grafik volume terhadap waktu untuk {column} guna menemukan celah atau jendela basi.",
+    ),
+    _t(
+        rule_kind("accuracy_flagged"), _BC,
+        "Konfirmasi pola {column} yang ditandai terhadap definisi bisnis sebelum memperlakukannya sebagai kesalahan.",
+        "Sinyal accuracy/outlier pada {column} adalah tanda untuk ditinjau, bukan cacat yang terbukti — accuracy tidak pernah disimpulkan dari validity saja (ENGINE §5).",
+        "Pemilik bisnis mengonfirmasi pola {column} yang ditandai itu diharapkan, atau menunjuk catatan yang perlu dikoreksi.",
+        (
+            "Jangan otomatis mengoreksi atau memotong nilai yang ditandai sebagai respons pertama.",
+            "Jangan membaca check validity yang lulus sebagai bukti bahwa nilai itu benar secara bisnis.",
+        ),
+        "Bandingkan nilai {column} yang ditandai terhadap sumber kebenaran eksternal atau definisi bisnis.",
+    ),
+)
+
+_PROFILE_TEMPLATES_ID: Tuple[RecommendationTemplate, ...] = (
+    _t(
+        f"{_PROFILE_KIND_PREFIX}:completeness:missingness", _EV,
+        "Selidiki mengapa {column} hampir sepenuhnya kosong dan apakah sumber masih menghasilkan kolom tersebut.",
+        "Kelengkapan nyaris nol terukur pada {column} tanpa aturan yang dikonfigurasi, sehingga setiap analisis yang bergantung pada kolom ini praktis tidak tercakup.",
+        "{column} terisi setiap kali sumber memancarkannya, atau kolom dikeluarkan dari penggunaan hilir dengan alasan terdokumentasi.",
+        (
+            "Jangan mengimputasi atau memberi nilai default — kolom yang hampir kosong tidak membawa sinyal nyata untuk diimputasi.",
+        ),
+        "Kelompokkan tingkat missing pada {column} berdasarkan sumber / periode untuk melihat apakah seluruh muatan tidak ada.",
+    ),
+    _t(
+        f"{_PROFILE_KIND_PREFIX}:uniqueness:duplicate_key", _EV,
+        "Verifikasi apakah {column} dimaksudkan sebagai identifier unik; jika ya, telusuri nilai key yang terduplikasi ke sumbernya.",
+        "Nilai key yang terduplikasi terukur pada {column} tanpa aturan yang dikonfigurasi, sehingga kolom ini mungkin bukan key join yang andal pada grain yang diharapkan.",
+        "{column} terkonfirmasi unik pada grain-nya, atau didokumentasikan sebagai tidak unik sehingga join dan agregasi berhenti memperlakukannya sebagai key.",
+        (
+            "Jangan mengasumsikan duplikat sebagai kesalahan — bisa jadi mencerminkan grain catatan yang sebenarnya.",
+        ),
+        "Periksa nilai {column} yang terduplikasi dan bandingkan dengan grain yang dideklarasikan dataset.",
+    ),
+    _t(
+        f"{_PROFILE_KIND_PREFIX}:uniqueness:constant_column", _EV,
+        "Konfirmasi apakah {column} diharapkan bernilai konstan; jika tidak, telusuri nilai atau mapping hulu yang mematakannya.",
+        "{column} menyimpan satu nilai unik di seluruh populasi, sehingga tidak membawa informasi pembeda untuk pengelompokan maupun keying.",
+        "{column} bervariasi sebagaimana diharapkan bisnis, atau didokumentasikan sebagai konstan dan dikeluarkan dari peran pembeda apa pun.",
+        (
+            "Jangan diam-diam menghapus kolom sebelum memastikan bahwa nilai konstan bukan berarti tidak bermakna.",
+        ),
+        "Periksa apakah {column} konstan di sumber atau baru menjadi konstan melalui suatu transformasi.",
+    ),
+    _t(
+        f"{_PROFILE_KIND_PREFIX}:accuracy_flagged:dominant_category", _BC,
+        "Konfirmasi apakah distribusi hampir satu-kategori pada {column} diharapkan untuk dataset ini.",
+        "Hampir seluruh nilai non-null {column} jatuh pada satu kategori; ini adalah sinyal untuk ditinjau (accuracy tidak pernah disimpulkan dari validity), bukan cacat yang terbukti.",
+        "Pemilik bisnis mengonfirmasi distribusi dominan {column} itu diharapkan, atau mengidentifikasi mapping yang merapatkannya.",
+        (
+            "Jangan menyeimbangkan ulang atau memberi label ulang kategori hanya agar distribusinya tersebar.",
+        ),
+        "Periksa apakah {column} merapat ke satu kategori di sumber atau melalui langkah filtering/mapping.",
+    ),
+)
+
+_GENERIC_TEMPLATES_ID: Tuple[RecommendationTemplate, ...] = tuple(
+    _t(
+        generic_profile_kind(cat), _EV if cat != "accuracy_flagged" else _BC,
+        f"Selidiki sinyal {cat} yang ditandai pada {{column}} terhadap sumber dan definisi bisnis.",
+        f"Ekstrem profil {cat} teramati pada {{column}} tanpa aturan yang dikonfigurasi, sehingga ditampilkan untuk ditinjau.",
+        f"Pola {cat} pada {{column}} dipahami dan kemudian diselesaikan atau didokumentasikan.",
+        (f"Jangan melakukan auto-remediasi terhadap sinyal {cat} tanpa mengonfirmasi maksudnya.",),
+        f"Kelompokkan atau ambil sampel nilai terkait {cat} pada {{column}} untuk mengonfirmasi pola tersebut.",
+    )
+    for cat in _CATEGORIES
+)
+
+
+def _build_templates(
+    templates: Tuple[RecommendationTemplate, ...],
+) -> Dict[str, RecommendationTemplate]:
     catalog: Dict[str, RecommendationTemplate] = {}
-    for tpl in (*_RULE_TEMPLATES, *_PROFILE_TEMPLATES, *_GENERIC_TEMPLATES):
+    for tpl in templates:
         if tpl.kind in catalog:
             raise ValueError(f"duplicate recommendation template kind {tpl.kind!r}")
         catalog[tpl.kind] = tpl
     return catalog
 
 
-TEMPLATES: Dict[str, RecommendationTemplate] = _build_templates()
+# Per-language catalog, keyed by (language, kind). The kind token set is
+# identical across languages, so every catalog has the same keys.
+TEMPLATES_BY_LANGUAGE: Dict[str, Dict[str, RecommendationTemplate]] = {
+    ReportLanguage.EN.value: _build_templates(
+        (*_RULE_TEMPLATES, *_PROFILE_TEMPLATES, *_GENERIC_TEMPLATES)
+    ),
+    ReportLanguage.ID.value: _build_templates(
+        (*_RULE_TEMPLATES_ID, *_PROFILE_TEMPLATES_ID, *_GENERIC_TEMPLATES_ID)
+    ),
+}
+
+# Backward-compatible default-language view (the shipped "en" catalog).
+TEMPLATES: Dict[str, RecommendationTemplate] = TEMPLATES_BY_LANGUAGE[DEFAULT_LANGUAGE]
+
+
+def templates_for_language(language: Optional[str] = DEFAULT_LANGUAGE) -> Dict[str, RecommendationTemplate]:
+    """Return the recommendation catalog for ``language`` ("en" | "id").
+
+    Accepts a bare str, an enum value, a :class:`ReportLanguage` member, or
+    ``None`` (the DatasetConfig field is optional and omitted-when-unset; None ==
+    the shipped "en" default). An unsupported non-null language is a hard error
+    rather than a silent English fallback, so a typo in config surfaces instead
+    of quietly shipping the wrong narrative.
+    """
+    if language is None:
+        return TEMPLATES_BY_LANGUAGE[DEFAULT_LANGUAGE]
+    try:
+        lang = ReportLanguage(language).value
+    except ValueError as exc:  # not a canonical value
+        raise ValueError(
+            f"unsupported recommendation language {language!r}; "
+            f"expected one of {SUPPORTED_LANGUAGES}"
+        ) from exc
+    return TEMPLATES_BY_LANGUAGE[lang]
 
 
 def classify_finding_kind(finding: Finding) -> str:
@@ -267,6 +454,10 @@ def classify_finding_kind(finding: Finding) -> str:
 __all__ = [
     "RecommendationTemplate",
     "TEMPLATES",
+    "TEMPLATES_BY_LANGUAGE",
+    "DEFAULT_LANGUAGE",
+    "SUPPORTED_LANGUAGES",
+    "templates_for_language",
     "classify_finding_kind",
     "rule_kind",
     "generic_profile_kind",

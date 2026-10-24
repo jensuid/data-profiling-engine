@@ -20,8 +20,9 @@ from typing import List
 from data_profiling_engine.discovery.inference import SCHEMA_VERSION
 from data_profiling_engine.recommendations import narrative
 from data_profiling_engine.recommendations.templates import (
-    TEMPLATES,
+    DEFAULT_LANGUAGE,
     classify_finding_kind,
+    templates_for_language,
 )
 from data_profiling_engine.schemas.models import (
     Finding,
@@ -31,15 +32,21 @@ from data_profiling_engine.schemas.models import (
 )
 
 
-def recommendation_for_finding(finding: Finding, recommendation_id: str) -> Recommendation:
+def recommendation_for_finding(
+    finding: Finding,
+    recommendation_id: str,
+    language: str = DEFAULT_LANGUAGE,
+) -> Recommendation:
     """Build the one :class:`Recommendation` that acts on ``finding``.
 
     ``evidence_refs`` is the finding's own ref list copied verbatim — the
     recommendation cites exactly the evidence the finding rests on, adding (or
-    altering) nothing.
+    altering) nothing. ``language`` selects the narrative catalog (ADR-018 /
+    BLUEPRINT Q1: "en" default, "id" Indonesian) — it changes only the
+    human-readable strings, never the Recommendation shape (§4.3).
     """
-    template = TEMPLATES[classify_finding_kind(finding)]
-    column = narrative.subject_column(finding)
+    template = templates_for_language(language)[classify_finding_kind(finding)]
+    column = narrative.subject_column(finding, language)
     evidence: List[str] = list(finding.evidence_refs)
 
     reason_type = template.reason_type

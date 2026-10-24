@@ -231,8 +231,9 @@ def run_profiling_pipeline(
     )
     # build_recommendations returns the findings re-emitted with
     # recommendation_ids wired — those are the persisted findings, not the raw
-    # M2-T8 set.
-    recs = build_recommendations(findings_result.findings)
+    # M2-T8 set. ``config.language`` (ADR-018 / BLUEPRINT Q1, default "en")
+    # selects the narrative template language only — the shape is unchanged.
+    recs = build_recommendations(findings_result.findings, language=config.language)
 
     errors: Tuple[RunErrorEntry, ...] = (
         pass_t4.errors + pass_t5.errors + pass_t6.errors + quality.errors

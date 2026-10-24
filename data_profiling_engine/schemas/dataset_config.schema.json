@@ -97,6 +97,11 @@
       "type": "array",
       "minItems": 1,
       "items": { "$ref": "#/$defs/rule" }
+    },
+    "language": {
+      "type": "string",
+      "enum": ["en", "id"],
+      "description": "ADR-018 / BLUEPRINT Q1 — narrative template language for the recommendation layer (action/rationale/target_improvement/do_not/probe). Metric labels stay English; this selects only the human-readable template strings, never the Recommendation contract shape (CONTRACTS §4.3). Optional; absent/`en` => English narrative, `id` => Indonesian. Consumed by orchestration -> recommendations."
     }
   },
   "$defs": {

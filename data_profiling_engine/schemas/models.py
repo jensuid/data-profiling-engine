@@ -57,6 +57,16 @@ class ProfileMode(str, Enum):
     DEEP = "deep"
 
 
+class ReportLanguage(str, Enum):
+    """dataset_config.language (ADR-018 / BLUEPRINT Q1) — narrative template
+    language for the recommendation layer. Metric labels stay English; this
+    only selects the human-readable template language, never the contract shape.
+    Default ``en`` keeps golden/existing output byte-identical."""
+
+    EN = "en"
+    ID = "id"
+
+
 class RunStatus(str, Enum):
     """Terminal job states only (CONTRACTS §6.2; profiling_run.status)."""
 
@@ -1016,6 +1026,12 @@ class DatasetConfig(_StrictModel):
     dataset: ConfigDataset
     profiling: ConfigProfiling
     quality_checks: List[DatasetConfigRule] = Field(min_length=1)
+    # ADR-018 / BLUEPRINT Q1: narrative template language (metric labels stay
+    # English). Optional AND omitted-when-unset (defaults to None, which the
+    # ContractModel._dump drops as "key absent") so a config that never mentions
+    # it round-trips byte-identically and config_hash / golden stay unchanged.
+    # None == the shipped default "en" at the consumption site (recommendations).
+    language: Optional[ReportLanguage] = None
 
     @field_validator("quality_checks")
     @classmethod

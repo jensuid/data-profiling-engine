@@ -107,11 +107,11 @@ def ts_interfaces(ts_text: str) -> dict[str, dict]:
     return ifaces
 
 
-def test_all_17_contract_enums_are_mirrored(ts_enums: dict[str, list[str]]):
+def test_all_18_contract_enums_are_mirrored(ts_enums: dict[str, list[str]]):
     """Every enum declared in models.py must exist on the TS side too."""
     expected = {
-        "MetricMethod", "ProfileMode", "RunStatus", "SourceKind", "SemanticType",
-        "UnitStatus", "QualityDimension", "CheckStatus", "Severity",
+        "MetricMethod", "ProfileMode", "ReportLanguage", "RunStatus", "SourceKind",
+        "SemanticType", "UnitStatus", "QualityDimension", "CheckStatus", "Severity",
         "ThresholdOperator", "FindingConfidence", "HypothesisStatus",
         "WorkflowStatus", "ReasonType", "RecommendationStatus", "RuleType",
         "ConditionOperator",

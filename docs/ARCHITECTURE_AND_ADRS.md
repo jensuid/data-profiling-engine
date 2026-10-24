@@ -207,6 +207,12 @@ Each ADR: Context → Decision → Alternatives → Consequences → Validation.
 - **Consequences:** additive change to `dataset_config.schema.json` + `DatasetConfig` pydantic mirror + CONTRACTS §9 exemplar (all in the M2-T4 change); the missingness profiler passes the set as bound parameters (values never interpolated into SQL). No change to any persisted result contract.
 - **Validation:** config with unknown keys still rejected before profiling; sentinel counts verified against hand-computed fixtures; absent config ⇒ `sentinel_count` == 0.
 
+### ADR-018 — Report/narrative language: English labels + Indonesian narrative, config-switchable — Accepted (ratifies BLUEPRINT Q1 default; M4-T4)
+- **Context:** BLUEPRINT Q1 left the report/UI language open with a documented default ("English metric labels + Indonesian narrative templates, switchable via config"), to be decided by M4. The recommendation layer (`recommendations/templates.py`) had shipped English-only narrative; nothing defined where the language switch lives or how it interacts with the frozen contracts.
+- **Decision:** (1) **metric labels stay English** everywhere (already true of the M4-T2/T3 HTML/CSV writers); (2) the **recommendation narrative** (action / rationale / target_improvement / do_not / probe) ships **bilingual EN + ID**; (3) the switch is a new **optional top-level `DatasetConfig.language` ∈ {en, id}**, and the **shipped default is `en`**.
+- **Consequences:** additive change to `dataset_config.schema.json` + the `DatasetConfig` pydantic mirror + `contracts.ts` (parity). `language` is Optional and **omitted-when-unset**, so a config that never mentions it round-trips byte-identically and `config_hash` / the golden fixture are unchanged — `id` is strictly opt-in. **The `Recommendation` contract shape (§4.3) does not change** — only the human-readable strings differ; ids, `evidence_refs`, `reason_type`, `status` and the findings/recommendations separation are language-independent. An unsupported language is a hard error, never a silent English fallback. No full i18n framework is introduced (YAGNI; MVP surface is two languages).
+- **Validation:** `en` output stays byte-identical to golden; `id` recommendations validate against the unchanged `recommendation.schema.json`; identity/evidence/`reason_type` are equal across languages for the same finding (only strings differ); the §9 doc exemplar (no `language` key) still round-trips.
+
 ## 6. Decision summary matrix
 
 | Aspect | Decision | ADR |
@@ -221,6 +227,7 @@ Each ADR: Context → Decision → Alternatives → Consequences → Validation.
 | Frontend routing | **HashRouter** | ADR-013 |
 | Doc pack | **6 docs + AGENTS.md** | ADR-014 |
 | Missingness sentinel set | **Dataset-config input (`profiling.missing.sentinel_values`)** | ADR-017 |
+| Report/narrative language | **English labels + Indonesian narrative, `DatasetConfig.language` (default en)** | ADR-018 |
 | Persistence | SQLite metadata + file artifact store | ADR-008 |
 | Packaging | PyInstaller (pending Phase-0) | ADR-009 |
 | Security | Read-only default, locked bridge, native credential store | [[SECURITY_PACKAGING]] |

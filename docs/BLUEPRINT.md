@@ -168,7 +168,7 @@ M7 Benchmark/hardening → needs M6 (and independently M2 for engine-only runs)
 
 | # | Question | Decide by | Default if undecided |
 |---|---|---|---|
-| Q1 | Report/UI language: Indonesian, English, or i18n-first? | M4 (report generator) | English metric labels + Indonesian narrative templates, switchable via config |
+| Q1 | Report/UI language: Indonesian, English, or i18n-first? | M4 (report generator) | **ACCEPTED 2026-10-25 → ADR-018.** English metric labels + Indonesian narrative templates, switchable via `DatasetConfig.language` ∈ {en, id}; shipped default **en** (backward-compatible; golden byte-identical) |
 | Q2 | Phase-2 SQL priority connector | M6 / Phase 4 | PostgreSQL (duckdb `postgres_scanner` + pushdown) |
 | Q3 | Is any LLM in the MVP? | M1 | **No.** AI is Phase 4 interpretation layer only |
 | Q4 | Windows build machine / CI for the installer matrix | M0 | Local physical/virtual Windows machine required — not optional |

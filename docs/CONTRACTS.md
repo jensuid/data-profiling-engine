@@ -381,6 +381,9 @@ YAML config, validated by a JSON Schema in `schemas/` before any profiling start
 
 ```yaml
 config_version: 3
+language: en                 # optional (ADR-018 / BLUEPRINT Q1): en | id narrative
+                             # templates; metric labels stay English; omitted => en
+                             # (additive + omitted-when-unset, so config_hash is stable)
 dataset:
   name: sales_deals
   grain: one_row_per_deal
