@@ -1,0 +1,100 @@
+{
+  "machine": {
+    "system": "Darwin",
+    "release": "22.6.0",
+    "machine": "x86_64",
+    "python": "3.12.4",
+    "cpu_count": 4,
+    "total_ram_gb": 16.0,
+    "rss_measurement": "resource.getrusage(RUSAGE_SELF).ru_maxrss (child process)",
+    "os_version": "macOS 13.7.8"
+  },
+  "workload": {
+    "fmt": "csv",
+    "columns": 8,
+    "cardinality": "high",
+    "missingness": 0.12,
+    "distribution": "skewed",
+    "sizes": [
+      10000000,
+      100000000
+    ],
+    "sampling": {
+      "enabled": true,
+      "strategy": "reservoir",
+      "size": 200000,
+      "seed": 1337
+    }
+  },
+  "cases": [
+    {
+      "label": "csv_10000000_std",
+      "spec": {
+        "rows": 10000000,
+        "columns": 8,
+        "cardinality": "high",
+        "missingness": 0.12,
+        "distribution": "skewed",
+        "seed": 42
+      },
+      "fmt": "csv",
+      "mode": "standard",
+      "sampled": false,
+      "wall_clock_s": 1310.1572,
+      "peak_rss_bytes": 709861376,
+      "peak_rss_mb": 677.0,
+      "source_bytes": 642140909,
+      "source_mb": 612.4,
+      "row_count": 10000000,
+      "column_count": 8,
+      "n_errors": 0,
+      "extra": {
+        "parent_wall_clock_s": 1316.1778,
+        "process_startup_overhead_s": 6.0206,
+        "run_status": "SUCCEEDED",
+        "planner_sampling_enabled": false
+      }
+    },
+    {
+      "label": "csv_100000000_std",
+      "spec": {
+        "rows": 100000000,
+        "columns": 8,
+        "cardinality": "high",
+        "missingness": 0.12,
+        "distribution": "skewed",
+        "seed": 42
+      },
+      "fmt": "csv",
+      "mode": "standard",
+      "sampled": false,
+      "wall_clock_s": 9843.6824,
+      "peak_rss_bytes": 4139982848,
+      "peak_rss_mb": 3948.2,
+      "source_bytes": 6521145657,
+      "source_mb": 6219.0,
+      "row_count": 100000000,
+      "column_count": 8,
+      "n_errors": 0,
+      "extra": {
+        "parent_wall_clock_s": 9845.9164,
+        "process_startup_overhead_s": 2.234,
+        "run_status": "SUCCEEDED",
+        "planner_sampling_enabled": false
+      }
+    }
+  ],
+  "guarantees": {
+    "rss_boundedness": {
+      "verdict": "bounded",
+      "rows_small": 10000000,
+      "rows_large": 100000000,
+      "row_ratio": 10.0,
+      "rss_mb_small": 677.0,
+      "rss_mb_large": 3948.2,
+      "rss_ratio": 5.832
+    }
+  },
+  "watcher_note": "M7-T2a scheduled release-gate run (TESTING SS4.3 structural bullet 1): the 10M-100M RSS-curve ladder, dev-mode, workload knobs identical to the <=1M baseline in SS4.3.1 so the series is comparable. The degrade pair was NOT re-run here (already recorded in SS4.3.1) to keep the release-gate wall-clock and disk cost bounded; the 50M tier was skipped because the verdict needs >=2 points and SS4.3 asks for '10M vs 100M'.",
+  "honest_reading": "Verdict is PASS as the guarantee is written (rss_ratio 5.83 < row_ratio 10), but RSS is bounded-but-not-flat: across the full 200k-100M series the growth per row-decade is x1.80 / x4.0 / x5.83, i.e. roughly rows^0.65. Linearly extrapolated to 1B rows that is ~17 GB and would exceed this 16 GB machine. Flagged as a Phase-3 depth item (bound DuckDB memory_limit + verify spill), not a pass to stop investigating."
+}

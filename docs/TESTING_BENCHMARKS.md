@@ -131,7 +131,8 @@ seed 1337; reservoir sampling window 200 000 rows for the degrade pair.
   required *strict* inequality, so the guarantee holds.
 
 Deferred to the release gate (harness already drives them via one command):
-the 10M–100M RSS-curve ladder (§4.3 structural bullet 1), the 500-col and
+the 10M–100M RSS-curve ladder (§4.3 structural bullet 1) — **since measured, see
+§4.3.3** — the 500-col and
 0/40%-missingness corners of §4.1, cancellation latency, crash-recovery, Parquet
 sources, and the **packaged** macOS + Windows baseline (§5.1).
 
@@ -185,6 +186,68 @@ distribution / seed 7; command above, exit 0):
 |---|---|---:|
 | Cancellation bounded (§4.3 binding) | **bounded** | 5.48 s cancel→CANCELLED, stopped at step 2/6 |
 | Worker-crash recovery consistent (§4.2) | **consistent** | 0.055 s SIGKILL→crash-detected, store mirrored FAILED / WORKER_CRASHED, no orphan run row |
+
+### 4.3.3 RSS-curve ladder 10M → 100M (M7-T2a, dev-mode release-gate run)
+
+The scheduled run behind §4.3 structural bullet 1 ("Verified by comparing 10M vs
+100M RSS curves"), executed with the M7-T1 harness:
+
+```
+python -m data_profiling_engine.benchmark baseline --sizes 10000000,100000000 \
+    --columns 8 --format csv --cardinality high --missingness 0.12 \
+    --distribution skewed --no-degrade \
+    --workdir .benchmarks/ladder --out .benchmarks/ladder/results.json
+```
+
+Machine: macOS 13.7.8 (x86_64, kernel 22.6.0), 4 cores, 16 GB RAM, Python 3.12.4.
+Workload knobs are **identical to the §4.3.1 baseline** (high cardinality, 12 %
+missingness, skewed numeric, seed 42) so the two series join into one curve.
+Scope decisions taken at execution time (the task delegates them): the 50M tier
+was skipped — the verdict needs ≥ 2 measured points and the spec names 10M vs
+100M — and the exact-vs-sampled pair was **not** re-run (`--no-degrade`), since
+§4.3.1 already records that guarantee and a 100M pair would add two more full
+passes. Machine-readable copy: `data_profiling_engine/benchmark/ladder_10m_100m_macos_dev.json`.
+Progress during the run is observable via the read-only `benchmark watch`
+subcommand (time-estimate percentages reconstructed from the harness's own
+on-disk stage chain; it is a monitor, not product evidence).
+
+| Tier | Rows | Mode / method | Wall-clock | Peak RSS | Source |
+|---|---:|---|---:|---:|---:|
+| ladder | 10 000 000 | standard (exact/approx) | 1 310.2 s | 677.0 MB | 612.4 MB |
+| ladder | 100 000 000 | standard (exact/approx) | 9 843.7 s | 3 948.2 MB | 6 219.0 MB |
+
+Both runs `SUCCEEDED` with 0 per-task errors. Wall-clock grew ×7.5 for ×10 rows
+(sub-linear): 131.0 s per million rows at 10M vs 98.4 s per million at 100M.
+
+**Structural-guarantee verdict (binding, §4.3):**
+
+- **RSS bounded as rows grow — PASS.** `evaluate_rss_boundedness` →
+  `rss_ratio 5.832 < row_ratio 10.0` → `bounded`. Nothing in the pipeline scales
+  1:1 with the relation, and a Python-side full materialisation of the 6.2 GB
+  source would have tracked `row_ratio` (≈ ×10 from the 10M point, ~6.8 GB+) and
+  overflowed this 16 GB machine; it did not.
+
+**Honest reading — bounded, but NOT flat (Phase-3 follow-up, escalated not
+buried).** Joining §4.3.1 into the full series
+200 k → 1M → 10M → 100M gives peak RSS 94.0 → 169.5 → 677.0 → 3 948.2 MB, i.e.
+per-row-decade growth ×1.80 / ×4.00 / ×5.83 — roughly `rows^0.65`, a power law
+rather than a plateau. Extrapolating that exponent to 1B rows predicts ~17 GB on
+this box, i.e. OOM. The likely mechanism is DuckDB's own buffer pool sizing
+(default `memory_limit` ≈ 80 % of RAM, never bounded by us) plus per-column
+high-cardinality state over a 6 GB CSV — legitimate streaming, but not the
+"flat" the §4.2 metric row ("must stay flat vs rows") aspires to. Required
+before the claim is stated as proven at 1B-row scale:
+
+- set an explicit DuckDB `memory_limit` + verify `temp_directory` spill engages
+  rather than growing RSS (also makes behaviour deterministic across machines),
+- re-measure the top of the ladder with that bound in place (and on the
+  packaged build, §5.1).
+
+Still owed at the release gate: the 500-column and 0/40 %-missingness corners of
+§4.1, Parquet sources, and the **packaged** macOS + Windows baseline (§5.1) —
+the latter runs the same two commands (`baseline`, `guarantees`) and, on Windows,
+degrades to wall-clock/disk only because POSIX `resource` has no peak-RSS field
+(harness records `peak_rss_mb: null` there rather than guessing).
 
 ### 4.4 Regression tracking
 

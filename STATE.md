@@ -14,7 +14,8 @@ doc_role: working-log   # NOT a spec. Specs live in docs/. See AGENTS.md §1.
 ## ▶ CURRENT POSITION
 
 ```text
-Milestone : M6 — UI Screens (GATE M1 CONTRACTS FREEZE PASSED
+Milestone : M7 — Hardening & Release Gate — M6 UI screens COMPLETE
+          (GATE M1 CONTRACTS FREEZE PASSED
           2026-10-24; GATE M2 engine spine PASSED 2026-10-24 — profiler-cli
           end-to-end; GATE M3 persistence MET 2026-10-24 — ADR-008 fully
           landed; GATE M4 reporting COMPLETE dev-mode 2026-10-24 — packaged
@@ -22,54 +23,108 @@ Milestone : M6 — UI Screens (GATE M1 CONTRACTS FREEZE PASSED
           dev-mode 2026-10-25 — T1 read commands + caps, T2 job manager +
           real profile.start worker, T3 §5.5 progress push; packaged
           bridge/worker verification on both OS deferred to M7/Phase-3)
-Task      : none in progress — **M6 COMPLETE; M7-T1 DONE; M7-T2b DONE**
-          (benchmark harness + synthetic generator landed; dev-mode baseline
-          recorded in TESTING §4.3.1 + `benchmark/baseline_macos_dev.json`;
-          **cancellation + crash-recovery** measured via
-          `benchmark/cancel_recovery.py` + `benchmark guarantees` CLI
-          subcommand; §4.3.2 records: bounded / 5.48 s cancel latency,
-          consistent / 0.055 s crash detection on macOS dev). M6-T6 done
+Task      : none in progress — **M6 COMPLETE; M7-T1 DONE; M7-T2 COMPLETE**
+          (T2a = the scheduled 10M→100M RSS-curve ladder, TESTING §4.3.3 +
+          `benchmark/ladder_10m_100m_macos_dev.json`: verdict **`bounded`**
+          (`rss_ratio 5.832 < row_ratio 10`) — 10M 1310.2 s / 677.0 MB, 100M
+          9843.7 s / 3948.2 MB, both SUCCEEDED / 0 errors. T2b = cancellation
+          latency + crash recovery via `benchmark/cancel_recovery.py` +
+          `benchmark guarantees`, TESTING §4.3.2: bounded / 5.48 s,
+          consistent / 0.055 s. **§4.3.3 also records the caveat: bounded ≠
+          flat** — the joined 200k→100M series grows ≈ `rows^0.65` (~17 GB
+          extrapolated at 1B rows), escalated as new task **M7-T2c** instead of
+          stamping the §4.2 "stays flat" claim proven.) M6-T6 done
           (Report View: Findings & Recommendations §4.2–4.3 + Export §3.5).
           **Required a contract change**:
           added the §5.2 read command `recommendations.get` (ADR-020) because a
           Finding carries only `recommendation_ids` — no existing command returned
           the §4.3 recommendation *bodies* (they lived only in the `profile_json`
           artifact), the same gap class ADR-019 closed for columns; raised per AGENTS
-          §8 and approved before coding. M5 + M6-T1..T6 landed + M7-T1 + M7-T2b.
-          801/801 pytest green,
+          §8 and approved before coding. M5 + M6-T1..T6 landed + M7-T1 + M7-T2.
+          812/812 pytest green,
           tsc clean, vite build clean.
 GATE M4   : reporting-layer tasks T1-T4 COMPLETE (706/706 pytest, tsc clean,
           golden byte-stable). MVP acceptance is on the PACKAGED build
           (BLUEPRINT §5 Phase-1 gate / §6), not dev mode — do not stamp M4
           "accepted" until the packaged run is verified in M7/Phase-3.
-NEXT      : M7-T2a — 10M–100M RSS-curve ladder (TESTING §4.3 structural
-          bullet 1). Pure scheduled release-gate run, NOT a code change:
-          `python -m data_profiling_engine.benchmark baseline --sizes
-          10000000,50000000,100000000 --columns 8 --format csv --workdir
-          .benchmarks/ladder --out .benchmarks/ladder/results.json`; the
-          M7-T1 harness already emits the ladder + a self-describing
-          results doc. Expect RSS bounded (`rss_ratio << row_ratio`);
-          record verdicts in TESTING §4.3.1 alongside the ≤1M baseline.
-          Blocked on: wallclock (×1000 of the 200k→1M series) + disk
-          (a 100M-row CSV ≈ 6 GB per the baseline source ratio). Decide
-          at execution time whether to run the full ladder or trim to
-          10M/50M if the machine cannot hold the largest tier; a partially
-          run ladder is honest as long as `evaluate_rss_boundedness`
-          has ≥ 2 measured points.
-          M7-T2b (cancellation latency + crash recovery, the two §4.2
-          rows the in-process baseline could not reach) landed as
-          `benchmark/cancel_recovery.py` + `benchmark guarantees` CLI
-          subcommand + `test_benchmark_cancel_recovery.py`; **STATE's
-          open question resolved** — dev-mode `multiprocessing` spawn
-          behaves identically to the packaged build (ADR-006) for
-          cancel + crash detection, so this is NOT a §5.1 packaged-only
-          gate. The packaged macOS+Windows baseline (§5.1) still runs
-          the same `guarantees` command; no code path change.
-          Files to open: TESTING §4.3.2 + docs/BLUEPRINT.md §5 Phase-3
-          (ladder scheduling), no engine/bridge code needed.
+NEXT      : M7-T2c — own the memory ceiling, then re-measure the top of the
+          ladder. *Spec: BLUEPRINT Phase 3 "memory ceilings"; TESTING §4.2
+          peak-RSS row + §4.3.3.* This is the first code change M7 has needed:
+          set DuckDB `memory_limit` + `temp_directory` explicitly on the
+          connection instead of inheriting the ~80 %-of-RAM default. Open
+          ENGINE_SPEC (connection/session setup) + the four bare
+          `duckdb.connect()` sites — `connectors/base.py:229`,
+          `orchestration/rollup.py:390`, `orchestration/__init__.py:116`,
+          `bridge/facade.py:399` — and route them through ONE helper so a
+          ceiling can never be forgotten again. Decide the default from the
+          docs/ADRs, not silently: if no ADR fixes a ceiling value, raise it
+          (AGENTS §8) rather than picking one. Then re-run
+          `benchmark baseline --sizes 10000000,100000000 …` (fixtures still on
+          disk at `.benchmarks/ladder/`) and update TESTING §4.3.3 + the
+          tracked ladder JSON — the target is a *flat* curve, not merely a
+          sub-linear one.
           Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
-Blocked by: none (M7-T1 shipped the ladder driver; M7-T2b shipped cancel+
-          recovery measurement).
+Blocked by: none. GOTCHA (disk): volume was 96 % full before this task — a 100M
+          CSV is 6.2 GB and DuckDB spill needs room on the same volume; check
+          `df -h` and delete `.benchmarks/ladder/csv_100000000_std.csv`
+          (regenerable in ~8 min) to make room for a re-run.
+Session notes: M7-T2a DONE — the 10M→100M RSS-curve ladder ran 14:46→18:04
+               local (3 h 18 m wall incl. fixture generation) on
+               `.benchmarks/ladder/`, verdict **`bounded`**:
+               10M = 1310.2 s / 677.0 MB / 612.4 MB source;
+               100M = 9843.7 s / **3948.2 MB** / 6219.0 MB source; both
+               `SUCCEEDED`, 0 per-task errors; `rss_ratio 5.832 < row_ratio
+               10.0`. Scope decided at execution time per the old NEXT
+               delegation: **10M + 100M only** (§4.3 bullet 1 literally says
+               "10M vs 100M"; the verdict needs ≥ 2 points), **--no-degrade**
+               (degrade already in §4.3.1; a 100M pair = 2 more full passes),
+               workload knobs **match §4.3.1** (--cardinality high
+               --missingness 0.12 --distribution skewed --columns 8 --format
+               csv) so the series joins into one curve. Curated copy now
+               tracked at `benchmark/ladder_10m_100m_macos_dev.json` (raw
+               scratch stays in gitignored `.benchmarks/`); verdict + honest
+               reading recorded in **TESTING §4.3.3**. **THE FINDING:** bounded
+               is NOT flat — 94.0 → 169.5 → 677.0 → 3948.2 MB across
+               200k → 1M → 10M → 100M ≈ `rows^0.65` (per-decade ×1.80/×4.0/
+               ×5.83), which extrapolates to ~17 GB at 1B rows, i.e. OOM on a
+               16 GB box. Verified cause candidate: every connect site is a
+               bare `duckdb.connect()` (no `memory_limit`/`temp_directory`
+               anywhere), so DuckDB may take ~80 % of RAM as its buffer pool —
+               streaming is real (no Python materialisation) but the memory
+               ceiling is unowned. Escalated as **M7-T2c** rather than stamping
+               the §4.2 "stays flat" claim proven. GOTCHA (disk): the volume was
+               already 96 % full — a 100M CSV is 6.2 GB and DuckDB spill wants
+               room on the same volume; check `df -h` before scheduling the tier
+               ladder, and delete `.benchmarks/ladder/csv_100000000_std.csv`
+               (regenerable in ~8 min) when re-running.
+Session notes: M7-T2a helper — `benchmark watch`, the % -done progress
+               indicator the user asked for mid-run ("buat indikator progress
+               pooling berupa persentase done"). `benchmark/watch.py` is
+               READ-ONLY (never touches the measured process); exit 0 finished
+               / 1 in flight / 2 no live `baseline` process (crash is reported
+               as not-running, never as done). There is NO step signal to read
+               — `profile_dataset` takes no progress callback, only the §5.5
+               worker job emits steps — so it reconstructs stage boundaries from
+               the harness's own on-disk mtime chain (`{label}.{fmt}` →
+               `{label}.config.json` → `{label}.config.{mode}.json` →
+               `{label}.measure.json`) plus the parent's `ps` age, and
+               self-calibrates s/row + s/byte from stages that already finished
+               (fallback rates = the §4.3.1 baseline). Every unfinished number
+               carries `basis=estimate|extrapolated`; a stage with no evidence
+               yields `-`, never a fabricated percentage (ADR-015 discipline
+               applied to the monitor too). CLI: `python -m
+               data_profiling_engine.benchmark watch --workdir
+               .benchmarks/ladder --sizes 10000000,100000000 [--interval 120]
+               [--json]`. GOTCHA: stdout is block-buffered when redirected — the
+               loop prints with `flush=True` and is run as `python -u`,
+               otherwise a progress log stays empty for tens of minutes. The
+               accuracy check: it estimated 3 h 38 m for the 100M pass at 17:24
+               and the pass actually took 2 h 44 m, so treat the ETA as ±20 %.
+               11 tests in `tests/test_benchmark_watch.py` (pure maths + on-disk
+               reconstruction + a `run_suite` label-parity guard, since the whole
+               design rests on reading exactly what the harness writes).
+               812/812 pytest green (716 s), tsc clean, vite build clean
+               2026-10-25 (no frontend change this task). **→ NEXT: M7-T2c.**
 Session notes: M7-T2b landed cancellation latency + worker-crash recovery
                (§4.2 rows; §4.3 binding structural guarantees). Files:
                `benchmark/cancel_recovery.py` — pure
@@ -1444,7 +1499,8 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 ## M7 — Hardening & Release Gate
 
 - [x] **M7-T1** Benchmark harness + synthetic generator; baseline numbers recorded into TESTING §4.3. *Spec: TESTING §4.* ✅ `data_profiling_engine/benchmark/` — `generator.py` (`DatasetSpec`, DuckDB-side `COPY … FROM range(n)` synthetic CSV/Parquet, deterministic hash-salted values — never a Python row loop, ADR-007; core kinds pk_id/amount/stage/category/event_date + alternating extras, card/missingness/distribution/seed knobs), `harness.py` (`measure_case` runs each profile in a **fresh child process** so `resource.getrusage` RSS is per-run isolated; pure `evaluate_rss_boundedness` / `evaluate_sampled_cheaper`; `run_suite` emits a self-describing results JSON + machine context), `__main__.py` (`generate|measure|baseline`). `baseline_macos_dev.json` (tracked) = dev-mode baseline; TESTING §4.3.1 records it: RSS 94→169 MB across 200k→1M (×5 rows, ×1.8 RSS = **bounded**, no Python materialization); sampled 144.7s < deep-exact 157.5s (**degrade strictly cheaper**, marginal — full-relation quality rules + query-count dominate). Fast regression test `tests/test_benchmark_harness.py` (+13, never runs the heavy ladder). **GOTCHA:** macOS `os.sysconf` has no `SC_PHYS_PAGES` → RAM read via `sysctl hw.memsize`; `resource` absent on Windows → RSS `None` there (Windows/packaged baseline owed at §5.1). 788/788 pytest green 2026-10-25. **→ NEXT: M7-T2.**
-- [ ] **M7-T2** Scale guarantees verified (RSS flatness, cancel latency, recovery). *Spec: TESTING §4.3.*
+- [x] **M7-T2** Scale guarantees verified (RSS flatness, cancel latency, recovery). *Spec: TESTING §4.3.* ✅ Landed as **M7-T2b** (cancellation latency + crash recovery, TESTING §4.3.2) and **M7-T2a** (the scheduled 10M→100M RSS-curve ladder, TESTING §4.3.3 + `benchmark/ladder_10m_100m_macos_dev.json`): verdict **`bounded`** (`rss_ratio 5.832 < row_ratio 10.0`), both tiers `SUCCEEDED` / 0 errors — 10M 1310.2 s / 677.0 MB, 100M 9843.7 s / 3948.2 MB. **Honest caveat recorded in §4.3.3:** bounded ≠ flat; the joined 200k→100M series grows ≈ `rows^0.65`, extrapolating to ~17 GB at 1B rows, so the §4.2 "must stay flat" claim is NOT yet proven at that scale → follow-up task below. Also added the read-only `benchmark watch` % -done indicator (11 tests). 812/812 pytest green 2026-10-25. **→ NEXT: M7-T2c.**
+- [ ] **M7-T2c** Explicit memory ceiling + spill verification, then re-measure the top of the ladder. *Spec: BLUEPRINT Phase 3 "memory ceilings"; TESTING §4.2 (peak RSS) / §4.3.3.* Set DuckDB `memory_limit` + `temp_directory` explicitly in the engine connection (verified 2026-10-25: every connect site is a bare `duckdb.connect()` — `connectors/base.py`, `orchestration/rollup.py`, `orchestration/__init__.py`, `bridge/facade.py` — so the ~80 %-of-RAM default applies and RSS is free to scale with data; likely, not yet proven, cause of the §4.3.3 growth), prove spill-to-disk engages instead of buffer-pool growth, add the ceiling to config/env, re-run `benchmark baseline --sizes 10000000,100000000` and update §4.3.3. **→ after it: M7-T3.**
 - [ ] **M7-T3** Both-OS installer matrix: install→job→export→upgrade→uninstall. *Spec: SECURITY §6; TESTING §5.1.*
 - [ ] **M7-T4** Security acceptance automation. *Spec: SECURITY §8; TESTING §5.4.*
 - [ ] **M7-T5** **→ GATE MVP: every box of TESTING §5.1 green on packaged builds.**
