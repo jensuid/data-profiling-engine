@@ -16,6 +16,8 @@ import argparse
 import concurrent.futures
 import json
 import multiprocessing
+import os
+import subprocess
 import sys
 import threading
 import time
@@ -114,6 +116,50 @@ def _run_duckdb_smoke() -> None:
         print(f"DUCKDB_SMOKE_FAILED: {type(exc).__name__}: {exc}")
 
 
+def _run_ports_smoke() -> None:
+    """SECURITY §8 bullet 1: "No port bound while app runs (automated check)".
+
+    Queries the OS-native TCP table (macOS/Linux ``lsof``, Windows ``netstat``
+    — read-only diagnostics, no third-party dep, so nothing new enters the
+    frozen bundle) for LISTEN-state sockets owned by *this* process or its
+    live worker children (ADR-006 spawn workers included; ADR-005 allows no
+    listeners at all). OS-provided webview helper processes (WKWebView, the
+    WebView2 runtime) are system components, not app-bound ports, and are
+    deliberately out of scope — exactly the manual ``lsof``/``netstat`` line
+    in TESTING §5.1 / the M7-T3 runbook, automated."""
+    pids = {str(os.getpid())} | {str(p.pid) for p in multiprocessing.active_children()}
+    if sys.platform == "win32":
+        cmd = ["netstat", "-ano", "-p", "TCP"]
+        state_token, pid_col = "LISTENING", -1
+    else:
+        # ``lsof -sTCP:LISTEN`` already returns only LISTEN rows (the state
+        # prints as "(LISTEN)", so no per-line state token to match).
+        cmd = ["lsof", "-nP", "-a", "-iTCP", "-sTCP:LISTEN"]
+        state_token, pid_col = "", 1
+    try:
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"PORTS_SMOKE_FAILED: could not run {cmd[0]!r}: {exc}")
+        return
+    offenders: list[str] = []
+    for line in done.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        if state_token and state_token not in parts:
+            continue
+        pid = parts[pid_col]
+        if pid.isdigit() and pid in pids:
+            offenders.append(line.strip())
+    if offenders:
+        print(f"PORTS_SMOKE_FAILED: {len(offenders)} listening socket(s) bound by "
+              f"app pids {sorted(pids, key=int)}")
+        for line in offenders[:5]:
+            print(f"  {line}")
+    else:
+        print(f"PORTS_SMOKE_RESULT: no_listening_sockets pids={sorted(pids, key=int)}")
+
+
 def _unwrap_js_result(value: object) -> object:
     """pywebview returns a Future on some platforms and a bare value on others."""
     if isinstance(value, concurrent.futures.Future):
@@ -177,6 +223,9 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"BRIDGE_SMOKE_TIMEOUT: last={payload!r}")
             except Exception as exc:  # noqa: BLE001 — spike diagnostic
                 print(f"BRIDGE_SMOKE_FAILED: {type(exc).__name__}: {exc}")
+            # SECURITY §8 bullet 1 — while the app (window + bridge + worker)
+            # is genuinely running, before teardown.
+            _run_ports_smoke()
             time.sleep(0.5)
             window.destroy()
 

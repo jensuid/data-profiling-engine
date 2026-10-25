@@ -406,6 +406,7 @@ def _column_table(profile: Dict[str, Any], charts: List[Dict[str, Any]], mask: b
     for p in profile.get("columns") or []:
         name = str(p.get("column", ""))
         anchor = re.sub(r"[^A-Za-z0-9_.-]", "-", name)
+        pii = mask and is_pii_column(p)  # SECURITY §4: per-column, never inherited
         blocks: List[str] = []
         stats = p.get("stats") or {}
         if stats:
@@ -456,7 +457,11 @@ def _column_table(profile: Dict[str, Any], charts: List[Dict[str, Any]], mask: b
             )
         rare = cat.get("rare_categories") or []
         if rare:
-            blocks.append(f"<h4>Rare categories</h4><p class='refs'>{_esc(', '.join(map(str, rare[:15])))}</p>")
+            shown_rare = [
+                mask_value(str(c), str(p.get("logical_type", "")).lower()) if pii else str(c)
+                for c in rare[:15]
+            ]
+            blocks.append(f"<h4>Rare categories</h4><p class='refs'>{_esc(', '.join(shown_rare))}</p>")
         temporal = p.get("temporal") or {}
         rng = temporal.get("range") or {}
         if rng.get("min") or rng.get("max"):

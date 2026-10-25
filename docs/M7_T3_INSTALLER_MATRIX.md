@@ -68,6 +68,7 @@ All markers must appear:
 - [ ] `DUCKDB_SMOKE_RESULT: version=... rows=[(42,)]` — native `_duckdb` collected (ADR-009 top risk)
 - [ ] `WORKER_SMOKE_RESULT: job=... status=SUCCEEDED ...` — frozen **spawn** worker round-trip (ADR-006)
 - [ ] `BRIDGE_SMOKE_RESULT: ...echo...ping...` — JS↔Python bridge round-trip
+- [ ] `PORTS_SMOKE_RESULT: no_listening_sockets pids=[...]` — SECURITY §8.1 self-check (lsof/netstat over app pids; `PORTS_SMOKE_FAILED` = something bound a port — stop and escalate, ADR-005)
 - [ ] `SMOKE_OK: window opened and closed cleanly, index=..._MEIPASS/frontend/dist/index.html` — `file://` from bundle (ADR-010)
 - [ ] Windows only: `WEBVIEW2_SMOKE_RESULT: runtime_found pv=<version>` (SECURITY §6.4)
 

@@ -72,6 +72,7 @@ A window opens on the Home page from `file://`, then auto-closes (≤ ~15 s). Pa
 - [ ] `DUCKDB_SMOKE_RESULT: version=... rows=[(42,)]` (native `_duckdb.pyd` collected — ADR-009 top risk)
 - [ ] `WORKER_SMOKE_RESULT: job=... status=SUCCEEDED progress=...` (frozen **spawn** worker — the Windows-specific proof)
 - [ ] `BRIDGE_SMOKE_RESULT: {...'echo'...'ping'...}` (JS↔Python bridge round-trip)
+- [ ] `PORTS_SMOKE_RESULT: no_listening_sockets pids=[...]` (SECURITY §8.1 automated no-port check via `netstat -ano -p TCP`; `PORTS_SMOKE_FAILED` = a listening socket was found on app pids — stop, record, escalate; ADR-005)
 - [ ] `SMOKE_OK: window opened and closed cleanly, index=C:\...\_MEIPASS\frontend\dist\index.html` (`file://` from _MEIPASS)
 
 ## 5. NSIS installer + the §5.1 product run

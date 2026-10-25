@@ -396,6 +396,8 @@ All must pass on packaged macOS **and** Windows:
 
 See [[SECURITY_PACKAGING]] §8 — verified as automated tests here: no bound port; bridge rejects unknown/invalid/out-of-scope/oversized; PII masked by default; credentials absent from logs/results; upgrade/uninstall data policy honored.
 
+Automated as of M7-T4 in `data_profiling_engine/tests/test_security_acceptance.py` (one test class per §8 bullet; the packaged `--smoke` run additionally self-checks "no bound port" via the `PORTS_SMOKE_RESULT` marker — see the installer runbooks).
+
 ## 6. Test tooling notes
 
 - Python: `pytest`; property-based tests for metric invariants (e.g. missing_rate ∈ [0,1]; distinct ≤ row_count).
