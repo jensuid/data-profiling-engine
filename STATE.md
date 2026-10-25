@@ -22,39 +22,82 @@ Milestone : M6 — UI Screens (GATE M1 CONTRACTS FREEZE PASSED
           dev-mode 2026-10-25 — T1 read commands + caps, T2 job manager +
           real profile.start worker, T3 §5.5 progress push; packaged
           bridge/worker verification on both OS deferred to M7/Phase-3)
-Task      : none in progress — **M6 COMPLETE; M7-T1 DONE** (benchmark harness +
-          synthetic generator landed; dev-mode baseline recorded in TESTING §4.3.1 +
-          `benchmark/baseline_macos_dev.json`). M6-T6 done (Report View: Findings
-          & Recommendations §4.2–4.3 + Export §3.5). **Required a contract change**:
+Task      : none in progress — **M6 COMPLETE; M7-T1 DONE; M7-T2b DONE**
+          (benchmark harness + synthetic generator landed; dev-mode baseline
+          recorded in TESTING §4.3.1 + `benchmark/baseline_macos_dev.json`;
+          **cancellation + crash-recovery** measured via
+          `benchmark/cancel_recovery.py` + `benchmark guarantees` CLI
+          subcommand; §4.3.2 records: bounded / 5.48 s cancel latency,
+          consistent / 0.055 s crash detection on macOS dev). M6-T6 done
+          (Report View: Findings & Recommendations §4.2–4.3 + Export §3.5).
+          **Required a contract change**:
           added the §5.2 read command `recommendations.get` (ADR-020) because a
           Finding carries only `recommendation_ids` — no existing command returned
           the §4.3 recommendation *bodies* (they lived only in the `profile_json`
           artifact), the same gap class ADR-019 closed for columns; raised per AGENTS
-          §8 and approved before coding. M5 + M6-T1..T6 landed + M7-T1. 788/788 pytest green,
+          §8 and approved before coding. M5 + M6-T1..T6 landed + M7-T1 + M7-T2b.
+          801/801 pytest green,
           tsc clean, vite build clean.
 GATE M4   : reporting-layer tasks T1-T4 COMPLETE (706/706 pytest, tsc clean,
           golden byte-stable). MVP acceptance is on the PACKAGED build
           (BLUEPRINT §5 Phase-1 gate / §6), not dev mode — do not stamp M4
           "accepted" until the packaged run is verified in M7/Phase-3.
-NEXT      : M7-T2 — Scale guarantees verified (RSS flatness at 10M–100M, cancel
-          latency, worker-crash recovery). *Spec: docs/TESTING_BENCHMARKS.md §4.2–4.3.*
-          M7-T1 shipped the harness (`data_profiling_engine/benchmark/`) + a dev-mode
-          baseline; the RSS-boundedness + degrade-cheaper verdicts already PASS at
-          ≤1M. M7-T2 extends the SAME harness to the two guarantees it cannot yet
-          prove: (a) the 10M–100M RSS-curve ladder (harness already drives it — run
-          `baseline --sizes 10000000,50000000,100000000`; expect RSS flat), and
-          (b) **cancellation latency** + **crash recovery**, which need a new
-          worker-process path (the CLI benchmark runs in-process, no cancel).
-          Files to open: `data_profiling_engine/bridge/worker/{profile_job,process,manager}.py`
-          (the cancellable worker job + how cancel/crash surface), `harness.py`
-          (add a cancel/recovery case driving the worker, not `profile_dataset`),
-          TESTING §4.2 rows (Cancellation latency, Recovery). The worker already
-          emits §5.5 events (M5-T3) — reuse the job manager, do NOT run heavy work
-          in the parent. Confirm first whether cancel/recovery is testable without
-          the packaged build (dev-mode multiprocessing) or is a §5.1 packaged-only
-          gate; if packaged-only, record the harness scaffolding + block on M7-T3.
+NEXT      : M7-T2a — 10M–100M RSS-curve ladder (TESTING §4.3 structural
+          bullet 1). Pure scheduled release-gate run, NOT a code change:
+          `python -m data_profiling_engine.benchmark baseline --sizes
+          10000000,50000000,100000000 --columns 8 --format csv --workdir
+          .benchmarks/ladder --out .benchmarks/ladder/results.json`; the
+          M7-T1 harness already emits the ladder + a self-describing
+          results doc. Expect RSS bounded (`rss_ratio << row_ratio`);
+          record verdicts in TESTING §4.3.1 alongside the ≤1M baseline.
+          Blocked on: wallclock (×1000 of the 200k→1M series) + disk
+          (a 100M-row CSV ≈ 6 GB per the baseline source ratio). Decide
+          at execution time whether to run the full ladder or trim to
+          10M/50M if the machine cannot hold the largest tier; a partially
+          run ladder is honest as long as `evaluate_rss_boundedness`
+          has ≥ 2 measured points.
+          M7-T2b (cancellation latency + crash recovery, the two §4.2
+          rows the in-process baseline could not reach) landed as
+          `benchmark/cancel_recovery.py` + `benchmark guarantees` CLI
+          subcommand + `test_benchmark_cancel_recovery.py`; **STATE's
+          open question resolved** — dev-mode `multiprocessing` spawn
+          behaves identically to the packaged build (ADR-006) for
+          cancel + crash detection, so this is NOT a §5.1 packaged-only
+          gate. The packaged macOS+Windows baseline (§5.1) still runs
+          the same `guarantees` command; no code path change.
+          Files to open: TESTING §4.3.2 + docs/BLUEPRINT.md §5 Phase-3
+          (ladder scheduling), no engine/bridge code needed.
           Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
-Blocked by: none (M7-T1 delivered the harness + generator).
+Blocked by: none (M7-T1 shipped the ladder driver; M7-T2b shipped cancel+
+          recovery measurement).
+Session notes: M7-T2b landed cancellation latency + worker-crash recovery
+               (§4.2 rows; §4.3 binding structural guarantees). Files:
+               `benchmark/cancel_recovery.py` — pure
+               `evaluate_cancellation_bounded` / `evaluate_recovery_consistent`
+               verdicts (bounded iff CANCELLED + steps_completed < 6; consistent
+               iff live FAILED+WORKER_CRASHED + store mirror agrees + 0 orphan
+               run row + fresh-manager recover returns 0) plus real-worker
+               `measure_cancellation_latency` / `measure_worker_crash_recovery`
+               drivers on `JobManager.start_profile_job`. New CLI subcommand
+               `benchmark guarantees` writes a self-describing JSON; exit 0
+               iff both verdicts pass. 13-test suite
+               (`tests/test_benchmark_cancel_recovery.py`): 11 pure + 2
+               integration (5k-row fixture → RUNNING window wide enough
+               for the cancel/kill to land while `profile_dataset` is
+               still executing). GOTCHA: use `proc.kill()` (SIGKILL),
+               NOT `proc.terminate()` — the spec's §6.3 crash-detection
+               path requires the worker never emits a terminal event,
+               which `terminate()` (graceful) would violate. GOTCHA: the
+               store mirror uses column `state`, not `status`, on the
+               `jobs` row — `store.get_job(job_id)["state"]`. GOTCHA:
+               integration test fixture must be ≥ ~5k rows on macOS
+               dev — smaller fixtures complete in <2s after spawn and
+               the measurement returns the honest inconclusive verdict
+               `not_cancelled`/`not_killed` (never a false pass). Baseline
+               recorded in TESTING §4.3.2: bounded / 5.48s cancel latency,
+               consistent / 0.055s crash detection on 2026-10-25 macOS
+               13.7.8 x86_64. 801/801 pytest green, tsc clean, vite build
+               clean. **→ NEXT: M7-T2a (10M–100M RSS ladder, scheduled run).**
 Session notes: M7-T1 landed the benchmark subsystem. Files: `benchmark/generator.py`
                (`DatasetSpec(rows,columns,cardinality,missingness,distribution,seed)`;
                one DuckDB `COPY (SELECT … FROM range(n))` emits the whole fixture —

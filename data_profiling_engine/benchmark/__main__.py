@@ -10,11 +10,23 @@
         --sizes 1000000,5000000 --columns 8 --format csv \\
         --workdir .benchmarks --out .benchmarks/results.json
 
+    python -m data_profiling_engine.benchmark guarantees \\
+        [--rows 5000] --workdir .benchmarks --out .benchmarks/guarantees.json
+
 ``baseline`` is the release-gate entry: it runs the row-scaling RSS curve plus
 the exact-vs-sampled wall-clock pair and writes a self-describing results doc
 (machine context + workload + guarantees, TESTING §4.2/§4.4). The heavy
 10M–100M ladder is scheduled — invoke this explicitly, never in a per-commit
 pytest run.
+
+``guarantees`` (M7-T2b) drives the real store-backed worker through
+:meth:`JobManager.start_profile_job` and measures the two §4.2 rows the
+in-process baseline cannot reach — **cancellation latency** and **worker-crash
+recovery** (TESTING §4.3 binding structural guarantees). Dev-mode by design:
+multiprocessing spawn + SQLite mirror behave identically in the packaged
+build, so the same command runs at the release gate; there is no numeric
+wall-clock target, only the bounded/not-bounded and consistent/inconsistent
+verdicts the pure functions in :mod:`cancel_recovery` compute.
 """
 from __future__ import annotations
 
@@ -29,7 +41,6 @@ from data_profiling_engine.benchmark.harness import (
     measure_and_emit,
     run_suite,
 )
-
 
 def _parse_sizes(raw: str) -> List[int]:
     return [int(x) for x in raw.split(",") if x.strip()]
@@ -71,6 +82,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-degrade", action="store_true",
         help="skip the exact-vs-sampled wall-clock pair (RSS scaling only)",
     )
+
+    guar = sub.add_parser(
+        "guarantees",
+        help="measure §4.2 cancellation latency + crash recovery via the real worker (M7-T2b)",
+    )
+    guar.add_argument("--rows", type=int, default=5_000,
+                      help="fixture rows — big enough for a RUNNING window on slow CI")
+    guar.add_argument("--columns", type=int, default=5)
+    guar.add_argument("--cardinality", choices=("low", "medium", "high"), default="medium")
+    guar.add_argument("--missingness", type=float, default=0.1)
+    guar.add_argument("--distribution", choices=("normal", "skewed"), default="normal")
+    guar.add_argument("--seed", type=int, default=7)
+    guar.add_argument("--workdir", default=".benchmarks/guarantees")
+    guar.add_argument("--out", default=".benchmarks/guarantees/results.json")
     return p
 
 
@@ -106,7 +131,80 @@ def main(argv: Optional[List[str]] = None) -> int:
         _print_summary(results, out)
         return 0
 
+    if args.command == "guarantees":
+        return _run_guarantees(args)
+
     return 2  # pragma: no cover - argparse enforces the subcommand
+
+
+def _run_guarantees(args) -> int:
+    """M7-T2b: generate a small fixture once, drive both measurements through
+    a store-backed :class:`JobManager`, emit a self-describing results JSON.
+    Never raises into the CLI — a stuck worker surfaces as an
+    ``insufficient_data``/``deadline_exceeded`` verdict rather than a traceback."""
+    from data_profiling_engine.benchmark.cancel_recovery import (
+        measure_cancellation_latency,
+        measure_worker_crash_recovery,
+    )
+    from data_profiling_engine.benchmark.harness import _machine_context, ensure_fixture
+    from data_profiling_engine.bridge.worker.manager import JobManager
+    from data_profiling_engine.storage.metadata_store import MetadataStore
+
+    workdir = Path(args.workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+    spec = DatasetSpec(
+        rows=args.rows, columns=args.columns, cardinality=args.cardinality,
+        missingness=args.missingness, distribution=args.distribution, seed=args.seed,
+    )
+    input_path, base_config = ensure_fixture(spec, "guarantees", workdir, "csv")
+    config_document = json.loads(base_config.read_text(encoding="utf-8"))
+
+    data_root = (workdir / "data_root").resolve()
+    data_root.mkdir(parents=True, exist_ok=True)
+    store = MetadataStore(data_root=data_root)
+
+    cancel = measure_cancellation_latency(
+        manager=JobManager(metadata_store=store),
+        dataset_id="guarantees_cancel",
+        source_path=input_path,
+        config_document=config_document,
+        run_id="run_cancel",
+        allowed_roots=[str(workdir)],
+        data_root=str(data_root),
+    )
+    recovery = measure_worker_crash_recovery(
+        manager=JobManager(metadata_store=store),
+        store=store,
+        dataset_id="guarantees_crash",
+        source_path=input_path,
+        config_document=config_document,
+        run_id="run_crash",
+        allowed_roots=[str(workdir)],
+        data_root=str(data_root),
+    )
+
+    results = {
+        "machine": _machine_context(),
+        "workload": {
+            "rows": args.rows, "columns": args.columns, "cardinality": args.cardinality,
+            "missingness": args.missingness, "distribution": args.distribution,
+            "seed": args.seed, "fmt": "csv",
+        },
+        "guarantees": {
+            "cancellation_latency": cancel,
+            "worker_crash_recovery": recovery,
+        },
+    }
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(results, indent=2), encoding="utf-8")
+    print(f"cancellation: {cancel['verdict']} (latency={cancel.get('latency_s')}s)")
+    print(f"recovery    : {recovery['verdict']} (detection={recovery.get('crash_detection_s')}s)")
+    print(f"results -> {out}")
+    # A non-zero exit signals a release-gate regression (verdicts other than
+    # the passing ones never silently ship).
+    ok = cancel["verdict"] == "bounded" and recovery["verdict"] == "consistent"
+    return 0 if ok else 1
 
 
 def _print_summary(results: dict, out: Path) -> None:

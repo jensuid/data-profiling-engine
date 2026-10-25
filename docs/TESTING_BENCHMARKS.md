@@ -135,6 +135,57 @@ the 10M–100M RSS-curve ladder (§4.3 structural bullet 1), the 500-col and
 0/40%-missingness corners of §4.1, cancellation latency, crash-recovery, Parquet
 sources, and the **packaged** macOS + Windows baseline (§5.1).
 
+### 4.3.2 Cancellation + crash recovery (M7-T2b, dev-mode)
+
+The two §4.2 rows the RSS/degrade baseline in §4.3.1 cannot reach —
+**Cancellation latency** and **Recovery** — are measured by
+`data_profiling_engine/benchmark/cancel_recovery.py`, driven through the real
+store-backed `JobManager.start_profile_job` path (ADR-006, `multiprocessing`
+**spawn**). Release-gate command:
+
+```
+python -m data_profiling_engine.benchmark guarantees [--rows 5000] \
+    --workdir .benchmarks/guarantees --out .benchmarks/guarantees/results.json
+```
+
+Structural verdicts (binding, no numeric wall-clock target per §4.3 "No
+universal time limit is set before baseline benchmarks"):
+
+- **Bounded cancellation** — verdict `bounded` iff the RUNNING worker reaches
+  `CANCELLED` with `steps_completed < PROFILING_TOTAL_STEPS (6)`, i.e. the
+  flag is observed at a step boundary, not only at job end. The
+  `latency_s` field records the wall time from `cancel_job(…)` to the
+  terminal transition; on MVP it is bounded by the still-executing DuckDB
+  step because `profile_job.py` cannot interrupt an active query (§6.5
+  Phase-3 depth item). A `at_job_end` verdict is a regression signal.
+- **Consistent recovery** — verdict `consistent` iff (a) the live manager
+  surfaces `FAILED` + `WORKER_CRASHED` on a hard-killed worker (SIGKILL,
+  not `terminate()`, so the graceful path is *not* what is exercised), (b)
+  the SQLite mirror agrees on the same state + code, (c) no orphan `runs`
+  row exists (persistence is the worker's last step, never reached on a
+  crash), and (d) a fresh `JobManager` on the same store reconciles zero
+  unfinished jobs — the live path already mirrored. Any broken invariant
+  names itself in the verdict's `problems` list.
+
+Dev-mode by design: `multiprocessing` spawn semantics + on-disk SQLite
+behave identically in the packaged build, so the same command runs on the
+macOS + Windows release-gate (§5.1) with no code path change. The two
+cases are pinned as pytest integration tests in
+`tests/test_benchmark_cancel_recovery.py` (~12s each on a 5 000-row
+generated fixture; the fixture is sized so the worker is still in
+`profile_dataset` when the cancel/kill lands — a smaller fixture races
+and returns the honest `not_cancelled` / `not_killed` inconclusive
+verdicts, never a false pass).
+
+Initial dev-mode verdicts (macOS 13.7.8 x86_64, 4 cores, 16 GB RAM, Py 3.12.4,
+CSV 5 000 rows / 5 cols / medium cardinality / 10% missingness / normal
+distribution / seed 7; command above, exit 0):
+
+| Guarantee | Verdict | Measured |
+|---|---|---:|
+| Cancellation bounded (§4.3 binding) | **bounded** | 5.48 s cancel→CANCELLED, stopped at step 2/6 |
+| Worker-crash recovery consistent (§4.2) | **consistent** | 0.055 s SIGKILL→crash-detected, store mirrored FAILED / WORKER_CRASHED, no orphan run row |
+
 ### 4.4 Regression tracking
 
 Benchmarks are versioned; a run failing an RSS-bound or sampling-cost guarantee blocks merge. Results are documented (numbers + hardware) as product evidence.
