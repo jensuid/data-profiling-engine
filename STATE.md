@@ -23,7 +23,8 @@ Milestone : M7 — Hardening & Release Gate — M6 UI screens COMPLETE
           dev-mode 2026-10-25 — T1 read commands + caps, T2 job manager +
           real profile.start worker, T3 §5.5 progress push; packaged
           bridge/worker verification on both OS deferred to M7/Phase-3)
-Task      : none in progress — **M6 COMPLETE; M7-T1 DONE; M7-T2 COMPLETE**
+Task      : none in progress — **M6 COMPLETE; M7-T1 DONE; M7-T2 COMPLETE;
+          M7-T2c DONE**
           (T2a = the scheduled 10M→100M RSS-curve ladder, TESTING §4.3.3 +
           `benchmark/ladder_10m_100m_macos_dev.json`: verdict **`bounded`**
           (`rss_ratio 5.832 < row_ratio 10`) — 10M 1310.2 s / 677.0 MB, 100M
@@ -31,9 +32,11 @@ Task      : none in progress — **M6 COMPLETE; M7-T1 DONE; M7-T2 COMPLETE**
           latency + crash recovery via `benchmark/cancel_recovery.py` +
           `benchmark guarantees`, TESTING §4.3.2: bounded / 5.48 s,
           consistent / 0.055 s. **§4.3.3 also records the caveat: bounded ≠
-          flat** — the joined 200k→100M series grows ≈ `rows^0.65` (~17 GB
-          extrapolated at 1B rows), escalated as new task **M7-T2c** instead of
-          stamping the §4.2 "stays flat" claim proven.) M6-T6 done
+          flat** — the joined 200k→100M series grows ≈ `rows^0.766` (~22.5 GiB
+          extrapolated at 1B rows), escalated as new task **M7-T2c**, now
+          **DONE**: ADR-021 owns the ceilings and TESTING §4.3.4 records the
+          bounded re-measure (the ceiling bounds a run but never shrinks it
+          below its working set; below that, metrics turn into ERRORs).) M6-T6 done
           (Report View: Findings & Recommendations §4.2–4.3 + Export §3.5).
           **Required a contract change**:
           added the §5.2 read command `recommendations.get` (ADR-020) because a
@@ -41,28 +44,21 @@ Task      : none in progress — **M6 COMPLETE; M7-T1 DONE; M7-T2 COMPLETE**
           the §4.3 recommendation *bodies* (they lived only in the `profile_json`
           artifact), the same gap class ADR-019 closed for columns; raised per AGENTS
           §8 and approved before coding. M5 + M6-T1..T6 landed + M7-T1 + M7-T2.
-          812/812 pytest green,
-          tsc clean, vite build clean.
+          853/853 pytest green, 2026-10-25 (no frontend change this task).
 GATE M4   : reporting-layer tasks T1-T4 COMPLETE (706/706 pytest, tsc clean,
           golden byte-stable). MVP acceptance is on the PACKAGED build
           (BLUEPRINT §5 Phase-1 gate / §6), not dev mode — do not stamp M4
           "accepted" until the packaged run is verified in M7/Phase-3.
-NEXT      : M7-T2c — own the memory ceiling, then re-measure the top of the
-          ladder. *Spec: BLUEPRINT Phase 3 "memory ceilings"; TESTING §4.2
-          peak-RSS row + §4.3.3.* This is the first code change M7 has needed:
-          set DuckDB `memory_limit` + `temp_directory` explicitly on the
-          connection instead of inheriting the ~80 %-of-RAM default. Open
-          ENGINE_SPEC (connection/session setup) + the four bare
-          `duckdb.connect()` sites — `connectors/base.py:229`,
-          `orchestration/rollup.py:390`, `orchestration/__init__.py:116`,
-          `bridge/facade.py:399` — and route them through ONE helper so a
-          ceiling can never be forgotten again. Decide the default from the
-          docs/ADRs, not silently: if no ADR fixes a ceiling value, raise it
-          (AGENTS §8) rather than picking one. Then re-run
-          `benchmark baseline --sizes 10000000,100000000 …` (fixtures still on
-          disk at `.benchmarks/ladder/`) and update TESTING §4.3.3 + the
-          tracked ladder JSON — the target is a *flat* curve, not merely a
-          sub-linear one.
+NEXT      : M7-T3 — both-OS installer matrix (install→job→export→upgrade→
+          uninstall). *Spec: SECURITY §6; TESTING §5.1.* OPEN ONLY those two
+          sections + BLUEPRINT §5 Phase-3. First task that needs a PACKAGED
+          build (`data_profiling_engine.spec`, PyInstaller); nothing here is
+          engine code — it is packaging plus the §5.1 packaged acceptance run
+          (`benchmark baseline` + `benchmark guarantees` on macOS AND Windows,
+          now with the ADR-021 ceilings recorded in each JSON).
+          BEFORE starting: fold the 100M bounded pass into TESTING §4.3.4 if its
+          row is still missing (launched in the background 13:44:58Z 2026-10-25;
+          see GOTCHA) — that row is the last owed number of M7-T2c.
           Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
 Blocked by: none. GOTCHA (disk): volume sits at 97 % full — a 100M CSV is 6.2 GB
           and DuckDB spill needs room on the SAME volume. The ladder fixtures
@@ -71,6 +67,48 @@ Blocked by: none. GOTCHA (disk): volume sits at 97 % full — a 100M CSV is 6.2 
           re-measure** (user decision 2026-10-25) — reuse them via the harness's
           `fixture_paths`, don't regenerate; check `df -h` before adding any new
           tier, and expect spill to eat a few more GiB.
+GOTCHA (bg run): the 100M bounded pass launched 13:44:58Z 2026-10-25 writes
+          `.benchmarks/ladder/bounded_100m_top.json` (stdout `top_run.log`, spill
+          sampler `spill_samples_top.log`). If that JSON is absent the pass did
+          not finish — never report a number from the log's echo line alone.
+GOTCHA (DuckDB 2.0.0): `duckdb_memory()` reports **live** buffers only (reads 0
+          once a query ends) → a spill must be measured by sampling the scratch
+          dir; and `median`/`quantile_cont` each need a fixed 128 MiB block, so a
+          `memory_limit` below ~512 MB converts those metrics into ERRORs instead
+          of shrinking the profile.
+Session notes: M7-T2c DONE — own the DuckDB ceilings, then re-measure
+               (ADR-021 + TESTING §4.3.4). New `duckdb_session.py` is the ONLY
+               place a connection opens: `connect()` installs and then READS
+               BACK `memory_limit = min(4 GiB, 25 % RAM)`, an owner-only (0700)
+               `temp_directory` under `storage.paths.default_temp_root()` (the
+               inherited default was the RELATIVE `.tmp` — a SECURITY §2 hazard
+               under PyInstaller), and an 8 GiB spill cap; overrides are env
+               (`DPE_DUCKDB_MEMORY_LIMIT` / `_TEMP_DIR` / `_MAX_TEMP_DIR_SIZE`,
+               blank = unset) or kwargs, deliberately NOT §9 dataset config, so
+               no contract/`config_hash` change. All 5 bare connect sites routed
+               through it (`connectors/base`, `orchestration/rollup`,
+               `orchestration/__init__`, `bridge/facade`, `benchmark/generator`)
+               plus a source-level guard test that fails CI on a new bare
+               `duckdb.connect()`. Two gotchas found by MEASURING, not assuming:
+               (1) a 256 MB ceiling makes `median`/`quantile_cont` raise
+               `OutOfMemoryException: failed to allocate data of size 128.0 MiB`,
+               so the floor is DERIVED (`2 × threads × 128 MiB`, clamped
+               [512 MiB, 4 GiB] → 1 GiB on this 4-core box) and the default is
+               additionally held under 90 % of RAM; (2) `duckdb_memory()` reads 0
+               after a query, so spill is measured by sampling the scratch dir
+               every 5 s (`.benchmarks/ladder/run_pass.sh`). Measured at 10M on
+               the retained fixture: 4 GiB → 675.1 MiB / 1218.8 s / 0 err;
+               1 GiB floor → 631.6 MiB / 1251.2 s / 0 err; 256 MB → 375.7 MiB /
+               914.0 s + 146.3 MiB spill but **28 ERRORs**. Reading: the ceiling
+               BINDS (it spills) but never shrinks a run whose working set is
+               under it (631.6 / 675.1 vs 677.0 unbounded = variance), and the
+               tightest pass is fastest only because it skipped work. Therefore
+               `evaluate_rss_plateau` (b ≤ 0.25 and inside the ceiling) is a
+               DIAGNOSTIC and `evaluate_rss_boundedness` stays the binding gate.
+               Tracked copy `benchmark/bounded_ceilings_macos_dev.json`.
+               853/853 pytest green 2026-10-25 (no frontend change).
+               **→ NEXT: M7-T3** — the 100M bounded pass is still running in the
+               background; fold its row into TESTING §4.3.4 first.
 Session notes: M7-T2a DONE — the 10M→100M RSS-curve ladder ran 14:46→18:04
                local (3 h 18 m wall incl. fixture generation) on
                `.benchmarks/ladder/`, verdict **`bounded`**:
@@ -1502,8 +1540,8 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 ## M7 — Hardening & Release Gate
 
 - [x] **M7-T1** Benchmark harness + synthetic generator; baseline numbers recorded into TESTING §4.3. *Spec: TESTING §4.* ✅ `data_profiling_engine/benchmark/` — `generator.py` (`DatasetSpec`, DuckDB-side `COPY … FROM range(n)` synthetic CSV/Parquet, deterministic hash-salted values — never a Python row loop, ADR-007; core kinds pk_id/amount/stage/category/event_date + alternating extras, card/missingness/distribution/seed knobs), `harness.py` (`measure_case` runs each profile in a **fresh child process** so `resource.getrusage` RSS is per-run isolated; pure `evaluate_rss_boundedness` / `evaluate_sampled_cheaper`; `run_suite` emits a self-describing results JSON + machine context), `__main__.py` (`generate|measure|baseline`). `baseline_macos_dev.json` (tracked) = dev-mode baseline; TESTING §4.3.1 records it: RSS 94→169 MB across 200k→1M (×5 rows, ×1.8 RSS = **bounded**, no Python materialization); sampled 144.7s < deep-exact 157.5s (**degrade strictly cheaper**, marginal — full-relation quality rules + query-count dominate). Fast regression test `tests/test_benchmark_harness.py` (+13, never runs the heavy ladder). **GOTCHA:** macOS `os.sysconf` has no `SC_PHYS_PAGES` → RAM read via `sysctl hw.memsize`; `resource` absent on Windows → RSS `None` there (Windows/packaged baseline owed at §5.1). 788/788 pytest green 2026-10-25. **→ NEXT: M7-T2.**
-- [x] **M7-T2** Scale guarantees verified (RSS flatness, cancel latency, recovery). *Spec: TESTING §4.3.* ✅ Landed as **M7-T2b** (cancellation latency + crash recovery, TESTING §4.3.2) and **M7-T2a** (the scheduled 10M→100M RSS-curve ladder, TESTING §4.3.3 + `benchmark/ladder_10m_100m_macos_dev.json`): verdict **`bounded`** (`rss_ratio 5.832 < row_ratio 10.0`), both tiers `SUCCEEDED` / 0 errors — 10M 1310.2 s / 677.0 MB, 100M 9843.7 s / 3948.2 MB. **Honest caveat recorded in §4.3.3:** bounded ≠ flat; the joined 200k→100M series grows ≈ `rows^0.65`, extrapolating to ~17 GB at 1B rows, so the §4.2 "must stay flat" claim is NOT yet proven at that scale → follow-up task below. Also added the read-only `benchmark watch` % -done indicator (11 tests). 812/812 pytest green 2026-10-25. **→ NEXT: M7-T2c.**
-- [ ] **M7-T2c** Explicit memory ceiling + spill verification, then re-measure the top of the ladder. *Spec: BLUEPRINT Phase 3 "memory ceilings"; TESTING §4.2 (peak RSS) / §4.3.3.* Set DuckDB `memory_limit` + `temp_directory` explicitly in the engine connection (verified 2026-10-25: every connect site is a bare `duckdb.connect()` — `connectors/base.py`, `orchestration/rollup.py`, `orchestration/__init__.py`, `bridge/facade.py` — so the ~80 %-of-RAM default applies and RSS is free to scale with data; likely, not yet proven, cause of the §4.3.3 growth), prove spill-to-disk engages instead of buffer-pool growth, add the ceiling to config/env, re-run `benchmark baseline --sizes 10000000,100000000` and update §4.3.3. **Fixture note:** the 6.8 GB ladder fixtures are RETAINED in `.benchmarks/ladder/` — drive `measure_case` with explicit `input_path`/`base_config` (as `run_suite` does) so the re-run reuses them instead of regenerating. **Cheapest honest sequence:** a 10M pair first (unbounded 677 MB vs bounded, ~22 min/pass) to prove the growth is buffer-pool-dominated, then ONE confirming 100M pass. **→ after it: M7-T3.**
+- [x] **M7-T2** Scale guarantees verified (RSS flatness, cancel latency, recovery). *Spec: TESTING §4.3.* ✅ Landed as **M7-T2b** (cancellation latency + crash recovery, TESTING §4.3.2) and **M7-T2a** (the scheduled 10M→100M RSS-curve ladder, TESTING §4.3.3 + `benchmark/ladder_10m_100m_macos_dev.json`): verdict **`bounded`** (`rss_ratio 5.832 < row_ratio 10.0`), both tiers `SUCCEEDED` / 0 errors — 10M 1310.2 s / 677.0 MB, 100M 9843.7 s / 3948.2 MB. **Honest caveat recorded in §4.3.3:** bounded ≠ flat; the joined 200k→100M series grows ≈ `rows^0.766` (corrected from the first draft's `0.65` by fitting the pair properly), extrapolating to ≈22.5 GiB at 1B rows, so the §4.2 "must stay flat" claim is NOT yet proven at that scale → follow-up task below. Also added the read-only `benchmark watch` % -done indicator (11 tests). 812/812 pytest green 2026-10-25. **→ NEXT: M7-T2c.**
+- [x] **M7-T2c** Explicit memory ceiling + spill verification, then re-measure the top of the ladder. *Spec: BLUEPRINT Phase 3 "memory ceilings"; TESTING §4.2 (peak RSS) / §4.3.4.* ✅ **ADR-021** raised first (AGENTS §8 — the ceiling value is a product decision, not a silent pick) + new `data_profiling_engine/duckdb_session.py` as the ONE place a connection opens: `memory_limit = min(4 GiB, 25 % RAM)` floored at `2 × threads × 128 MiB` (clamped [512 MiB, 4 GiB] → 1 GiB on 4 cores) and held under 90 % of RAM, owner-only (0700) `temp_directory` under `storage.paths.default_temp_root()` replacing the inherited **relative** `.tmp` (SECURITY §2 hazard under PyInstaller), 8 GiB spill cap, `SET` then **read back** with a 1 % tolerance, overrides via `DPE_DUCKDB_*` env/kwargs and deliberately NOT §9 dataset config (no contract/`config_hash` change). All 5 bare connect sites routed through it + a source-level guard test that fails CI on a new bare `duckdb.connect()`. Measured at 10M on the retained fixture (TESTING §4.3.4, `benchmark/bounded_ceilings_macos_dev.json`): 4 GiB → 675.1 MiB / 1218.8 s / 0 err; 1 GiB floor → 631.6 MiB / 1251.2 s / 0 err; 256 MB → 375.7 MiB + 146.3 MiB spill but **28 ERRORs** (non-spillable 128 MiB quantile buffer — the reason the floor is derived, not chosen). Reading: the ceiling BINDS but never shrinks a run below its working set, so `evaluate_rss_plateau` (b ≤ 0.25 + inside the ceiling) ships as a DIAGNOSTIC while `evaluate_rss_boundedness` stays the binding gate. 853/853 pytest green 2026-10-25 (no frontend change). **Still owed:** the 100M row under the shipped default (pass launched 13:44:58Z, in flight) — fold into §4.3.4 before M7-T3. **→ NEXT: M7-T3.**
 - [ ] **M7-T3** Both-OS installer matrix: install→job→export→upgrade→uninstall. *Spec: SECURITY §6; TESTING §5.1.*
 - [ ] **M7-T4** Security acceptance automation. *Spec: SECURITY §8; TESTING §5.4.*
 - [ ] **M7-T5** **→ GATE MVP: every box of TESTING §5.1 green on packaged builds.**

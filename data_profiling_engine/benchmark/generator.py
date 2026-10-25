@@ -33,6 +33,8 @@ from typing import Dict, List, Tuple
 
 import duckdb
 
+from data_profiling_engine import duckdb_session
+
 #: Cardinality tiers → the number of distinct values a "category" column takes
 #: (capped at the row count at generation time). TESTING §4.1 "cardinality
 #: (low/high)"; medium sits between as the realistic default.
@@ -240,7 +242,7 @@ def generate_dataset(
         raise ValueError(f"unknown fmt {fmt!r}; expected 'csv' or 'parquet'")
 
     own_con = con is None
-    con = con if con is not None else duckdb.connect()
+    con = con if con is not None else duckdb_session.connect()
     try:
         # one parallel-safe statement; nothing crosses into Python memory
         con.execute(f"COPY ({query}) TO '{str(out).replace(chr(39), chr(39)*2)}' {copy_opts}")

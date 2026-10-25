@@ -40,6 +40,7 @@ from typing import Dict, List, Optional, Tuple
 
 import duckdb
 
+from data_profiling_engine import duckdb_session
 from data_profiling_engine.connectors.base import RelationHandle
 from data_profiling_engine.engine.metrics import MetricRegistry, default_registry
 from data_profiling_engine.engine.planner import (
@@ -387,7 +388,7 @@ def profile_dataset(
     """
     from data_profiling_engine.orchestration import run_dataset_profiling
 
-    con = con if con is not None else duckdb.connect()
+    con = con if con is not None else duckdb_session.connect()
     started_at = datetime.now(timezone.utc)
     result = run_dataset_profiling(
         dataset_id, path, config, run_id,

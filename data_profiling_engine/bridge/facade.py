@@ -382,7 +382,7 @@ def _dataset_preview_handler(payload: dict[str, Any]) -> dict[str, Any]:
     masked individually. ``mask_pii=False`` is the explicit opt-out the UI must
     label; full values otherwise reach the user only through the JSON artifact
     and ``artifact.open``."""
-    import duckdb
+    from data_profiling_engine import duckdb_session
 
     from data_profiling_engine.connectors import ConnectorError, get_connector
 
@@ -396,7 +396,7 @@ def _dataset_preview_handler(payload: dict[str, Any]) -> dict[str, Any]:
     dataset_id = payload.get("dataset_id") or path.stem
     limit = min(int(payload["limit"]), PREVIEW_ROW_CAP)
     offset = int(payload["offset"])
-    con = duckdb.connect()
+    con = duckdb_session.connect()
     try:
         impl = get_connector(
             dataset_id,

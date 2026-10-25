@@ -26,6 +26,15 @@ pure functions so a CI job can gate on them without a wall-clock target:
 - :func:`evaluate_sampled_cheaper` — the degrade path (sampled/approximate) must
   be strictly faster than exact on the same large fixture.
 
+:func:`evaluate_rss_plateau` adds the stricter reading the M7-T2a ladder forced
+(TESTING §4.3.3): sub-linear growth is *not* the same as bounded growth. The
+ladder's 677 MiB → 3 948 MiB for 10M → 100M rows passed ``bounded`` yet fits
+rows^0.766, which extrapolates to ~22.5 GiB at 1B rows, so the plateau verdict
+fits the growth exponent instead of only comparing endpoint ratios. It is
+reported **alongside** ``rss_boundedness``, not instead of it: a ceiling can only
+flatten memory above its own value, so the plateau is the stricter diagnostic
+(TESTING §4.3) while ``bounded`` stays the binding gate.
+
 Platform note: peak RSS uses POSIX ``resource.getrusage`` (macOS reports bytes,
 Linux kilobytes). On Windows ``resource`` is absent → ``peak_rss_bytes`` is
 ``None`` and the RSS guarantee is skipped there until the packaged Windows
@@ -34,6 +43,7 @@ baseline (deferred to M7/Phase-3 per STATE); wall-clock + disk still record.
 from __future__ import annotations
 
 import json
+import math
 import platform
 import subprocess
 import sys
@@ -288,6 +298,72 @@ def evaluate_rss_boundedness(cases: List[CaseResult]) -> Dict[str, object]:
     }
 
 
+#: RSS growth exponent (RSS ∝ rows^b) that still counts as a plateau: at b=0.25
+#: a 10x data growth costs 1.78x memory and 100x costs 3.16x — bounded in
+#: practice. TESTING §4.2 asks that peak memory "stay flat"; this is the
+#: quantified form.
+PLATEAU_MAX_EXPONENT = 0.25
+
+#: Row count the plateau verdict extrapolates to, as a scale sanity check.
+PLATEAU_FORECAST_ROWS = 1_000_000_000
+
+
+def evaluate_rss_plateau(
+    cases: List[CaseResult],
+    *,
+    max_exponent: float = PLATEAU_MAX_EXPONENT,
+    ceiling_bytes: Optional[int] = None,
+) -> Dict[str, object]:
+    """Fit the RSS-vs-rows growth exponent and judge whether memory plateaus.
+
+    :func:`evaluate_rss_boundedness` only compares the two endpoints and passes
+    anything sub-linear; the M7-T2a ladder showed how weak that is (rows^0.65 is
+    "bounded" by that test yet reaches ~17 GB at a billion rows). This fits
+    ``log2(RSS) = b * log2(rows) + c`` by least squares over every measured point
+    and reports ``b`` — the memory cost per decade of data — plus the forecast at
+    :data:`PLATEAU_FORECAST_ROWS`. ``*_mb``/``*_gib`` keys follow the harness's existing
+    binary-unit convention (``rss_mb_*`` are MiB, as in evaluate_rss_boundedness).
+
+    Verdicts: ``insufficient_data`` (fewer than two measurable points, e.g. on
+    Windows), ``over_ceiling`` (the largest run exceeds ``ceiling_bytes``, i.e.
+    the buffer-pool limit is not being honored), ``plateau`` when ``b <=
+    max_exponent``, otherwise ``growing``."""
+    measured = [c for c in cases if c.peak_rss_bytes and c.row_count]
+    if len(measured) < 2:
+        return {"verdict": "insufficient_data", "n": len(measured)}
+    xs = [math.log2(float(c.row_count or 1)) for c in measured]
+    ys = [math.log2(float(c.peak_rss_bytes or 1)) for c in measured]
+    n = len(xs)
+    mean_x = sum(xs) / n
+    mean_y = sum(ys) / n
+    variance = sum((x - mean_x) ** 2 for x in xs)
+    if variance == 0.0:  # every case at the same row count: no scaling to fit
+        return {"verdict": "insufficient_data", "n": n, "reason": "single_row_count"}
+    slope = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / variance
+    intercept = mean_y - slope * mean_x
+    smallest = min(measured, key=lambda c: c.row_count or 0)
+    largest = max(measured, key=lambda c: c.row_count or 0)
+    decade = 10.0 ** slope  # memory cost of ×10 the rows (2**slope would be ×2)
+    forecast = 2.0 ** (slope * math.log2(PLATEAU_FORECAST_ROWS) + intercept)
+    result: Dict[str, object] = {
+        # epsilon so a curve that sits exactly on the boundary is not flipped by
+        # float noise in the fit
+        "verdict": "plateau" if slope <= max_exponent + 1e-9 else "growing",
+        "n": n,
+        "growth_exponent": round(slope, 3),
+        "max_exponent": max_exponent,
+        "rss_multiplier_per_decade": round(decade, 3),
+        "rss_mb_smallest": round(smallest.peak_rss_bytes / 1_048_576, 1),  # type: ignore[arg-type]
+        "rss_mb_largest": round(largest.peak_rss_bytes / 1_048_576, 1),  # type: ignore[arg-type]
+        "forecast_rss_gib_at_1b_rows": round(forecast / 1_073_741_824, 2),
+    }
+    if ceiling_bytes:
+        result["ceiling_mb"] = round(ceiling_bytes / 1_048_576, 1)
+        if largest.peak_rss_bytes > ceiling_bytes:  # type: ignore[union-attr]
+            result["verdict"] = "over_ceiling"
+    return result
+
+
 def evaluate_sampled_cheaper(exact: CaseResult, degrade: CaseResult) -> Dict[str, object]:
     """Assert the degrade path (sampled/approximate) is strictly faster in
     wall-clock than the exact reference on the same fixture (§4.3 binding)."""
@@ -343,7 +419,10 @@ def run_suite(
             input_path=input_path, base_config=base_config,
         ))
 
-    guarantees: Dict[str, object] = {"rss_boundedness": evaluate_rss_boundedness(cases)}
+    guarantees: Dict[str, object] = {
+        "rss_boundedness": evaluate_rss_boundedness(cases),
+        "rss_plateau": evaluate_rss_plateau(cases, ceiling_bytes=_engine_ceiling_bytes()),
+    }
 
     if degrade_vs_exact and sizes:
         big = max(sizes)
@@ -375,6 +454,18 @@ def run_suite(
         "cases": [c.to_dict() for c in cases],
         "guarantees": guarantees,
     }
+
+
+def _engine_ceiling_bytes() -> Optional[int]:
+    """The buffer-pool ceiling the engine now installs (ADR-021), or ``None`` if
+    it cannot be determined — the plateau check then skips the ceiling compare.
+    Imported lazily so measuring stays independent of engine internals."""
+    try:
+        from data_profiling_engine import duckdb_session
+
+        return duckdb_session.default_memory_limit_bytes()
+    except Exception:  # noqa: BLE001 - a monitor never fabricates a limit
+        return None
 
 
 def _machine_context() -> Dict[str, object]:

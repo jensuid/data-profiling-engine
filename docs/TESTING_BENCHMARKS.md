@@ -90,7 +90,7 @@ Vary: rows (1M / 10M / 50M / 100M), columns (8 / 50 / 500), file size, cardinali
 
 - **No universal time limit is set before baseline benchmarks** (per reference guidance). Phase 0–1 runs establish machine/dataset-representative baselines; targets are then recorded here as an explicit table.
 - **Structural guarantees that ARE fixed now (binding, not numeric):**
-  - A standard profile of a large CSV/Parquet must **not** load the full dataset into Python RAM — peak worker memory stays bounded as rows grow (DuckDB streaming/spill). Verified by comparing 10M vs 100M RSS curves.
+  - A standard profile of a large CSV/Parquet must **not** load the full dataset into Python RAM — peak worker memory stays bounded as rows grow (DuckDB streaming/spill). Verified by comparing 10M vs 100M RSS curves. Since M7-T2c the same series is **also** reported in a stricter form as a diagnostic — `evaluate_rss_plateau` fits RSS ∝ rows^b and calls `plateau` only when **b ≤ 0.25** *and* the largest run stayed inside the engine's ADR-021 memory ceiling (`growing` / `over_ceiling` otherwise). The binding gate remains `evaluate_rss_boundedness`; the reason is recorded in §4.3.4 — our own measured series grows as rows^0.77, a ceiling only flattens the region **above** its value, and a gate that today cannot be passed is a false alarm, not evidence.
   - Sampled/approximate paths must be **strictly cheaper** in wall-clock than exact on the same large fixture, proving the planner degrade actually works.
   - Cancellation must complete within the worker's per-step boundary (bounded), not only at job end.
 
@@ -227,27 +227,97 @@ Both runs `SUCCEEDED` with 0 per-task errors. Wall-clock grew ×7.5 for ×10 row
   source would have tracked `row_ratio` (≈ ×10 from the 10M point, ~6.8 GB+) and
   overflowed this 16 GB machine; it did not.
 
-**Honest reading — bounded, but NOT flat (Phase-3 follow-up, escalated not
-buried).** Joining §4.3.1 into the full series
-200 k → 1M → 10M → 100M gives peak RSS 94.0 → 169.5 → 677.0 → 3 948.2 MB, i.e.
-per-row-decade growth ×1.80 / ×4.00 / ×5.83 — roughly `rows^0.65`, a power law
-rather than a plateau. Extrapolating that exponent to 1B rows predicts ~17 GB on
-this box, i.e. OOM. The likely mechanism is DuckDB's own buffer pool sizing
-(default `memory_limit` ≈ 80 % of RAM, never bounded by us) plus per-column
-high-cardinality state over a 6 GB CSV — legitimate streaming, but not the
-"flat" the §4.2 metric row ("must stay flat vs rows") aspires to. Required
-before the claim is stated as proven at 1B-row scale:
+**Honest reading — bounded, but NOT flat (escalated, resolved in §4.3.4).** Joining
+§4.3.1 into the full series 200 k → 1M → 10M → 100M gives peak RSS 94.0 → 169.5 →
+677.0 → 3 948.2 MB, i.e. per-row-decade growth ×1.80 / ×4.00 / ×5.83 — a power
+law, not a plateau. The first draft of this note summarised it as `rows^0.65`,
+which **understated** the problem: fitting the 10M/100M pair properly
+(`evaluate_rss_plateau`) gives **rows^0.766**, and that exponent extrapolated to
+1B rows predicts ≈ 22.5 GiB on this box, i.e. OOM. The mechanism was DuckDB's own
+buffer-pool sizing: the engine never set `memory_limit` (default ≈ 80 % of RAM —
+measured 12.7 GiB here) nor `temp_directory` (default the relative `.tmp`, i.e.
+resolved against the process CWD). Legitimate streaming, but not the "flat" the
+§4.2 metric row ("must stay flat vs rows") aspires to.
 
-- set an explicit DuckDB `memory_limit` + verify `temp_directory` spill engages
-  rather than growing RSS (also makes behaviour deterministic across machines),
-- re-measure the top of the ladder with that bound in place (and on the
-  packaged build, §5.1).
+Both halves of that follow-up are now done: **ADR-021** makes the memory and
+spill ceilings engine policy applied by one connection helper, and **§4.3.4**
+records the re-measure that proves the ceiling binds and what it costs. That
+re-measure also explains why a plateau is still **not** proven: at 10M rows peak
+RSS *is* the SQL working set (~630–680 MB), which sits **below** the ceiling, so
+the ceiling never becomes the binding constraint there. Still owed from this
+ladder: re-measuring the **top of the ladder (100M) under the shipped default**
+and the whole series on the **packaged build** (§5.1).
 
 Still owed at the release gate: the 500-column and 0/40 %-missingness corners of
 §4.1, Parquet sources, and the **packaged** macOS + Windows baseline (§5.1) —
 the latter runs the same two commands (`baseline`, `guarantees`) and, on Windows,
 degrades to wall-clock/disk only because POSIX `resource` has no peak-RSS field
 (harness records `peak_rss_mb: null` there rather than guessing).
+
+### 4.3.4 Owned DuckDB ceilings + bounded re-measure (M7-T2c, dev-mode)
+
+**ADR-021** replaced every bare `duckdb.connect()` with
+`duckdb_session.connect()`, which installs and then *reads back*
+`memory_limit = min(4 GiB, 25 % of RAM)`, an owner-only `temp_directory` under
+the OS temp root, and `max_temp_directory_size = 8 GiB`. The ceiling is floored
+at `2 × worker_threads × 128 MiB` (1 GiB on this 4-core box) because DuckDB's
+`median`/`quantile_cont` allocate a fixed 128 MiB buffer they cannot spill.
+
+Measured with `.benchmarks/ladder/run_pass.sh` — the same retained 10M fixture
+(`csv_10000000_std`, 612.4 MB, same §4.3.1 workload knobs) profiled under four
+ceilings. The ceiling was overridden only via `DPE_DUCKDB_MEMORY_LIMIT`, so the
+code path under test is the shipped one:
+
+| Pass | `memory_limit` | Wall-clock | Peak RSS | Peak spill | Per-task errors |
+|---|---|---:|---:|---:|---:|
+| M7-T2a (no helper, DuckDB default) | 12.7 GiB (inherited) | 1 310.2 s | 677.0 MB | — | 0 |
+| shipped default | 4 GiB | 1 218.8 s | 675.1 MiB (707 928 064 B) | none | 0 |
+| shipped floor (4 cores) | 1 GiB | 1 251.2 s | 631.6 MiB (662 319 104 B) | none | 0 |
+| forced tight | 256 MB | 914.0 s | 375.7 MiB (393 973 760 B) | 146.3 MiB | **28** |
+
+All four runs are `SUCCEEDED`. Spill is measured by sampling the scratch directory
+every 5 s (`spill_samples_<pass>.log`): DuckDB 2.0.0's `duckdb_memory()` counters
+report *live* buffers only and read `0` once a query finishes, so they cannot
+witness a spill after the fact. Machine-readable copy:
+`data_profiling_engine/benchmark/bounded_ceilings_macos_dev.json`.
+
+**Honest reading — what this proves and what it does not:**
+
+1. **The ceiling is installed and it binds.** The 256 MB pass spilled 146 MiB to
+disk and held RSS at 375.7 MiB, i.e. below the working set — the engine now
+spills instead of growing (ADR-007's assumption made real).
+2. **The ceiling does NOT shrink a run whose working set is under it.** 4 GiB →
+   675.1 MiB and 1 GiB → 631.6 MiB against 677.0 MiB unbounded: a −0.3 % / −6.7 %
+   spread that is run-to-run variance, not an improvement. At 10M rows peak RSS
+   is set by the SQL working set (≈630–680 MB), so the ceiling is a **safety
+   boundary above that working set**, never a knob for making a profile smaller.
+   Any claim that ADR-021 "reduced memory" would be false; it bounds it.
+3. **A ceiling under the working set trades coverage for bytes.** At 256 MB
+   every distribution/median metric became an `ERROR`
+   (`OutOfMemoryException: failed to allocate data of size 128.0 MiB`) — 28
+   per-task errors, run still `SUCCEEDED`, no wrong numbers (FAIL ≠ ERROR and
+   ADR-015 provenance held). Hence the derived floor: below it the profile does
+   not get smaller, it loses metrics.
+4. **The tight pass is the fastest run only because it skipped work** (914 s vs
+   ≈1 220–1 310 s). Wall-clock is not comparable across these four passes; only
+   the three ceiling-above-working-set passes are.
+5. **A plateau is still not proven.** `evaluate_rss_plateau` can only flatten a
+   curve at the tiers where the ceiling is *below* the working set. At 10M it is
+   not; the §4.3.3 100M point (3 948.2 MB) sits just under the 4 GiB default, so
+   the top of the ladder is where the ceiling may finally bind. The binding gate
+   therefore remains `evaluate_rss_boundedness` + `SUCCEEDED` + 0 errors; the
+   plateau exponent is reported as a diagnostic.
+
+Reference tests for the policy (pure arithmetic over a faked RAM size, read-back
+verification, blank-env = unset, floor per thread count, a tight-ceiling
+aggregation matched against a pure-Python reference, and a source-level guard
+that fails on any new bare `duckdb.connect()`) live in
+`tests/test_duckdb_session.py`.
+
+**Still owed from this follow-up:** the **100M** tier re-measured under the
+shipped default (its §4.3.3 number came from the unbounded engine), a **forced
+ceiling below the 100M working set** to demonstrate the flattening directly, and
+the whole series on the **packaged build** (§5.1).
 
 ### 4.4 Regression tracking
 

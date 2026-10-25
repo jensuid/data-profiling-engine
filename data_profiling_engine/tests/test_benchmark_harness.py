@@ -27,9 +27,11 @@ from data_profiling_engine.benchmark.generator import (
     write_dataset_config,
 )
 from data_profiling_engine.benchmark.harness import (
+    PLATEAU_MAX_EXPONENT,
     CaseResult,
     _peak_rss_bytes,
     evaluate_rss_boundedness,
+    evaluate_rss_plateau,
     evaluate_sampled_cheaper,
     fixture_paths,
 )
@@ -161,6 +163,69 @@ def test_rss_insufficient_data_when_windows_or_single():
     assert evaluate_rss_boundedness([_case(1000, 100.0)])["verdict"] == "insufficient_data"
     # all RSS None (Windows) → insufficient, never a false "bounded"
     assert evaluate_rss_boundedness([_case(1000, None), _case(2000, None)])["verdict"] == "insufficient_data"
+
+
+# ---- structural guarantee: RSS plateau (stricter than boundedness) --------
+
+def test_rss_plateau_recovers_a_known_power_law():
+    """Independent reference: RSS built as rows**0.2 must be measured as 0.2."""
+    exponent = 0.2
+    cases = [
+        _case(1_000_000, 200.0),
+        _case(10_000_000, 200.0 * 10 ** exponent),
+        _case(100_000_000, 200.0 * 100 ** exponent),
+    ]
+    verdict = evaluate_rss_plateau(cases)
+    assert verdict["growth_exponent"] == pytest.approx(exponent, abs=1e-3)
+    assert verdict["verdict"] == "plateau"
+    assert verdict["rss_multiplier_per_decade"] == pytest.approx(10 ** exponent, abs=1e-3)
+
+
+def test_rss_plateau_rejects_the_m7_t2a_curve_as_growing():
+    """The regression this check exists for: 677 MB @ 10M vs 3 948 MB @ 100M
+    passed ``bounded`` (ratio 5.83 < 10) yet grows as rows**0.766 — the fitted
+    exponent and the 1B-row forecast recorded in TESTING §4.3.3."""
+    cases = [_case(10_000_000, 677.0), _case(100_000_000, 3948.2)]
+    verdict = evaluate_rss_plateau(cases)
+    assert verdict["verdict"] == "growing"
+    assert verdict["growth_exponent"] == pytest.approx(0.766, abs=0.01)
+    # extrapolate the fit one more decade: 3 948 MiB * 10**0.766 ≈ 22 GiB — the
+    # number that makes "bounded" an unacceptable answer on a 16 GB machine
+    assert verdict["forecast_rss_gib_at_1b_rows"] > 16.0
+
+
+def test_rss_plateau_boundary_is_inclusive_and_configurable():
+    at_limit = evaluate_rss_plateau(
+        [_case(1_000_000, 100.0), _case(10_000_000, 100.0 * 10 ** 0.25)],
+        max_exponent=PLATEAU_MAX_EXPONENT,
+    )
+    assert at_limit["growth_exponent"] == pytest.approx(0.25, abs=1e-3)
+    assert at_limit["verdict"] == "plateau"
+    stricter = evaluate_rss_plateau(
+        [_case(1_000_000, 100.0), _case(10_000_000, 400.0)], max_exponent=0.5
+    )  # exponent = log2(4)/log2(10) = 0.602 > 0.5
+    assert stricter["verdict"] == "growing"
+
+
+def test_rss_plateau_flags_a_run_above_the_engine_ceiling():
+    """A flat curve is only trustworthy if it actually stayed inside the ceiling
+    the engine promised (ADR-021); otherwise the limit silently did not apply."""
+    cases = [_case(1_000_000, 100.0), _case(10_000_000, 105.0)]
+    assert evaluate_rss_plateau(cases, ceiling_bytes=512 * 1_048_576)["verdict"] == "plateau"
+    over = evaluate_rss_plateau(cases, ceiling_bytes=102 * 1_048_576)
+    assert over["verdict"] == "over_ceiling"
+    assert over["ceiling_mb"] == pytest.approx(102.0)
+
+
+def test_rss_plateau_insufficient_data_never_guesses():
+    assert evaluate_rss_plateau([_case(1000, 100.0)])["verdict"] == "insufficient_data"
+    assert evaluate_rss_plateau([_case(1000, None), _case(2000, None)])["verdict"] == (
+        "insufficient_data"
+    )
+    # identical row counts → no scaling to fit, even though there are 2 points
+    flat_rows = evaluate_rss_plateau([_case(1000, 100.0), _case(1000, 400.0)])
+    assert flat_rows["verdict"] == "insufficient_data"
+    assert flat_rows["reason"] == "single_row_count"
 
 
 # ---- structural guarantee: degrade strictly cheaper (pure logic) ---------

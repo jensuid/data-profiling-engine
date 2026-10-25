@@ -30,6 +30,7 @@ from typing import Dict, List, Optional, Tuple
 
 import duckdb
 
+from data_profiling_engine import duckdb_session
 from data_profiling_engine.connectors import get_connector
 from data_profiling_engine.connectors.base import RelationHandle
 from data_profiling_engine.discovery import discover
@@ -112,8 +113,12 @@ def open_source(
     connectors only, ADR-011) and bind its view. Returns the connection plus
     the :class:`RelationHandle` the pipeline runs against. The caller owns the
     connection lifetime; no HTTP/server (ADR-005) and nothing is loaded into
-    Python RAM (ADR-007) — the handle is a lazily-scanned DuckDB view."""
-    con = con if con is not None else duckdb.connect()
+    Python RAM (ADR-007) — the handle is a lazily-scanned DuckDB view.
+
+    A caller-supplied ``con`` keeps the ceilings it was opened with (a test can
+    deliberately pass its own); a connection opened here goes through
+    :mod:`data_profiling_engine.duckdb_session` (ADR-021)."""
+    con = con if con is not None else duckdb_session.connect()
     impl = get_connector(
         dataset_id, path, connector=connector, allowed_roots=allowed_roots
     )

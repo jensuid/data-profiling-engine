@@ -17,6 +17,7 @@ doc_role: supporting
 - **One algorithm family, many datasets.** Adding a dataset means registering a source + config, not writing `profile_<domain>()` functions.
 - **Measure ≠ judge ≠ interpret ≠ act.** Profilers measure; the quality engine judges against rules; the findings engine interprets; the recommendation engine proposes actions. Each is a separate module with its own tests.
 - **DuckDB-first computation.** Metrics are SQL expressions/templates executed against relations (files or pushed-down queries). Data is only materialized in Python when a metric genuinely needs it, and then bounded (samples, aggregates, pages) — never a full `df` of 100M rows.
+- **Resource ceilings are engine policy, never library defaults.** Every DuckDB connection is opened through `duckdb_session` with an explicit `memory_limit` and `temp_directory` + spill cap (ADR-021). A profile whose working set exceeds the ceiling must get **slower (spill), not larger** — and must never fill the disk or land spill files in the process CWD.
 - **Provenance is mandatory.** Every emitted metric carries `method` + `method_params` ([[CONTRACTS]] §1.1).
 
 ## 2. Execution planner

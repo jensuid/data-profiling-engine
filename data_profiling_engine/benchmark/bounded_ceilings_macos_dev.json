@@ -1,0 +1,80 @@
+{
+  "task": "M7-T2c",
+  "title": "Owned DuckDB ceilings: 10M bounded re-measure under three ceilings",
+  "adr": "ADR-021",
+  "test_doc": "TESTING_BENCHMARKS.md §4.3.4",
+  "machine": {
+    "os": "Darwin 22.6.0",
+    "arch": "x86_64",
+    "cpu_count": 4,
+    "python": "3.12.4",
+    "duckdb": "2.0.0"
+  },
+  "workload": {
+    "fixture": "csv_10000000_std (retained M7-T2a fixture, reused not regenerated)",
+    "spec": {
+      "rows": 10000000,
+      "columns": 8,
+      "cardinality": "high",
+      "missingness": 0.12,
+      "distribution": "skewed",
+      "seed": 42
+    },
+    "source_mb": 612.4,
+    "mode": "standard"
+  },
+  "reference_ladder": {
+    "source": "TESTING \u00a74.3.3 (M7-T2a, before the ceiling helper existed)",
+    "rows": 10000000,
+    "peak_rss_mb": 677.0,
+    "wall_clock_s": 1310.1572,
+    "n_errors": 0
+  },
+  "passes": [
+    {
+      "pass": "shipped default",
+      "pass_name": "default",
+      "rows": 10000000,
+      "memory_limit": "4294967296 B",
+      "wall_clock_s": 1218.8312,
+      "peak_rss_bytes": 707928064,
+      "peak_rss_mib": 675.1,
+      "spill_peak_kb": null,
+      "n_errors": 0,
+      "run_status": "SUCCEEDED",
+      "measured_at": "2026-10-25T12:49:47Z"
+    },
+    {
+      "pass": "shipped floor",
+      "pass_name": "floor",
+      "rows": 10000000,
+      "memory_limit": "1073741824 B",
+      "wall_clock_s": 1251.1998,
+      "peak_rss_bytes": 662319104,
+      "peak_rss_mib": 631.6,
+      "spill_peak_kb": 0,
+      "n_errors": 0,
+      "run_status": "SUCCEEDED",
+      "measured_at": "2026-10-25T13:37:00Z"
+    },
+    {
+      "pass": "forced tight",
+      "pass_name": "tight",
+      "rows": 10000000,
+      "memory_limit": "256000000 B",
+      "wall_clock_s": 914.0065,
+      "peak_rss_bytes": 393973760,
+      "peak_rss_mib": 375.7,
+      "spill_peak_kb": 149792,
+      "n_errors": 28,
+      "run_status": "SUCCEEDED",
+      "measured_at": "2026-10-25T13:06:53Z"
+    }
+  ],
+  "honest_notes": [
+    "The 4 GiB default and 1 GiB floor both run above the 10M working set, so their RSS difference vs the unbounded 677.0 MB (-0.3% / -6.7%) is variance, not an improvement.",
+    "Only the 256 MB pass spills because only it sits below the working set; it is also the fastest because 28 metrics became ERROR instead of computing.",
+    "spill_peak_kb for the shipped-default pass is null: that pass ran before the sampler existed. Its 4 GiB ceiling is above the working set, so a spill was not expected.",
+    "Spill is sampled from the scratch dir every 5 s; duckdb_memory() reports live buffers only and reads 0 once a query completes."
+  ]
+}

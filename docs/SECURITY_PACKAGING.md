@@ -34,6 +34,8 @@ Directories are resolved via OS-standard locations, **never hard-coded**. Instal
 macOS: `~/Library/Application Support/<App>` (data), `~/Library/Caches/<App>` (cache).
 Windows: `%APPDATA%\<App>` (data), `%LOCALAPPDATA%\<App>\Cache` (cache), `%TEMP%` (workspace).
 
+DuckDB spill blocks (ADR-021) live in the **temporary workspace** — `<temp>/<App>/duckdb_scratch`, created owner-only (`0700`; per-user ACL on Windows) and capped in size, never in the application bundle and never in the artifact store. They are unmasked fragments of the source file, so the workspace is treated as user-private and is safe to clear: nothing unique is kept there. The engine refuses a relative `temp_directory` (DuckDB's own default for an in-memory database is `.tmp`, which would resolve against the process CWD) — see [[ARCHITECTURE_AND_ADRS]] ADR-021.
+
 Lifecycle rules: user data survives upgrade; cache is rebuildable; temp files have a cleanup policy; exports are removed only by explicit user action; **metadata schema changes go through migrations** (§6 here + [[CONTRACTS]] persistence).
 
 ## 3. Bridge security (enforces [[CONTRACTS]] §5)

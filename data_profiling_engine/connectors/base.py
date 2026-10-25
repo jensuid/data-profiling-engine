@@ -33,6 +33,7 @@ from typing import Dict, List, Tuple
 
 import duckdb
 
+from data_profiling_engine import duckdb_session
 from data_profiling_engine.errors import ErrorCode
 from data_profiling_engine.schemas.models import SourceSnapshot
 
@@ -226,7 +227,7 @@ class Connector(ABC):
         true column list (collision checking); the plumbing scan proves the
         exact view SQL parses. Invalid sources fail here, before any
         profiling work, without materialising rows (ADR-007)."""
-        con = duckdb.connect()
+        con = duckdb_session.connect()
         lit = chr(39) + _sql_str(str(resolved)) + chr(39)
         try:
             bare = con.execute(f"SELECT * FROM {self._bare_table_function(lit)} LIMIT 0")
