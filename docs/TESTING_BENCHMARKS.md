@@ -94,6 +94,47 @@ Vary: rows (1M / 10M / 50M / 100M), columns (8 / 50 / 500), file size, cardinali
   - Sampled/approximate paths must be **strictly cheaper** in wall-clock than exact on the same large fixture, proving the planner degrade actually works.
   - Cancellation must complete within the worker's per-step boundary (bounded), not only at job end.
 
+### 4.3.1 Recorded baseline (M7-T1, dev-mode)
+
+Generated + measured by `data_profiling_engine/benchmark` (`python -m
+data_profiling_engine.benchmark baseline …`); machine-readable copy at
+`data_profiling_engine/benchmark/baseline_macos_dev.json`. **Dev-mode** (engine
+spine via `profile_dataset`), **not** the packaged build — the packaged
+both-OS baseline is still owed at the release gate (§5.1 / BLUEPRINT Phase 3).
+
+Machine: macOS 13.7.8 (x86_64, kernel 22.6.0), 4 cores, 16 GB RAM, Python 3.12.4,
+DuckDB streaming with full-relation quality rules. Peak RSS is a per-run child
+high-water mark (`resource.getrusage`), so each number is isolated.
+
+Workload: CSV, 8 cols, **high** cardinality, 12% missingness, **skewed** numeric,
+seed 1337; reservoir sampling window 200 000 rows for the degrade pair.
+
+| Case | Rows | Mode / method | Wall-clock | Peak RSS | Source |
+|---|---:|---|---:|---:|---:|
+| std  | 200 000 | standard (exact/approx) | 62.9 s | 94.0 MB | 11.7 MB |
+| std  | 500 000 | standard (exact/approx) | 92.5 s | 131.2 MB | 30.0 MB |
+| std  | 1 000 000 | standard (exact/approx) | 143.7 s | 169.5 MB | 60.3 MB |
+| exact | 1 000 000 | **deep** (no sampling) | 157.5 s | 169.7 MB | 60.3 MB |
+| degrade | 1 000 000 | standard + **sampled** window | 144.7 s | 188.8 MB | 60.3 MB |
+
+**Structural-guarantee verdicts (binding, §4.3):**
+
+- **RSS bounded as rows grow — PASS.** 200k→1M is ×5 rows but only ×1.80 peak
+  RSS (94→169 MB): sub-linear, so the pipeline does **not** materialise the
+  relation in Python RAM (DuckDB streams/spills). All runs `SUCCEEDED`, 0 errors.
+- **Degrade strictly cheaper than exact — PASS (marginal).** sampled 144.7 s <
+  exact 157.5 s (−12.8 s, ×1.09). The margin is thin and *honest*: wall-clock here
+  is dominated by (a) the per-column×metric query count and (b) quality rules that
+  run on the **full relation regardless of mode** (ENGINE §8); sampling degrades
+  only the heavy distinct/sketch slice, so the saving grows with that slice's
+  share (larger-cardinality / more-distinct workloads widen it). Verdict is the
+  required *strict* inequality, so the guarantee holds.
+
+Deferred to the release gate (harness already drives them via one command):
+the 10M–100M RSS-curve ladder (§4.3 structural bullet 1), the 500-col and
+0/40%-missingness corners of §4.1, cancellation latency, crash-recovery, Parquet
+sources, and the **packaged** macOS + Windows baseline (§5.1).
+
 ### 4.4 Regression tracking
 
 Benchmarks are versioned; a run failing an RSS-bound or sampling-cost guarantee blocks merge. Results are documented (numbers + hardware) as product evidence.

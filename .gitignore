@@ -28,3 +28,8 @@ Thumbs.db
 
 # Windows operator smoke evidence (local only — contains machine paths/usernames)
 smoke_win.txt
+
+# Benchmark scratch (M7-T1): generated large fixtures + per-run metrics JSON.
+# Only the curated baseline JSON under data_profiling_engine/benchmark/ is tracked.
+.benchmarks/
+benchmarks_scratch/

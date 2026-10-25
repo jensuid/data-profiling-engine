@@ -1,0 +1,191 @@
+{
+  "machine": {
+    "system": "Darwin",
+    "release": "22.6.0",
+    "machine": "x86_64",
+    "python": "3.12.4",
+    "cpu_count": 4,
+    "total_ram_gb": 16.0,
+    "rss_measurement": "resource.getrusage(RUSAGE_SELF).ru_maxrss (child process)",
+    "os_version": "macOS 13.7.8"
+  },
+  "workload": {
+    "fmt": "csv",
+    "columns": 8,
+    "cardinality": "high",
+    "missingness": 0.12,
+    "distribution": "skewed",
+    "sizes": [
+      200000,
+      500000,
+      1000000
+    ],
+    "sampling": {
+      "enabled": true,
+      "strategy": "reservoir",
+      "size": 200000,
+      "seed": 1337
+    }
+  },
+  "cases": [
+    {
+      "label": "csv_200000_std",
+      "spec": {
+        "rows": 200000,
+        "columns": 8,
+        "cardinality": "high",
+        "missingness": 0.12,
+        "distribution": "skewed",
+        "seed": 42
+      },
+      "fmt": "csv",
+      "mode": "standard",
+      "sampled": false,
+      "wall_clock_s": 62.9267,
+      "peak_rss_bytes": 98537472,
+      "peak_rss_mb": 94.0,
+      "source_bytes": 12317349,
+      "source_mb": 11.7,
+      "row_count": 200000,
+      "column_count": 8,
+      "n_errors": 0,
+      "extra": {
+        "parent_wall_clock_s": 65.4868,
+        "process_startup_overhead_s": 2.5601,
+        "run_status": "SUCCEEDED",
+        "planner_sampling_enabled": false
+      }
+    },
+    {
+      "label": "csv_500000_std",
+      "spec": {
+        "rows": 500000,
+        "columns": 8,
+        "cardinality": "high",
+        "missingness": 0.12,
+        "distribution": "skewed",
+        "seed": 42
+      },
+      "fmt": "csv",
+      "mode": "standard",
+      "sampled": false,
+      "wall_clock_s": 92.5062,
+      "peak_rss_bytes": 137588736,
+      "peak_rss_mb": 131.2,
+      "source_bytes": 31405555,
+      "source_mb": 30.0,
+      "row_count": 500000,
+      "column_count": 8,
+      "n_errors": 0,
+      "extra": {
+        "parent_wall_clock_s": 94.2623,
+        "process_startup_overhead_s": 1.7561,
+        "run_status": "SUCCEEDED",
+        "planner_sampling_enabled": false
+      }
+    },
+    {
+      "label": "csv_1000000_std",
+      "spec": {
+        "rows": 1000000,
+        "columns": 8,
+        "cardinality": "high",
+        "missingness": 0.12,
+        "distribution": "skewed",
+        "seed": 42
+      },
+      "fmt": "csv",
+      "mode": "standard",
+      "sampled": false,
+      "wall_clock_s": 143.6957,
+      "peak_rss_bytes": 177754112,
+      "peak_rss_mb": 169.5,
+      "source_bytes": 63209115,
+      "source_mb": 60.3,
+      "row_count": 1000000,
+      "column_count": 8,
+      "n_errors": 0,
+      "extra": {
+        "parent_wall_clock_s": 148.007,
+        "process_startup_overhead_s": 4.3113,
+        "run_status": "SUCCEEDED",
+        "planner_sampling_enabled": false
+      }
+    },
+    {
+      "label": "csv_1000000_exact",
+      "spec": {
+        "rows": 1000000,
+        "columns": 8,
+        "cardinality": "high",
+        "missingness": 0.12,
+        "distribution": "skewed",
+        "seed": 42
+      },
+      "fmt": "csv",
+      "mode": "deep",
+      "sampled": false,
+      "wall_clock_s": 157.4812,
+      "peak_rss_bytes": 177983488,
+      "peak_rss_mb": 169.7,
+      "source_bytes": 63209115,
+      "source_mb": 60.3,
+      "row_count": 1000000,
+      "column_count": 8,
+      "n_errors": 0,
+      "extra": {
+        "parent_wall_clock_s": 159.2657,
+        "process_startup_overhead_s": 1.7845,
+        "run_status": "SUCCEEDED",
+        "planner_sampling_enabled": false
+      }
+    },
+    {
+      "label": "csv_1000000_sampled",
+      "spec": {
+        "rows": 1000000,
+        "columns": 8,
+        "cardinality": "high",
+        "missingness": 0.12,
+        "distribution": "skewed",
+        "seed": 42
+      },
+      "fmt": "csv",
+      "mode": "standard",
+      "sampled": true,
+      "wall_clock_s": 144.7234,
+      "peak_rss_bytes": 197992448,
+      "peak_rss_mb": 188.8,
+      "source_bytes": 63209115,
+      "source_mb": 60.3,
+      "row_count": 1000000,
+      "column_count": 8,
+      "n_errors": 0,
+      "extra": {
+        "parent_wall_clock_s": 147.3837,
+        "process_startup_overhead_s": 2.6603,
+        "run_status": "SUCCEEDED",
+        "planner_sampling_enabled": true
+      }
+    }
+  ],
+  "guarantees": {
+    "rss_boundedness": {
+      "verdict": "bounded",
+      "rows_small": 200000,
+      "rows_large": 1000000,
+      "row_ratio": 5.0,
+      "rss_mb_small": 94.0,
+      "rss_mb_large": 169.5,
+      "rss_ratio": 1.804
+    },
+    "sampled_cheaper_than_exact": {
+      "verdict": "cheaper",
+      "exact_wall_clock_s": 157.4812,
+      "degrade_wall_clock_s": 144.7234,
+      "saved_s": 12.7578,
+      "speedup": 1.09
+    }
+  },
+  "note": "Dev-mode baseline on the M7-T1 harness (not the packaged build). Large 10M-100M ladder + Windows/packaged baseline are scheduled release-gate runs (see docs/TESTING_BENCHMARKS.md \u00a74.3)."
+}

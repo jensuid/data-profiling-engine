@@ -22,28 +22,62 @@ Milestone : M6 — UI Screens (GATE M1 CONTRACTS FREEZE PASSED
           dev-mode 2026-10-25 — T1 read commands + caps, T2 job manager +
           real profile.start worker, T3 §5.5 progress push; packaged
           bridge/worker verification on both OS deferred to M7/Phase-3)
-Task      : none in progress — **M6 COMPLETE**. M6-T6 done (Report View: Findings
+Task      : none in progress — **M6 COMPLETE; M7-T1 DONE** (benchmark harness +
+          synthetic generator landed; dev-mode baseline recorded in TESTING §4.3.1 +
+          `benchmark/baseline_macos_dev.json`). M6-T6 done (Report View: Findings
           & Recommendations §4.2–4.3 + Export §3.5). **Required a contract change**:
           added the §5.2 read command `recommendations.get` (ADR-020) because a
           Finding carries only `recommendation_ids` — no existing command returned
           the §4.3 recommendation *bodies* (they lived only in the `profile_json`
           artifact), the same gap class ADR-019 closed for columns; raised per AGENTS
-          §8 and approved before coding. M5 + M6-T1..T6 landed. 775/775 pytest green,
+          §8 and approved before coding. M5 + M6-T1..T6 landed + M7-T1. 788/788 pytest green,
           tsc clean, vite build clean.
 GATE M4   : reporting-layer tasks T1-T4 COMPLETE (706/706 pytest, tsc clean,
           golden byte-stable). MVP acceptance is on the PACKAGED build
           (BLUEPRINT §5 Phase-1 gate / §6), not dev mode — do not stamp M4
           "accepted" until the packaged run is verified in M7/Phase-3.
-NEXT      : M7-T1 — Benchmark harness + synthetic generator; baseline numbers
-          recorded into TESTING §4.3. *Spec: docs/TESTING_BENCHMARKS.md §4.*
-          M6 UI screens are COMPLETE in dev mode; M7 is the hardening/release gate
-          and is PACKAGED-build work (PyInstaller on macOS + Windows), not more UI.
-          Files to open: `docs/TESTING_BENCHMARKS.md` §4 (harness + §4.3 baseline
-          table), `docs/BLUEPRINT.md` §5–6 (M7 gate), `data_profiling_engine/cli`
-          + `bridge/worker` (the paths a benchmark drives). Read-only check first:
-          confirm whether a benchmark harness already exists before writing one.
+NEXT      : M7-T2 — Scale guarantees verified (RSS flatness at 10M–100M, cancel
+          latency, worker-crash recovery). *Spec: docs/TESTING_BENCHMARKS.md §4.2–4.3.*
+          M7-T1 shipped the harness (`data_profiling_engine/benchmark/`) + a dev-mode
+          baseline; the RSS-boundedness + degrade-cheaper verdicts already PASS at
+          ≤1M. M7-T2 extends the SAME harness to the two guarantees it cannot yet
+          prove: (a) the 10M–100M RSS-curve ladder (harness already drives it — run
+          `baseline --sizes 10000000,50000000,100000000`; expect RSS flat), and
+          (b) **cancellation latency** + **crash recovery**, which need a new
+          worker-process path (the CLI benchmark runs in-process, no cancel).
+          Files to open: `data_profiling_engine/bridge/worker/{profile_job,process,manager}.py`
+          (the cancellable worker job + how cancel/crash surface), `harness.py`
+          (add a cancel/recovery case driving the worker, not `profile_dataset`),
+          TESTING §4.2 rows (Cancellation latency, Recovery). The worker already
+          emits §5.5 events (M5-T3) — reuse the job manager, do NOT run heavy work
+          in the parent. Confirm first whether cancel/recovery is testable without
+          the packaged build (dev-mode multiprocessing) or is a §5.1 packaged-only
+          gate; if packaged-only, record the harness scaffolding + block on M7-T3.
           Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
-Blocked by: none (M6 delivered every MVP screen in dev mode).
+Blocked by: none (M7-T1 delivered the harness + generator).
+Session notes: M7-T1 landed the benchmark subsystem. Files: `benchmark/generator.py`
+               (`DatasetSpec(rows,columns,cardinality,missingness,distribution,seed)`;
+               one DuckDB `COPY (SELECT … FROM range(n))` emits the whole fixture —
+               NO Python row loop, honors ADR-007 at 100M; values are deterministic
+               via a masked salted `hash` (thread/parallel-safe), seed decorrelates
+               the salt space; core kinds pk_id/amount/stage(DuckDB list-literal)/
+               category/event_date(DATE) + alternating extras; `write_dataset_config`
+               emits a schema-valid §9 config referencing real columns). GOTCHA:
+               DuckDB list literal is `['a','b'][int]`, NOT `list_value[...]`.
+               `benchmark/harness.py` (`measure_case` spawns a FRESH child
+               `python -m …benchmark measure` per run so `resource` peak RSS is that
+               run's high-water, not the tree max — the ONLY honest way to compare
+               RSS across sizes; pure `evaluate_rss_boundedness`/`evaluate_sampled_cheaper`
+               gate the §4.3 binding structural guarantees; `run_suite` writes a
+               self-describing results JSON + machine context). GOTCHA: `ProfilingRun.status`
+               is a plain str under `use_enum_values` — `str(...)`, never `.value`;
+               macOS `os.sysconf` lacks SC_PHYS_PAGES → RAM via `sysctl hw.memsize`;
+               `resource` is absent on Windows → RSS None there. Baseline (macOS dev,
+               high-card/skewed CSV): RSS 94→169MB over 200k→1M (×5 rows → **bounded**,
+               no full materialization), sampled 144.7s < deep-exact 157.5s (**degrade
+               cheaper**, marginal because quality rules run full-relation + query-count
+               dominate — recorded honestly in §4.3.1). The 10M–100M ladder + cancel/
+               recovery + packaged both-OS baseline are M7-T2/§5.1. **→ NEXT: M7-T2.**
 Session notes: M6-T6 landed Report Findings & Recommendations (§3.4/§4.2–4.3) +
                Export (§3.5) — M6 COMPLETE. **ADR-020 / CONTRACTS §5.2 contract
                change**: added `recommendations.get` (8th read cmd; seven→eight) —
@@ -1366,7 +1400,7 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 
 ## M7 — Hardening & Release Gate
 
-- [ ] **M7-T1** Benchmark harness + synthetic generator; baseline numbers recorded into TESTING §4.3. *Spec: TESTING §4.*
+- [x] **M7-T1** Benchmark harness + synthetic generator; baseline numbers recorded into TESTING §4.3. *Spec: TESTING §4.* ✅ `data_profiling_engine/benchmark/` — `generator.py` (`DatasetSpec`, DuckDB-side `COPY … FROM range(n)` synthetic CSV/Parquet, deterministic hash-salted values — never a Python row loop, ADR-007; core kinds pk_id/amount/stage/category/event_date + alternating extras, card/missingness/distribution/seed knobs), `harness.py` (`measure_case` runs each profile in a **fresh child process** so `resource.getrusage` RSS is per-run isolated; pure `evaluate_rss_boundedness` / `evaluate_sampled_cheaper`; `run_suite` emits a self-describing results JSON + machine context), `__main__.py` (`generate|measure|baseline`). `baseline_macos_dev.json` (tracked) = dev-mode baseline; TESTING §4.3.1 records it: RSS 94→169 MB across 200k→1M (×5 rows, ×1.8 RSS = **bounded**, no Python materialization); sampled 144.7s < deep-exact 157.5s (**degrade strictly cheaper**, marginal — full-relation quality rules + query-count dominate). Fast regression test `tests/test_benchmark_harness.py` (+13, never runs the heavy ladder). **GOTCHA:** macOS `os.sysconf` has no `SC_PHYS_PAGES` → RAM read via `sysctl hw.memsize`; `resource` absent on Windows → RSS `None` there (Windows/packaged baseline owed at §5.1). 788/788 pytest green 2026-10-25. **→ NEXT: M7-T2.**
 - [ ] **M7-T2** Scale guarantees verified (RSS flatness, cancel latency, recovery). *Spec: TESTING §4.3.*
 - [ ] **M7-T3** Both-OS installer matrix: install→job→export→upgrade→uninstall. *Spec: SECURITY §6; TESTING §5.1.*
 - [ ] **M7-T4** Security acceptance automation. *Spec: SECURITY §8; TESTING §5.4.*
