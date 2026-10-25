@@ -1,37 +1,57 @@
 /**
- * M6-T4 — Report View: Dataset Overview (§3.1) + Schema & Column Profiling (§3.2).
+ * M6-T4/T5 — Report View: Dataset Overview (§3.1) + Schema & Column Profiling
+ * (§3.2) + Visualizations (§3.3) + Quality Assessment (§3.4).
  *
- * Drives the two §5.2 report reads through the typed bridge client:
- *   • ``report.get_summary``  — the counts-only §3.1 rollup (no metric bodies, §5.4).
- *   • ``report.get_columns``  — the §3.2 ColumnProfile bodies, paged by column (ADR-019).
+ * Drives the report reads through the typed bridge client:
+ *   • ``report.get_summary``   — the counts-only §3.1 rollup + check scorecard.
+ *   • ``report.get_columns``   — the §3.2 ColumnProfile bodies, paged (ADR-019).
+ *   • ``quality.get_results``  — the §4.1 check table, paged + filtered (§3.4).
+ *
+ * The §3.3 charts consume the SAME ``report.get_columns`` bodies — histogram,
+ * categorical frequency, missing-rate bar, IQR box — rendered client-side from
+ * the stored metrics via the vendored Plotly bundle; NO new command and nothing
+ * recomputed here (§10). Parity with ``reporting/html_report.py`` chart shapes.
  *
  * The screen is addressed by the dataset the user last ran (from the shared
  * selection store); the store resolves the *latest run*, and the summary supplies
- * that ``run_id`` so the column pages are pinned to the same run (ADR-019 — the
- * UI ``StartedJob`` store deliberately does NOT carry ``run_id``).
+ * that ``run_id`` so the column/quality pages are pinned to the same run (ADR-019
+ * — the UI ``StartedJob`` store deliberately does NOT carry ``run_id``).
  *
  * Rules honoured here: every numeric carries its ADR-015 ``method`` (an
  * approximate value shows a "≈" badge, a sampled one a "sampled" badge, a
  * ``not_computed`` one shows its reason and never a silent null/zero); a unit not
  * confirmed by config is labelled ``assumed``/``unknown``, never silently asserted
- * (§3.2.1). Findings/visualizations are M6-T5/T6 — no status is fabricated here.
+ * (§3.2.1); FAIL≠ERROR is kept distinct in the quality table (§4.1). Findings and
+ * export actions are M6-T6 — no status is fabricated here.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { BridgeError, bridgeAvailable, bridgeSend } from "../bridge/api";
 import { useSelectedDataset, useStartedJob } from "../state/selection";
+import PlotlyChart from "../charts/PlotlyChart";
+import { chartsForColumn, missingnessChart, type PlotlySpec } from "../charts/plotly";
 import type {
+  CheckStatus,
   ColumnProfile,
   MetricValue,
+  Provenance,
+  QualityCheckResult,
+  QualityDimension,
+  QualityGetResultsPayload,
+  QualityGetResultsResult,
   ReportGetColumnsPayload,
   ReportGetColumnsResult,
   ReportSummaryPayload,
   ReportSummaryResult,
 } from "../types/contracts";
+import { CheckStatusValues, QualityDimensionValues } from "../types/contracts";
 
 // Column page size — bounded so a page stays well under the §5.4 1 MiB cap; a
 // wide/high-cardinality run loads more on demand rather than tripping it.
 const COLUMN_PAGE_SIZE = 20;
+
+// Quality-check page size (§3.4) — same bounded-fetch rule as the columns.
+const QUALITY_PAGE_SIZE = 25;
 
 type LoadStatus = "idle" | "loading" | "ready" | "error";
 
@@ -91,6 +111,25 @@ function MetricCell({ metric, unit }: { metric?: MetricValue | null; unit?: stri
   );
 }
 
+/**
+ * ADR-015 provenance tag for a chart or observed value that is not exact: shows
+ * "≈ approximate" / "sampled" / "not computed" so a figure is never read as a
+ * precise count. Renders nothing for an ``exact`` (or absent) provenance, which
+ * is the default and needs no noise.
+ */
+function MethodTag({ provenance }: { provenance?: Provenance | null }) {
+  const method = provenance?.method;
+  if (!method || method === "exact") return null;
+  const cls = `method-badge method-${method}`;
+  const label =
+    method === "approximate" ? "≈ approximate" : method === "sampled" ? "sampled" : "not computed";
+  return (
+    <span className={cls} title={provenance?.reason ? `reason: ${provenance.reason}` : `method: ${method}`}>
+      {label}
+    </span>
+  );
+}
+
 export default function Report() {
   const job = useStartedJob();
   const dataset = useSelectedDataset();
@@ -106,6 +145,14 @@ export default function Report() {
   const [colsError, setColsError] = useState<string | null>(null);
   const [colsTotal, setColsTotal] = useState(0);
   const [selectedCol, setSelectedCol] = useState<string | null>(null);
+
+  // §3.4 Quality Assessment — paged, filterable quality.get_results set.
+  const [checks, setChecks] = useState<QualityCheckResult[]>([]);
+  const [checksTotal, setChecksTotal] = useState(0);
+  const [checksStatus, setChecksStatus] = useState<LoadStatus>("idle");
+  const [checksError, setChecksError] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<"" | CheckStatus>("");
+  const [dimensionFilter, setDimensionFilter] = useState<"" | QualityDimension>("");
 
   // Fetch one page of column profiles, appending to what is already loaded.
   const loadColumns = useCallback(async (runId: string, offset: number) => {
@@ -129,6 +176,34 @@ export default function Report() {
       setColsError(errText(e));
     }
   }, []);
+
+  // Fetch one page of quality-check results, appending on "load more".
+  const loadQuality = useCallback(
+    async (runId: string, offset: number, status: "" | CheckStatus, dimension: "" | QualityDimension) => {
+      setChecksStatus("loading");
+      setChecksError(null);
+      try {
+        const payload: QualityGetResultsPayload = {
+          run_id: runId,
+          limit: QUALITY_PAGE_SIZE,
+          offset,
+        };
+        if (status) payload.status = status;
+        if (dimension) payload.dimension = dimension;
+        const result = await bridgeSend<QualityGetResultsPayload, QualityGetResultsResult>(
+          "quality.get_results",
+          payload,
+        );
+        setChecks((prev) => (offset === 0 ? result.items : [...prev, ...result.items]));
+        setChecksTotal(result.page.total);
+        setChecksStatus("ready");
+      } catch (e) {
+        setChecksStatus("error");
+        setChecksError(errText(e));
+      }
+    },
+    [],
+  );
 
   // Summary first (it resolves + supplies the run_id), then the first column page.
   useEffect(() => {
@@ -166,6 +241,20 @@ export default function Report() {
     () => columns.find((c) => c.column === selectedCol) ?? null,
     [columns, selectedCol],
   );
+
+  // Load/reload the quality-check page whenever the run or a filter changes
+  // (the summary supplies run_id, so this runs after it resolves). Reset to the
+  // first page on filter change — the §4.1 filters narrow server-side, not here.
+  const runId = summary?.run_id;
+  useEffect(() => {
+    if (!runId || !hasBridge) return;
+    setChecks([]);
+    setChecksTotal(0);
+    void loadQuality(runId, 0, statusFilter, dimensionFilter);
+  }, [runId, hasBridge, statusFilter, dimensionFilter, loadQuality]);
+
+  // §3.3 dataset-level missing-rate bar, from the loaded column bodies only.
+  const missingness = useMemo(() => missingnessChart(columns), [columns]);
 
   // --- No dataset chosen yet ------------------------------------------------
   if (!datasetId) {
@@ -342,6 +431,136 @@ export default function Report() {
 
       {/* Per-column detail (§3.2.1 / §3.2.2) for the selected column */}
       {selected && <ColumnDetail column={selected} />}
+
+      {/* §3.3 Visualizations — dataset-level missing-rate bar (from column bodies) */}
+      <h2>Visualizations</h2>
+      <div className="panel">
+        {missingness ? (
+          <ChartFigure spec={missingness} />
+        ) : (
+          <p className="hint">
+            {colsStatus === "loading"
+              ? "Preparing charts…"
+              : "No missing-rate values were computed for the loaded columns."}
+          </p>
+        )}
+        <p className="hint">
+          Charts are built from the stored §3.2 metrics and rendered client-side
+          (histogram, categorical frequency, missing-rate, IQR spread) — select a
+          column above to see its per-column distribution charts.
+        </p>
+      </div>
+
+      {/* §3.4 Data Quality Assessment — paged quality.get_results, FAIL≠ERROR (§4.1) */}
+      <h2>Data Quality Assessment</h2>
+      <div className="panel">
+        <div className="field-row">
+          <span className="field-label">Status</span>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as "" | CheckStatus)}
+          >
+            <option value="">all</option>
+            {CheckStatusValues.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+          <span className="field-label">Dimension</span>
+          <select
+            value={dimensionFilter}
+            onChange={(e) => setDimensionFilter(e.target.value as "" | QualityDimension)}
+          >
+            <option value="">all</option>
+            {QualityDimensionValues.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {checksError && <p className="mask-warn">{checksError}</p>}
+        {checks.length === 0 && !checksError && (
+          <p className="hint">
+            {checksStatus === "loading"
+              ? "Loading quality checks…"
+              : "No quality checks recorded for this run."}
+          </p>
+        )}
+        {checks.length > 0 && (
+          <>
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Rule</th>
+                    <th>Dimension</th>
+                    <th>Status</th>
+                    <th>Column</th>
+                    <th>Observed</th>
+                    <th>Threshold</th>
+                    <th>Failing</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {checks.map((c) => (
+                    <tr key={`${c.rule_id}@@${c.rule_version}`}>
+                      <td className="mono">{c.rule_id}</td>
+                      <td>{c.dimension}</td>
+                      <td>
+                        <span className={`q-status q-${c.status}`}>{c.status}</span>
+                      </td>
+                      <td className="mono">{c.column ?? "—"}</td>
+                      <td>
+                        {c.status === "ERROR" ? (
+                          <span className="muted" title={c.error?.message ?? ""}>
+                            {c.error?.code ?? "error"}
+                          </span>
+                        ) : (
+                          <MetricCell metric={c.observed} />
+                        )}
+                      </td>
+                      <td className="mono">
+                        {c.status === "ERROR" || !c.threshold
+                          ? "—"
+                          : `${c.threshold.operator} ${formatValue(c.threshold.value as Jsonish)}`}
+                      </td>
+                      <td className="mono">
+                        {c.failing_record_count != null
+                          ? c.failing_record_count.toLocaleString()
+                          : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="pager">
+              <span className="muted">
+                {checks.length} of {checksTotal} checks
+              </span>
+              {checks.length < checksTotal && (
+                <button
+                  className="btn btn-sm"
+                  disabled={checksStatus === "loading"}
+                  onClick={() =>
+                    runId && loadQuality(runId, checks.length, statusFilter, dimensionFilter)
+                  }
+                >
+                  Load more
+                </button>
+              )}
+            </div>
+          </>
+        )}
+        <p className="hint">
+          FAIL means the rule ran and the data violated it; ERROR means the check could
+          not complete — its observed value is <em>not</em> evidence the rule holds (§4.1).
+          Scorecard counts above come from {summary?.check_count ?? 0} checks.
+        </p>
+      </div>
     </section>
   );
 }
@@ -354,6 +573,8 @@ function ColumnDetail({ column }: { column: ColumnProfile }) {
       ? `${column.unit.currency} (${column.unit.status})`
       : column.unit.status
     : null;
+
+  const charts = chartsForColumn(column);
 
   return (
     <div className="panel column-detail">
@@ -478,7 +699,7 @@ function ColumnDetail({ column }: { column: ColumnProfile }) {
               <>
                 <dt>Histogram</dt>
                 <dd className="mono">
-                  {column.distribution.histogram.bins.length} bins (chart: M6-T5)
+                  {column.distribution.histogram.bins.length} bins (chart below)
                 </dd>
               </>
             )}
@@ -544,6 +765,29 @@ function ColumnDetail({ column }: { column: ColumnProfile }) {
           </dl>
         </div>
       )}
+
+      {charts.length > 0 && (
+        <div className="detail-block">
+          <h3>Visualizations</h3>
+          {charts.map((spec) => (
+            <ChartFigure key={`${column.column}-${spec.kind}`} spec={spec} />
+          ))}
+        </div>
+      )}
     </div>
+  );
+}
+
+// --- §3.3 chart figure with an ADR-015 provenance caption --------------------
+
+function ChartFigure({ spec }: { spec: PlotlySpec }) {
+  return (
+    <figure className="chart-figure">
+      <PlotlyChart spec={spec} />
+      <figcaption>
+        <MethodTag provenance={spec.provenance} />
+        {spec.provenance?.reason && <span className="muted reason">{spec.provenance.reason}</span>}
+      </figcaption>
+    </figure>
   );
 }

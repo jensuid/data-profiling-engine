@@ -432,3 +432,34 @@ a.btn-link,
   columns: 2;
   column-gap: 1.5rem;
 }
+
+/* --- M6-T5 Report View: Visualizations (§3.3) + Quality Assessment (§3.4) --- */
+
+/* Plotly chart containers — the vendored bundle sizes itself into the panel. */
+.plotly-wrap { width: 100%; }
+.plotly-chart { width: 100%; min-height: 200px; }
+.chart-figure { margin: 0.4rem 0; }
+.chart-figure figcaption { min-height: 1.1rem; display: flex; gap: 0.4rem; align-items: center; }
+.chart-figure figcaption .reason { font-size: 0.74rem; }
+
+/* §4.1 quality-check status pill — FAIL and ERROR stay visually distinct. */
+.q-status {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  background: #e2e8f0;
+  color: #334155;
+}
+.q-PASS { background: #dcfce7; color: #166534; }
+.q-FAIL { background: #fee2e2; color: #991b1b; }
+.q-WARN { background: #ffedd5; color: #9a3412; }
+.q-ERROR { background: #ede9fe; color: #5b21b6; }
+@media (prefers-color-scheme: dark) {
+  .q-status { background: #334155; color: #e2e8f0; }
+  .q-PASS { background: #14532d; color: #bbf7d0; }
+  .q-FAIL { background: #7f1d1d; color: #fecaca; }
+  .q-WARN { background: #7c2d12; color: #fed7aa; }
+  .q-ERROR { background: #4c1d95; color: #ddd6fe; }
+}

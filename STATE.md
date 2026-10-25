@@ -34,26 +34,46 @@ GATE M4   : reporting-layer tasks T1-T4 COMPLETE (706/706 pytest, tsc clean,
           golden byte-stable). MVP acceptance is on the PACKAGED build
           (BLUEPRINT §5 Phase-1 gate / §6), not dev mode — do not stamp M4
           "accepted" until the packaged run is verified in M7/Phase-3.
-NEXT      : M6-T5 — Report View: Visualizations + Quality Assessment.
-          *Spec: expected-output §3.3–3.4 (references/).*
-          Visualizations (§3.3) consume the SAME `report.get_columns` bodies M6-T4
-          added — histogram (distribution.histogram.bins/counts), categorical
-          frequency (categorical.categories/frequencies), missing-rate chart
-          (per-column missingness.missing_rate), box/outlier
-          (distribution.outlier_candidates). Render client-side (plotly — see
-          reporting/assets/plotly.min.js already vendored); NO new command needed.
-          Quality Assessment (§3.4) = the §4.1 check table via
-          `quality.get_results` (paged, status/dimension filters) + the
-          `report.get_summary` check_status_counts scorecard. Keep FAIL≠ERROR
-          distinct (§4.1); render the ≈ / sampled method badges (ADR-015).
-          Files to open: `references/expected_output_...obsidian.md` §3.3–3.4,
-          `docs/CONTRACTS.md` §4.1 + §5.2, `frontend/src/pages/Report.tsx`
-          (extend — reuse MetricCell + the column state), `bridge/api.ts`,
-          `types/contracts.ts` (QualityCheckResult), `reporting/html_report.py`
-          (chart shapes for parity).
-          Test:  cd frontend && npx tsc --noEmit
+NEXT      : M6-T6 — Report View: Findings & Recommendations + Export actions.
+          *Spec: expected-output §3.4–3.5 (references/).*
+          Findings (§4.2) via `findings.get` (paged, severity/category filters);
+          each Finding carries its deterministic `fingerprint` (ADR-016) and
+          structurally-separated facts / interpretation / hypotheses — render
+          facts as evidence, NEVER fold a recommendation into a fact. The
+          recommendations (§4.3) a finding cites live on the Finding's
+          `recommendation_ids`; fetch/render against the SAME run_id the summary
+          resolves (ADR-019 pattern as M6-T4/T5). Export (§3.5) = `artifact.open`
+          for the HTML report / JSON result / CSV issue export (kind ∈ the
+          DEFAULT_FILENAMES/result_refs set; NO bytes cross — ack + reveal).
+          No new command expected; if a read gap surfaces, escalate (AGENTS §8),
+          don't invent one silently.
+          Files to open: `references/expected_output_...obsidian.md` §3.4–3.5,
+          `docs/CONTRACTS.md` §4.2/§4.3/§4.4 + §5.2 (`findings.get`,
+          `artifact.open`), `frontend/src/pages/Report.tsx` (extend — reuse the
+          run_id/state pattern from M6-T5; findings already typed in
+          `types/contracts.ts` Finding/Recommendation), `bridge/api.ts`,
+          `reporting/csv_export.py` + `quality/registry.py` (export kinds).
+          GOTCHA (M6-T5): Plotly is loaded from the ONE vendored bundle via
+          `publicDir` + a document-relative `<script src="plotly.min.js">`; a
+          `?url` import of that outside-root asset breaks the vite build.
+          Test:  cd frontend && npx tsc --noEmit && npm run build
                  .venv/bin/python -m pytest data_profiling_engine/tests -q
-Blocked by: none (M6-T4 delivered the column-body read path).
+Blocked by: none (M6-T4/T5 delivered the read + chart path).
+Session notes: M6-T5 landed Report Visualizations (§3.3) + Quality Assessment
+               (§3.4). Files: `frontend/src/charts/plotly.ts` (spec builders
+               mirroring html_report.py `_charts_for_column`/`_box_spec`/
+               `_missingness_chart`, + lazy `loadPlotly()` of the vendored
+               bundle), `charts/PlotlyChart.tsx` (newPlot/react + purge on
+               unmount, placeholder-not-throw while Plotly loads so a chart never
+               blocks the report §6.4), `vite-env.d.ts` (window.Plotly ambient;
+               vite/client NOT wired since include=["src"]), `pages/Report.tsx`
+               (+§3.3 missing-rate section, +§3.4 paged quality table with
+               status/dimension selects, MethodTag for non-exact, ChartFigure),
+               `styles.css` +31 (.plotly-*, .chart-figure, .q-status pills).
+               Charts read ONLY the `report.get_columns` bodies already loaded —
+               NO recompute, NO new command (ENGINE §10). No Python/contract
+               change. 772/772 pytest, tsc clean, vite build clean, dist/
+               plotly.min.js emitted 2026-10-25. **→ NEXT: M6-T6.**
 Session notes: M6-T4 landed the Report View (Overview §3.1 + Column Profiling §3.2).
                **ADR-019 / CONTRACTS §5.2 contract change** — added the
                `report.get_columns` read command (7th read cmd; six→seven). Gap
@@ -1327,7 +1347,7 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 - [x] **M6-T2** Run Configuration (mode, sampling, config upload w/ validation errors). *Spec: CONTRACTS §9.* ✅ `RunConfig.tsx` + `config/validation.ts` (client §9 mirror — js-yaml parse, schema-mirrored validator, form→document builder) + `state/selection.ts` (cross-screen dataset/job stores). Mode always sent as the §5.3 `profile_mode` override (worker folds it in, so validated==run); sampling enabled ⇒ strategy+size+seed enforced (ADR-015); uploaded invalid doc blocks Start locally AND server `CONFIG_INVALID` stays authority (no worker spawns on bad config); §9 exemplar validated 0-error on both sides. New dep js-yaml. No Python/contract change; 765/765 pytest green, tsc clean, vite build clean 2026-10-25. **→ NEXT: M6-T3.**
 - [x] **M6-T3** Run Progress (status/percent/cancel). *Spec: CONTRACTS §6.* ✅ `RunProgress.tsx` (/progress): polls `profile.get_status` @700ms (authoritative §5.5) + merges `onPushedJobStatus` hints through one state-rank gate (QUEUED<RUNNING<CANCEL_REQUESTED<terminal — a late message never regresses the bar; the only legal backwards move is a polled RUNNING after CANCEL_REQUESTED, §6.5); §6.2 badge + progress bar (completed/total_steps, current_step); Cancel → `profile.cancel`, locks on optimistic CANCEL_REQUESTED until a polled terminal confirms; JOB_NOT_FOUND (not-retryable §8) stops the poll with an explicit message; SUCCEEDED renders the bounded `_bounded_result` summary (run_id, counts, artifact ref names). `App.tsx` +route/nav, `RunConfig.tsx` banner links to /progress, `styles.css` +62. No Python/contract change; 765/765 pytest green, tsc clean, vite build clean 2026-10-25. **→ NEXT: M6-T4.**
 - [x] **M6-T4** Report View: Overview + Column Profiling. *Spec: expected-output §3.1–3.2.* ✅ Added §5.2 `report.get_columns` read command (ADR-019 — the sanctioned contract change; see session note). Overview via `report.get_summary`, column bodies paged from the persisted `profile_json` artifact. `pages/Report.tsx`. No fabricated statuses; ADR-015 method badges rendered. 772/772 pytest, tsc+vite clean 2026-10-25. **→ NEXT: M6-T5.**
-- [ ] **M6-T5** Report View: Visualizations + Quality Assessment. *Spec: expected-output §3.3–3.4.*
+- [x] **M6-T5** Report View: Visualizations + Quality Assessment. *Spec: expected-output §3.3–3.4.* ✅ Client-side Plotly (histogram/categorical-freq/missing-rate/IQR-box, §3.3) built ONLY from the M6-T4 `report.get_columns` bodies — NO new §5.2 command; chart shapes mirror `reporting/html_report.py` `_charts_for_column`/`_box_spec`/`_missingness_chart` for parity. Quality Assessment (§3.4) = paged `quality.get_results` table + status/dimension filters, FAIL≠ERROR kept distinct (§4.1), ADR-015 method badges. Files: `frontend/src/charts/plotly.ts` (new — spec builders + lazy vendored-Plotly loader), `charts/PlotlyChart.tsx` (new — draw/purge), `vite-env.d.ts` (new — `window.Plotly` ambient), `pages/Report.tsx` (+Visualizations +Quality sections, MethodTag, ChartFigure), `styles.css` +31. Plotly wiring: `vite.config.ts` `publicDir="../data_profiling_engine/reporting/assets"` reuses the ONE vendored 4.8 MB bundle (no npm dep, no git duplication) → copied to `dist/plotly.min.js`; UI loads it with a DOCUMENT-relative `<script src="plotly.min.js">` so it resolves offline under `file://` (no CDN/network, ADR-005/009/010). GOTCHA: a `?url` import of the outside-root asset FAILS rollup resolution ("Could not resolve … ?url") — use publicDir + document-relative src, not `?url`. No Python/contract change (QualityCheckResult/QualityGetResults* already in contracts.ts, parity test green). 772/772 pytest, tsc clean, vite build clean (dist/plotly.min.js present) 2026-10-25. **→ NEXT: M6-T6.**
 - [ ] **M6-T6** Report View: Findings & Recommendations + Export actions. *Spec: expected-output §3.4–3.5.*
 
 ## M7 — Hardening & Release Gate
