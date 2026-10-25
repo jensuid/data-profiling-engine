@@ -21,7 +21,7 @@ from typing import Any, Dict
 import pytest
 
 from data_profiling_engine import schemas as S
-from data_profiling_engine.bridge import COMMANDS, BridgeFacade, configure_runtime
+from data_profiling_engine.bridge import COMMANDS, BridgeFacade, configure_file_dialog, configure_runtime
 from data_profiling_engine.bridge import errors
 from data_profiling_engine.bridge import facade as facade_mod
 from data_profiling_engine.orchestration.rollup import profile_dataset
@@ -102,6 +102,7 @@ def test_commands_are_exactly_the_mvp_set() -> None:
         "report.get_summary",
         "report.get_columns",
         "artifact.open",
+        "dialog.open_file",  # ADR-022 (M7-T4b): the one host-served command
     }
 
 
@@ -535,3 +536,56 @@ def test_retryable_flag_follows_the_error_registry(facade, bridge) -> None:
     resp = send(facade, "dataset.inspect", {"source_path": 1})
     assert resp["error"]["code"] == errors.REQUEST_INVALID
     assert resp["error"]["retryable"] is False
+
+
+# ---------------------------------------------------------------------------
+# 9. dialog.open_file — one user pick through the single allow-listed bridge
+#    (ADR-022, M7-T4b). The provider is duck-typed here; the packaged host
+#    builds it over its pywebview window in main.py.
+# ---------------------------------------------------------------------------
+
+
+class TestDialogOpenFile:
+    def test_a_picked_path_returns_through_the_envelope(self, facade, bridge) -> None:
+        picked = str(gh.GOLDEN_DIR / "sales_deals.csv")
+        configure_file_dialog(lambda: picked)
+        try:
+            assert ok(facade, "dialog.open_file", {}) == {"path": picked}
+        finally:
+            configure_file_dialog(None)
+
+    def test_a_cancel_is_an_honest_null_path_not_an_error(self, facade, bridge) -> None:
+        configure_file_dialog(lambda: None)
+        try:
+            assert ok(facade, "dialog.open_file", {}) == {"path": None}
+        finally:
+            configure_file_dialog(None)
+
+    def test_no_host_dialog_is_a_typed_unavailable_error(self, facade, bridge) -> None:
+        configure_file_dialog(None)  # headless/test context: nothing registered
+        resp = send(facade, "dialog.open_file", {})
+        assert resp["status"] == "error"
+        assert resp["error"]["code"] == errors.DIALOG_UNAVAILABLE
+        assert resp["error"]["retryable"] is False  # §8 host-layer row
+
+    def test_the_payload_carries_nothing_at_all(self, facade, bridge) -> None:
+        # Filters/selection are host-fixed (ADR-011 + SECURITY §3): every field
+        # a caller could dream up — including a path — is an invalid request.
+        for payload in ({"file_types": ["*"]}, {"path": "/etc/passwd"},
+                        {"allow_multiple": True}):
+            resp = send(facade, "dialog.open_file", payload)
+            assert resp["status"] == "error"
+            assert resp["error"]["code"] == errors.REQUEST_INVALID
+            assert "/etc/passwd" not in json.dumps(resp)  # never echoed
+
+    def test_a_failing_dialog_surfaces_typed_never_as_a_crash(self, facade, bridge) -> None:
+        def _boom() -> None:
+            raise RuntimeError("NSOpenPanel failed for /Users/jensu/secrets")
+
+        configure_file_dialog(_boom)
+        try:
+            resp = send(facade, "dialog.open_file", {})
+            assert resp["status"] == "error"
+            assert "/Users/jensu/secrets" not in json.dumps(resp)
+        finally:
+            configure_file_dialog(None)

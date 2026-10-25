@@ -12,7 +12,7 @@
  * file before proceeding.
  */
 import { useCallback, useEffect, useState } from "react";
-import { BridgeError, bridgeAvailable } from "../bridge/api";
+import { BridgeError, bridgeAvailable, bridgeSelectSourceFile } from "../bridge/api";
 import { setSelectedDataset } from "../state/selection";
 import type {
   DatasetInspectResult,
@@ -50,6 +50,7 @@ export default function DatasetSelection() {
   });
   const [maskPii, setMaskPii] = useState(true);
   const [offset, setOffset] = useState(0);
+  const [browsing, setBrowsing] = useState(false);
 
   // Bridge availability check — outside the desktop shell the commands fail
   // gracefully; we show a banner rather than crashing.
@@ -119,6 +120,21 @@ export default function DatasetSelection() {
     }
   }, [inspect, inspectStatus, offset, doPreview]);
 
+  // ADR-022: native open dialog through the bridge — the pick only fills the
+  // path field; inspect/preview then run the ordinary allow-listed reads.
+  const handleBrowse = useCallback(async () => {
+    setBrowsing(true);
+    try {
+      const path = await bridgeSelectSourceFile();
+      if (path) setSourcePath(path);
+    } catch (e) {
+      setInspectStatus("error");
+      setInspectError(e instanceof BridgeError ? `${e.code}: ${e.message}` : String(e));
+    } finally {
+      setBrowsing(false);
+    }
+  }, []);
+
   // Keyboard: Enter in the path field triggers inspect.
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") doInspect();
@@ -147,6 +163,14 @@ export default function DatasetSelection() {
           onKeyDown={handleKeyDown}
           spellCheck={false}
         />
+        <button
+          className="btn"
+          onClick={handleBrowse}
+          disabled={!hasBridge || browsing}
+          title="Pick a CSV or Parquet file with the native open dialog"
+        >
+          {browsing ? "Opening…" : "Browse…"}
+        </button>
         <button
           className="btn"
           onClick={doInspect}

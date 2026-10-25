@@ -41,6 +41,8 @@ class ErrorCode(str, Enum):
     # --- promoted in M1-T6 from the M0 spike (see module docstring) ---
     BRIDGE_REQUEST_INVALID = "BRIDGE_REQUEST_INVALID"
     JOB_NOT_FOUND = "JOB_NOT_FOUND"
+    # --- added with ADR-022 (``dialog.open_file``, M7-T4b) ---
+    DIALOG_UNAVAILABLE = "DIALOG_UNAVAILABLE"
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,7 @@ ERROR_REGISTRY: dict[ErrorCode, ErrorInfo] = {
         _row(ErrorCode.METADATA_WRITE_FAILED, "storage", "Could not persist metadata row", True),
         _row(ErrorCode.BRIDGE_REQUEST_INVALID, "bridge", "Envelope/payload schema validation failed", False),
         _row(ErrorCode.JOB_NOT_FOUND, "job", "Status/cancel referenced an unknown job id", False),
+        _row(ErrorCode.DIALOG_UNAVAILABLE, "host", "No native file dialog registered by the app host", False),
     )
 }
 

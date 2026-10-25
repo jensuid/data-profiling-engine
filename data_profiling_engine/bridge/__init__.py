@@ -13,13 +13,19 @@ from .envelope import (
     BridgeErrorObject,
     BridgeRequest,
     BridgeResponse,
+    DialogOpenFilePayload,
     EchoPayload,
     JobIdPayload,
     ProfileStartPayload,
     WorkerEchoJobPayload,
 )
 from .facade import COMMANDS, PAYLOAD_CAP_BYTES, SPIKE_COMMANDS, BridgeFacade
-from .runtime import configure_runtime, configure_status_push, window_push_sink
+from .runtime import (
+    configure_file_dialog,
+    configure_runtime,
+    configure_status_push,
+    window_push_sink,
+)
 
 __all__ = [
     "BridgeErrorObject",
@@ -28,11 +34,13 @@ __all__ = [
     "BridgeResponse",
     "COMMANDS",
     "SPIKE_COMMANDS",
+    "DialogOpenFilePayload",
     "EchoPayload",
     "JobIdPayload",
     "ProfileStartPayload",
     "PAYLOAD_CAP_BYTES",
     "WorkerEchoJobPayload",
+    "configure_file_dialog",
     "configure_runtime",
     "configure_status_push",
     "window_push_sink",

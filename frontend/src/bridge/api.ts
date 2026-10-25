@@ -10,6 +10,7 @@
  * envelope; it calls :func:`bridgeSend` and catches :class:`BridgeError`.
  */
 import type { JsonValue } from "../types/contracts";
+import type { DialogOpenFileResult } from "../types/contracts";
 
 // --- §5.3 envelope wire types (mirror of the frozen models in schemas/models.py;
 // extra fields are forbidden by the Python validator, so a request here that
@@ -73,6 +74,20 @@ declare global {
 
 export function bridgeAvailable(): boolean {
   return typeof window.pywebview?.api?.bridge_send === "function";
+}
+
+/**
+ * §5.2 ``dialog.open_file`` (ADR-022): ask the host to show the OS-native open
+ * dialog (CSV/Parquet filter fixed host-side, ADR-011). Resolves with the
+ * picked path, or ``null`` when the user cancels. The pick only FILLS the path
+ * field — reading the file still goes through the allow-listed read commands.
+ */
+export async function bridgeSelectSourceFile(): Promise<string | null> {
+  const result = await bridgeSend<Record<string, never>, DialogOpenFileResult>(
+    "dialog.open_file",
+    {},
+  );
+  return result.path ?? null;
 }
 
 function newRequestId(): string {

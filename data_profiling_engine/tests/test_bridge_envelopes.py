@@ -198,6 +198,7 @@ _DOC_RETRYABLE = {
     "METADATA_WRITE_FAILED": True,  # introduced M3-T1 (SQLite metadata store)
     "BRIDGE_REQUEST_INVALID": False,  # promoted M1-T6
     "JOB_NOT_FOUND": False,  # promoted M1-T6
+    "DIALOG_UNAVAILABLE": False,  # introduced ADR-022 (M7-T4b, dialog.open_file)
 }
 
 

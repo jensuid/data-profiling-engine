@@ -40,6 +40,7 @@ _data_root: Optional[Path] = None
 _metadata_store: Optional[object] = None
 _profile_manager: Optional[JobManager] = None
 _push_sink: Optional[Callable[[dict], None]] = None
+_dialog_provider: Optional[Callable[[], Optional[str]]] = None
 
 #: The global the WebView may define to receive a §5.5 push. A fixed name in a
 #: fixed JS expression — the only interpolated text is our own serialised status
@@ -172,9 +173,41 @@ def window_push_sink(window: Any) -> Callable[[dict], None]:
     return _push
 
 
+# ---------------------------------------------------------------------------
+# ADR-022 native file dialog (M7-T4b). The mirror image of the push sink: the
+# WebView *asks* the host for one thing — a user-picked source-file path — and
+# the host answers through a provider it installed itself. Like the sink, the
+# bridge owns no WebView: the callable is duck-typed, built in main.py over
+# ``window.create_file_dialog``, so this module still imports nothing webview.
+# ---------------------------------------------------------------------------
+
+
+def configure_file_dialog(provider: Optional[Callable[[], Optional[str]]] = None) -> None:
+    """Install the process-wide file-dialog provider, or clear it with ``None``.
+
+    The provider opens the OS-native pick dialog (host-thread blocking is
+    correct for a user-modal dialog) and returns the chosen path, or ``None``
+    when the user cancels. The app host installs one once it has a window; a
+    headless/test context leaves it unset and ``dialog.open_file`` answers the
+    typed ``DIALOG_UNAVAILABLE`` error. Deliberately *not* reset by
+    :func:`configure_runtime` — it is the host's choice, not the data-root
+    context (same discipline as the §5.5 push sink)."""
+    global _dialog_provider
+    with _lock:
+        _dialog_provider = provider
+
+
+def get_file_dialog_provider() -> Optional[Callable[[], Optional[str]]]:
+    """The currently registered provider (``None`` = no host dialog)."""
+    with _lock:
+        return _dialog_provider
+
+
 __all__ = [
     "configure_runtime",
     "configure_status_push",
+    "configure_file_dialog",
+    "get_file_dialog_provider",
     "data_root",
     "get_metadata_store",
     "get_profile_manager",

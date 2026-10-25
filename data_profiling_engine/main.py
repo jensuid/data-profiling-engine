@@ -27,6 +27,7 @@ import webview
 
 from data_profiling_engine.bridge import (
     BridgeFacade,
+    configure_file_dialog,
     configure_status_push,
     window_push_sink,
 )
@@ -170,6 +171,33 @@ def _unwrap_js_result(value: object) -> object:
     return value
 
 
+#: ADR-022 (M7-T4b): the open dialog's file-type filter, hard-coded HOST-side
+#: to the MVP connectors (ADR-011). JS sends nothing - the dialog.open_file
+#: payload is empty - so no caller input reaches the dialog (SECURITY §3), and
+#: the returned path still faces the ordinary allow-list on every later read.
+SOURCE_FILE_TYPES = ("CSV files (*.csv)", "Parquet files (*.parquet)")
+
+
+def _window_file_dialog(window):
+    """Build the ``dialog.open_file`` provider over this pywebview window.
+
+    Opens the OS-native single-select open dialog and returns the picked path
+    (``None`` on cancel). Lives in the host, not the bridge: the bridge owns no
+    WebView (same duck-typed discipline as ``window_push_sink``), so only this
+    module touches ``webview`` dialog constants."""
+
+    def _open() -> "str | None":
+        selected = window.create_file_dialog(
+            webview.OPEN_DIALOG, allow_multiple=False, file_types=SOURCE_FILE_TYPES
+        )
+        if not selected:
+            return None
+        first = selected[0] if isinstance(selected, (list, tuple)) else selected
+        return str(first)
+
+    return _open
+
+
 def main(argv: list[str] | None = None) -> int:
     # Must run before anything else in the frozen entry point: spawned
     # children re-import this module and freeze_support short-circuits them
@@ -198,6 +226,9 @@ def main(argv: list[str] | None = None) -> int:
     # authoritative, and both transports carry the identical §5.3 object. Still
     # host→JS only: no server, no socket (ADR-005).
     configure_status_push(window_push_sink(window))
+    # ADR-022: the WebView's Browse button asks the host for a native open
+    # dialog through the single allow-listed bridge (``dialog.open_file``).
+    configure_file_dialog(_window_file_dialog(window))
 
     if args.smoke:
         def _run_smoke() -> None:

@@ -644,6 +644,15 @@ export interface ArtifactOpenPayload {
   reveal?: boolean;
 }
 
+/** §5.2 ``dialog.open_file`` (ADR-022) — EMPTY payload by design: the file-type
+ * filter is hard-coded host-side to the MVP connectors (ADR-011) and nothing a
+ * caller could send reaches the native dialog (SECURITY §3). */
+export interface DialogOpenFilePayload {}
+
+export interface DialogOpenFileResult {
+  path?: string | null; // null = the user cancelled the dialog
+}
+
 /** Page envelope shared by the paged result fetches (§5.4). */
 export interface Page {
   limit: number;

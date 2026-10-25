@@ -49,6 +49,7 @@ from .envelope import (
     BridgeResponse,
     DatasetInspectPayload,
     DatasetPreviewPayload,
+    DialogOpenFilePayload,
     EchoPayload,
     FindingsGetPayload,
     JobIdPayload,
@@ -732,8 +733,26 @@ def _artifact_open_handler(payload: dict[str, Any]) -> dict[str, Any]:
     return {"run_id": run_key, "kind": kind, "ref": ref, "size_bytes": path.stat().st_size}
 
 
+def _dialog_open_file_handler(payload: dict[str, Any]) -> dict[str, Any]:
+    """§5.2 ``dialog.open_file`` (ADR-022): hand the pick to the OS, return a path.
+
+    The provider is the **host's** native dialog (installed via
+    :func:`runtime.configure_file_dialog` from main.py over its window) — the
+    bridge owns no WebView and reads no file here. The human explicitly chose
+    the file, so this grants no scope the typed path input did not already
+    allow: every later read still passes the SECURITY §3 allow-list. Cancel is
+    an honest ``path=None`` ok answer; no registered dialog (headless/test
+    context) is the typed ``DIALOG_UNAVAILABLE`` error, never a silent no-op."""
+    provider = runtime.get_file_dialog_provider()
+    if provider is None:
+        return _error_result("", errors.DIALOG_UNAVAILABLE, "app host has no file dialog")
+    selected = provider()
+    return {"path": str(selected) if selected else None}
+
+
 # Real MVP command registry (CONTRACTS §5.2) — complete as of M5-T1: the
-# async profiling trio (M5-T2) plus the eight store-served read commands.
+# async profiling trio (M5-T2) plus the eight store-served read commands, and
+# since ADR-022 (M7-T4b) the one host-served command ``dialog.open_file``.
 COMMANDS: dict[str, CommandSpec] = {
     "profile.start": CommandSpec(
         name="profile.start",
@@ -789,6 +808,11 @@ COMMANDS: dict[str, CommandSpec] = {
         name="artifact.open",
         payload_model=ArtifactOpenPayload,
         handler=_artifact_open_handler,
+    ),
+    "dialog.open_file": CommandSpec(
+        name="dialog.open_file",
+        payload_model=DialogOpenFilePayload,
+        handler=_dialog_open_file_handler,
     ),
 }
 

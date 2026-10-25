@@ -24,7 +24,7 @@ Milestone : M7 — Hardening & Release Gate — M6 UI screens COMPLETE
           real profile.start worker, T3 §5.5 progress push; packaged
           bridge/worker verification on both OS deferred to M7/Phase-3)
 Task      : none in progress — **M6 COMPLETE; M7-T1 DONE; M7-T2 COMPLETE;
-          M7-T2c DONE; M7-T3 macOS-track LANDED (unsigned) — Windows + codesign/
+          M7-T2c DONE; M7-T4 + M7-T4b DONE; M7-T3 macOS-track LANDED (unsigned) — Windows + codesign/
           notarize legs BLOCKED (no Win box, no Developer ID), see M7 section**
           (T2a = the scheduled 10M→100M RSS-curve ladder, TESTING §4.3.3 +
           `benchmark/ladder_10m_100m_macos_dev.json`: verdict **`bounded`**
@@ -56,6 +56,9 @@ NEXT      : M7-T5 — **GATE MVP: every box of TESTING §5.1 green on packaged
           `tests/test_security_acceptance.py`, 904/904 green — see task line;
           it also fixed two real HTML masking bugs in `reporting/html_report.py`
           and added the `PORTS_SMOKE_RESULT` marker to `main.py --smoke`).
+          M7-T4b landed (native open-file dialog for Dataset Selection, the first
+          **host-served** §5.2 command `dialog.open_file`, ADR-022; +6 tests,
+          910/910 green, tsc+vite clean — see session note).
           ⛔ The gate CANNOT pass from this box: M7-T3's **Windows** installer
           matrix and macOS **codesign + notarization** legs are still deferred
           (Windows hardware + Developer ID identity required — BLUEPRINT Q4,
@@ -87,6 +90,35 @@ GOTCHA (DuckDB 2.0.0): `duckdb_memory()` reports **live** buffers only (reads 0
           dir; and `median`/`quantile_cont` each need a fixed 128 MiB block, so a
           `memory_limit` below ~512 MB converts those metrics into ERRORs instead
           of shrinking the profile.
+Session notes: M7-T4b DONE — native open-file dialog on Dataset Selection
+               (**ADR-022 / CONTRACTS §5.2 + §8 contract change**, user-approved
+               before coding per AGENTS §8; the "revisit in M6-T2" text-input TODO
+               is now closed). Added `dialog.open_file` — the first **host-served**
+               §5.2 command (every other read is store/connector-backed). Pattern
+               mirrors the §5.5 push-sink: `runtime.configure_file_dialog(provider)`
+               holds one duck-typed `Callable[[], Optional[str]]`; `main.py`
+               `_window_file_dialog(window)` wires it to
+               `window.create_file_dialog(webview.OPEN_DIALOG, file_types=SOURCE_FILE_
+               TYPES)` after the window exists — the bridge owns NO WebView (so no
+               `webview` import crosses into `bridge/`). Payload is EMPTY
+               (`extra="forbid"`) so no JS input reaches the dialog (SECURITY §3);
+               filters hard-coded host-side to CSV/Parquet (ADR-011), single-select.
+               Cancel → honest `ok` `{path: null}`; no registered provider (headless/
+               test) → typed `DIALOG_UNAVAILABLE` (§8 row, retryable=false), never a
+               silent no-op. Reads no file, grants no scope — downstream
+               `dataset.inspect`/`profile.start` still apply the path allow-list.
+               Files: `bridge/runtime.py` (provider slot, NOT reset by
+               `configure_runtime` — same lifetime rule as `_push_sink`),
+               `bridge/envelope.py` (`DialogOpenFilePayload`), `bridge/facade.py`
+               (`_dialog_open_file_handler` + COMMANDS), `errors.py` +
+               `bridge/errors.py` (`DIALOG_UNAVAILABLE`), `main.py` (wiring),
+               `frontend/src/types/contracts.ts` + `bridge/api.ts`
+               (`bridgeSelectSourceFile`) + `pages/DatasetSelection.tsx` (Browse…
+               btn). GOTCHA: `test_registry_covers_all_doc_codes` asserts
+               `_DOC_RETRYABLE` keys == every `ErrorCode` — a new §8 code MUST add a
+               `_DOC_RETRYABLE` entry in `test_bridge_envelopes.py` in the same
+               change. Tests: exact-set +`dialog.open_file`, `TestDialogOpenFile`
+               (5). 910/910 pytest green, tsc clean, vite build clean 2026-10-26.
 Session notes: M7-T2c DONE — own the DuckDB ceilings, then re-measure
                (ADR-021 + TESTING §4.3.4). New `duckdb_session.py` is the ONLY
                place a connection opens: `connect()` installs and then READS

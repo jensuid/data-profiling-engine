@@ -47,6 +47,7 @@ __all__ = [
     "ReportSummaryPayload",
     "ReportGetColumnsPayload",
     "ArtifactOpenPayload",
+    "DialogOpenFilePayload",
 ]
 
 
@@ -262,3 +263,17 @@ class ArtifactOpenPayload(BaseModel):
         if (self.kind is None) == (self.ref is None):
             raise ValueError("exactly one of kind or ref is required")
         return self
+
+
+class DialogOpenFilePayload(BaseModel):
+    """§5.2 ``dialog.open_file`` (ADR-022) — ask the host for one user-picked
+    source-file path via the OS-native open dialog.
+
+    The payload is deliberately EMPTY (extra="forbid"): the caller can choose
+    nothing — file-type filters are hard-coded host-side to the MVP connectors
+    (ADR-011) and single-selection is fixed, so no JS input reaches the dialog
+    (SECURITY §3). The reply is ``{path}`` (``null`` on cancel); reading the
+    chosen file still goes through the ordinary allow-listed ``dataset.*`` /
+    ``profile.start`` path — this command only returns a string."""
+
+    model_config = ConfigDict(extra="forbid")

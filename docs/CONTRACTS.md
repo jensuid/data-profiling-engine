@@ -265,6 +265,7 @@ The bridge exposes a **fixed, allow-listed command facade** — never arbitrary 
 | `report.get_summary` | Fetch run summary | summary object |
 | `report.get_columns` | Fetch §3.2 column profiles (paged) | result set |
 | `artifact.open` | Open/export an allow-listed artifact | ack |
+| `dialog.open_file` | Ask the host for one user-picked source-file path (native open dialog) | `{path}` (null on cancel) |
 
 > [!NOTE] `report.get_columns` (ADR-019) — the §3.2 **column-body** read
 > `report.get_summary` is counts-only (§3.1); the per-column metric bodies
@@ -293,6 +294,17 @@ The bridge exposes a **fixed, allow-listed command facade** — never arbitrary 
 > cap. Each item is the unchanged §4.3 `Recommendation` (validated against
 > `recommendation.schema.json`); the command adds no recommendation and re-shapes
 > nothing, keeping the §7 fact/interpretation/recommendation separation intact.
+
+> [!NOTE] `dialog.open_file` (ADR-022) — the one **host-served** command.
+> Every other §5.2 command is store- or connector-backed; this one asks the app
+> host to show the OS-native open dialog so the user need not type a path.
+> The payload is **empty** (`extra=forbid`): file-type filters are hard-coded
+> host-side to the MVP connectors (ADR-011) and selection is single, so no
+> caller input reaches the dialog (SECURITY §3). It reads no file and grants no
+> scope — it returns the one string the user explicitly picked; every later
+> read of that path still passes the ordinary path allow-list. A cancel is an
+> honest `ok` with `path: null`; a headless context with no registered dialog
+> is the typed `DIALOG_UNAVAILABLE` error, never a silent no-op.
 
 ### 5.3 Message envelopes
 
@@ -406,6 +418,7 @@ No component may move a hypothesis up into facts or assert an unverified cause. 
 | `METADATA_WRITE_FAILED` | storage | Could not persist a metadata-store row (SQLite) | maybe |
 | `BRIDGE_REQUEST_INVALID` | bridge | Envelope/command-payload schema validation failed | no |
 | `JOB_NOT_FOUND` | job | Status/cancel referenced an unknown job id | no |
+| `DIALOG_UNAVAILABLE` | host | No native file dialog registered by the app host | no |
 
 Error objects must never contain credentials or raw sensitive data values ([[SECURITY_PACKAGING]] §5).
 

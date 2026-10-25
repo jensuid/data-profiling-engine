@@ -36,6 +36,10 @@ CONFIG_INVALID = ErrorCode.CONFIG_INVALID.value
 # an unreadable/missing source itself, the bridge only translates its code.
 DATASET_READ_FAILED = ErrorCode.DATASET_READ_FAILED.value
 
+# Surfaced by the ``dialog.open_file`` handler (ADR-022, M7-T4b): a headless /
+# test context where the host registered no native file dialog.
+DIALOG_UNAVAILABLE = ErrorCode.DIALOG_UNAVAILABLE.value
+
 __all__ = [
     "COMMAND_UNKNOWN",
     "PAYLOAD_TOO_LARGE",
@@ -46,6 +50,7 @@ __all__ = [
     "JOB_NOT_FOUND",
     "CONFIG_INVALID",
     "DATASET_READ_FAILED",
+    "DIALOG_UNAVAILABLE",
     "ErrorCode",
     "ErrorInfo",
     "ERROR_REGISTRY",
