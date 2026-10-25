@@ -99,6 +99,7 @@ def test_commands_are_exactly_the_mvp_set() -> None:
         "quality.get_results",
         "findings.get",
         "report.get_summary",
+        "report.get_columns",
         "artifact.open",
     }
 
@@ -327,6 +328,70 @@ class TestReportSummary:
 
     def test_unknown_run_is_a_typed_error(self, facade, bridge) -> None:
         resp = send(facade, "report.get_summary", {"run_id": "run_never_ran"})
+        assert resp["status"] == "error"
+        assert resp["error"]["code"] == errors.REQUEST_INVALID
+
+
+# ---------------------------------------------------------------------------
+# 5b. report.get_columns (ADR-019) — §3.2 column bodies, paged from the artifact
+# ---------------------------------------------------------------------------
+
+
+class TestReportGetColumns:
+    def test_items_are_contract_column_profiles(self, facade, bridge) -> None:
+        result = ok(facade, "report.get_columns", {"run_id": RUN_ID})
+        assert result["run_id"] == RUN_ID
+        for item in result["items"]:
+            assert S.validate("column_profile.schema.json", item) == []
+            assert {"column", "ordinal", "physical_type", "logical_type",
+                    "semantic_type"} <= set(item)
+            # ADR-015: any present metric value carries a provenance method.
+            for block in ("missingness", "uniqueness", "stats"):
+                body = item.get(block)
+                if block == "missingness" and body:
+                    assert body["missing_rate"]["provenance"]["method"]
+        # One page returns every column of the small golden run.
+        assert result["page"]["total"] == len(result["items"])
+        assert result["page"]["total"] == 5
+
+    def test_values_match_the_persisted_artifact(self, facade, bridge) -> None:
+        doc = json.loads(
+            (bridge / f"artifacts/{RUN_ID}/profile.json").read_text("utf-8")
+        )
+        by_col = {c["column"]: c for c in doc["profile"]["columns"]}
+        result = ok(facade, "report.get_columns", {"run_id": RUN_ID})
+        for item in result["items"]:
+            stored = by_col[item["column"]]
+            # The bridge object equals the artifact projection (exclude_none only
+            # drops absent/null leaves, never a reported value).
+            assert item["ordinal"] == stored["ordinal"]
+            assert item["physical_type"] == stored["physical_type"]
+
+    def test_columns_are_paged_by_ordinal(self, facade, bridge) -> None:
+        page = ok(facade, "report.get_columns", {"run_id": RUN_ID, "limit": 2})
+        assert len(page["items"]) == 2
+        assert page["page"] == {"limit": 2, "offset": 0, "total": 5}
+        second = ok(facade, "report.get_columns", {"run_id": RUN_ID, "limit": 2, "offset": 4})
+        assert len(second["items"]) == 1
+        assert second["items"][0]["ordinal"] == 4
+
+    def test_addressed_by_dataset_resolves_latest_run(self, facade, bridge) -> None:
+        result = ok(facade, "report.get_columns", {"dataset_id": DATASET_ID})
+        assert result["run_id"] == RUN_ID
+        assert len(result["items"]) == 5
+
+    def test_page_fits_the_bridge_cap(self, facade, bridge) -> None:
+        result = ok(facade, "report.get_columns", {"run_id": RUN_ID})
+        assert len(json.dumps(result).encode("utf-8")) < facade_mod.PAYLOAD_CAP_BYTES
+
+    def test_unknown_run_is_a_typed_error(self, facade, bridge) -> None:
+        resp = send(facade, "report.get_columns", {"run_id": "run_never_ran"})
+        assert resp["status"] == "error"
+        assert resp["error"]["code"] == errors.REQUEST_INVALID
+
+    def test_payload_requires_a_run_source(self, facade, bridge) -> None:
+        # Neither run_id nor dataset_id → PagedResultPayload._one_source rejects it.
+        resp = send(facade, "report.get_columns", {})
         assert resp["status"] == "error"
         assert resp["error"]["code"] == errors.REQUEST_INVALID
 

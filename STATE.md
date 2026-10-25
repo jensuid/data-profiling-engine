@@ -22,41 +22,66 @@ Milestone : M6 — UI Screens (GATE M1 CONTRACTS FREEZE PASSED
           dev-mode 2026-10-25 — T1 read commands + caps, T2 job manager +
           real profile.start worker, T3 §5.5 progress push; packaged
           bridge/worker verification on both OS deferred to M7/Phase-3)
-Task      : none in progress — M6-T3 done (Run Progress screen: /progress,
-          polls profile.get_status authoritative @700ms + __dpeJobStatus push
-          hints merged via state-rank gate, §6.2 state badge + progress bar +
-          current_step, Cancel -> profile.cancel with CANCEL_REQUESTED lock
-          until polled terminal, SUCCEEDED bounded result summary from
-          _bounded_result incl. run_id/counts). M5 COMPLETE; M6-T1+T2+T3
-          landed. Frontend compiles clean; Python suite unchanged (all
-          changes frontend-only).
+Task      : none in progress — M6-T4 done (Report View: Overview §3.1 +
+          Column Profiling §3.2). **Required a contract change**: added the
+          §5.2 read command `report.get_columns` (ADR-019) because no existing
+          command returned the §3.2 ColumnProfile metric *bodies* (get_summary is
+          counts-only; dataset.inspect is identity+types only; the store's
+          normalised rows carry only scalar leaves) — raised per AGENTS §8 and
+          approved before coding. Frontend `pages/Report.tsx` renders /report.
+          M5 + M6-T1..T4 landed. 772/772 pytest green, tsc clean, vite build clean.
 GATE M4   : reporting-layer tasks T1-T4 COMPLETE (706/706 pytest, tsc clean,
           golden byte-stable). MVP acceptance is on the PACKAGED build
           (BLUEPRINT §5 Phase-1 gate / §6), not dev mode — do not stamp M4
           "accepted" until the packaged run is verified in M7/Phase-3.
-NEXT      : M6-T4 — Report View: Overview + Column Profiling.
-          *Spec: expected-output §3.1–3.2 (references/), CONTRACTS §3/§5.2.*
-          The SUCCEEDED JobStatus `result` (worker profile_job._bounded_result)
-          carries `{run_id, dataset_id, result_refs, row_count, column_count,
-          finding_count, check_count, recommendation_count, error_count}` —
-          that is the handover into the report screen (StartedJob store does NOT
-          carry run_id yet; decide in M6-T4 whether to extend it or re-fetch via
-          report.get_summary). Build on the existing /report Placeholder route:
-          `report.get_summary` + `dataset.inspect`-style reads; column-level
-          profiles come from the persisted run document — check whether a
-          §5.2 command already pages them out (findings.get /
-          quality.get_results exist; a column-profile read path may need an
-          M5-style handler — if so STOP and raise it, AGENTS §5/§8, do not
-          invent a command silently).
-          Files to open: `docs/CONTRACTS.md` §3.1–3.2 + §5.2,
-          `references/expected_output_data_profiling_engine_mvp_vs_final_obsidian.md`
-          §3.1–3.2, `frontend/src/pages/Placeholder.tsx` + `App.tsx` (/report
-          route), `frontend/src/bridge/api.ts`, `frontend/src/types/contracts.ts`
-          (`DatasetProfile`/`ColumnProfile`), `bridge/facade.py`
-          (_report_summary_handler + what read commands exist for columns).
+NEXT      : M6-T5 — Report View: Visualizations + Quality Assessment.
+          *Spec: expected-output §3.3–3.4 (references/).*
+          Visualizations (§3.3) consume the SAME `report.get_columns` bodies M6-T4
+          added — histogram (distribution.histogram.bins/counts), categorical
+          frequency (categorical.categories/frequencies), missing-rate chart
+          (per-column missingness.missing_rate), box/outlier
+          (distribution.outlier_candidates). Render client-side (plotly — see
+          reporting/assets/plotly.min.js already vendored); NO new command needed.
+          Quality Assessment (§3.4) = the §4.1 check table via
+          `quality.get_results` (paged, status/dimension filters) + the
+          `report.get_summary` check_status_counts scorecard. Keep FAIL≠ERROR
+          distinct (§4.1); render the ≈ / sampled method badges (ADR-015).
+          Files to open: `references/expected_output_...obsidian.md` §3.3–3.4,
+          `docs/CONTRACTS.md` §4.1 + §5.2, `frontend/src/pages/Report.tsx`
+          (extend — reuse MetricCell + the column state), `bridge/api.ts`,
+          `types/contracts.ts` (QualityCheckResult), `reporting/html_report.py`
+          (chart shapes for parity).
           Test:  cd frontend && npx tsc --noEmit
                  .venv/bin/python -m pytest data_profiling_engine/tests -q
-Blocked by: none.
+Blocked by: none (M6-T4 delivered the column-body read path).
+Session notes: M6-T4 landed the Report View (Overview §3.1 + Column Profiling §3.2).
+               **ADR-019 / CONTRACTS §5.2 contract change** — added the
+               `report.get_columns` read command (7th read cmd; six→seven). Gap
+               that forced it: NO prior §5.2 command returned the §3.2
+               ColumnProfile metric *bodies* — `report.get_summary` is counts-only,
+               `dataset.inspect` is identity+types, and the store's
+               `column_metric_values` rows carry ONLY the scalar leaves
+               (`missing_rate`/`distinct_count`/`stats.*`/`skewness`, via
+               `_iter_column_metrics`) — histogram/categorical/temporal/null-count
+               bodies live ONLY in the `profile_json` artifact. GOTCHA: the new
+               handler reads that ARTIFACT (authoritative full doc,
+               `result_document(bundle)["profile"]["columns"]`) via
+               `store.artifact_ref(run,"profile_json")` + `ArtifactStore.read_text`,
+               NOT the lossy store rows; pages ColumnProfile by ordinal, revalidates
+               each through the pydantic `ColumnProfile` (parity — TS types were
+               already in sync, NO schema/model change), response re-checked vs the
+               §5.4 1 MiB cap. Addressed by run_id OR dataset→latest run
+               (`_resolve_run_id`), so the UI `StartedJob` store deliberately does
+               NOT carry run_id — `report.get_summary` supplies it. Files:
+               `bridge/envelope.py` (+`ReportGetColumnsPayload(PagedResultPayload)`),
+               `bridge/facade.py` (+`_report_columns_handler`, COMMANDS, docstring),
+               `docs/CONTRACTS.md` §5.2 + `ARCHITECTURE_AND_ADRS.md` ADR-019, tests
+               `test_bridge_read_commands.py` (+7, exact-set +1). Frontend:
+               `pages/Report.tsx` (new — MetricCell renders ADR-015 ≈/sampled/n-c
+               badges + per-column detail; NO fabricated column status — findings are
+               M6-T6), `App.tsx` (/report→Report), `types/contracts.ts`
+               (+ReportSummaryResult/ReportGetColumns*), `styles.css` +79. 772/772
+               pytest, tsc clean, vite build clean 2026-10-25. **→ NEXT: M6-T5.**
 Session notes: M6-T3 landed the Run Progress screen (CONTRACTS §5.5, §6).
                Files: `frontend/src/pages/RunProgress.tsx` (poll
                `profile.get_status` every 700ms — authoritative; optional
@@ -1301,7 +1326,7 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 - [x] **M6-T1** Dataset Selection + inspect/preview. *Spec: BLUEPRINT Phase 2; CONTRACTS §5.* ✅ First real UI screen. `bridge/api.ts` (typed §5.3 envelope client: `BridgeRequest`/`BridgeResponse`/`BridgeError`; `bridgeSend<R>` unwraps ok→result; `bridgeStartJob` returns job_id; `onPushedJobStatus` registers the optional §5.5 `__dpeJobStatus` push sink; `bridgeAvailable` detects shell). `DatasetSelection.tsx`: path text input → `dataset.inspect` metadata grid (file, connector, size, content_hash, columns table w/ logical+semantic types when stored run exists, last_run badge, row_count + method tag) → auto `dataset.preview` (50-row paged, PII mask toggle, lock icons, masking_applied info, prev/next). `App.tsx`: route `/` → DatasetSelection. `styles.css`: +150 lines (path-row, meta-grid, inspect/preview-panel, table-scroll, pager, error-box, banner-warn, mask-toggle, last-run-badge, dark-mode variants). No Python changes, no new §5.2 commands, no new enum, 765 tests green, tsc clean, vite build 5.6s. **→ NEXT: M6-T2.**
 - [x] **M6-T2** Run Configuration (mode, sampling, config upload w/ validation errors). *Spec: CONTRACTS §9.* ✅ `RunConfig.tsx` + `config/validation.ts` (client §9 mirror — js-yaml parse, schema-mirrored validator, form→document builder) + `state/selection.ts` (cross-screen dataset/job stores). Mode always sent as the §5.3 `profile_mode` override (worker folds it in, so validated==run); sampling enabled ⇒ strategy+size+seed enforced (ADR-015); uploaded invalid doc blocks Start locally AND server `CONFIG_INVALID` stays authority (no worker spawns on bad config); §9 exemplar validated 0-error on both sides. New dep js-yaml. No Python/contract change; 765/765 pytest green, tsc clean, vite build clean 2026-10-25. **→ NEXT: M6-T3.**
 - [x] **M6-T3** Run Progress (status/percent/cancel). *Spec: CONTRACTS §6.* ✅ `RunProgress.tsx` (/progress): polls `profile.get_status` @700ms (authoritative §5.5) + merges `onPushedJobStatus` hints through one state-rank gate (QUEUED<RUNNING<CANCEL_REQUESTED<terminal — a late message never regresses the bar; the only legal backwards move is a polled RUNNING after CANCEL_REQUESTED, §6.5); §6.2 badge + progress bar (completed/total_steps, current_step); Cancel → `profile.cancel`, locks on optimistic CANCEL_REQUESTED until a polled terminal confirms; JOB_NOT_FOUND (not-retryable §8) stops the poll with an explicit message; SUCCEEDED renders the bounded `_bounded_result` summary (run_id, counts, artifact ref names). `App.tsx` +route/nav, `RunConfig.tsx` banner links to /progress, `styles.css` +62. No Python/contract change; 765/765 pytest green, tsc clean, vite build clean 2026-10-25. **→ NEXT: M6-T4.**
-- [ ] **M6-T4** Report View: Overview + Column Profiling. *Spec: expected-output §3.1–3.2.*
+- [x] **M6-T4** Report View: Overview + Column Profiling. *Spec: expected-output §3.1–3.2.* ✅ Added §5.2 `report.get_columns` read command (ADR-019 — the sanctioned contract change; see session note). Overview via `report.get_summary`, column bodies paged from the persisted `profile_json` artifact. `pages/Report.tsx`. No fabricated statuses; ADR-015 method badges rendered. 772/772 pytest, tsc+vite clean 2026-10-25. **→ NEXT: M6-T5.**
 - [ ] **M6-T5** Report View: Visualizations + Quality Assessment. *Spec: expected-output §3.3–3.4.*
 - [ ] **M6-T6** Report View: Findings & Recommendations + Export actions. *Spec: expected-output §3.4–3.5.*
 

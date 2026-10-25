@@ -262,7 +262,23 @@ The bridge exposes a **fixed, allow-listed command facade** — never arbitrary 
 | `quality.get_results` | Fetch quality check results (paged) | result set |
 | `findings.get` | Fetch findings (paged) | result set |
 | `report.get_summary` | Fetch run summary | summary object |
+| `report.get_columns` | Fetch §3.2 column profiles (paged) | result set |
 | `artifact.open` | Open/export an allow-listed artifact | ack |
+
+> [!NOTE] `report.get_columns` (ADR-019) — the §3.2 **column-body** read
+> `report.get_summary` is counts-only (§3.1); the per-column metric bodies
+> (`missingness`, `uniqueness`, `stats`, `distribution`, `categorical`, `temporal`)
+> that the Report View's Schema & Column Profiling screen renders were not reachable
+> by any earlier §5.2 command — they lived only in the `profile_json` artifact
+> behind `artifact.open` (no bytes cross). `report.get_columns` closes that gap: it
+> addresses one run the same way the other reads do (explicit `run_id`, else the
+> dataset's latest run), reads the persisted §3.1 document, and pages `ColumnProfile`
+> objects **by column ordinal** so each response stays under the §5.4 1 MiB cap
+> (`limit` ≤ 200, default 50). Each page item is the unchanged §3.2 `ColumnProfile`
+> (validated against `column_profile.schema.json`), carrying its own per-metric
+> provenance (ADR-015) — the command adds no new metric and re-shapes nothing. Array
+> bodies (histogram bins, category frequencies) are returned whole per column and
+> page smaller when a wide/high-cardinality run would exceed the cap.
 
 ### 5.3 Message envelopes
 

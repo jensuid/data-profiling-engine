@@ -629,6 +629,9 @@ export interface ReportSummaryPayload {
   dataset_id?: string;
 }
 
+/** §5.2 ``report.get_columns`` (ADR-019) — paged §3.2 column bodies. */
+export interface ReportGetColumnsPayload extends PagedResultPayload {}
+
 export interface ArtifactOpenPayload {
   run_id: string;
   kind?: string; // exactly one of kind/ref
@@ -702,6 +705,44 @@ export interface ArtifactOpenResult {
   kind?: string;
   ref: string;
   size_bytes: number;
+}
+
+/** §5.2 ``report.get_summary`` result — the §3.1 counts-only rollup (§5.4: no bodies). */
+export interface ReportSummaryResult {
+  run_id: string;
+  schema_version?: string;
+  job_id?: string;
+  dataset_id?: string;
+  connector?: string;
+  status?: JobState;
+  config?: { [key: string]: JsonValue };
+  engine_version?: string;
+  started_at?: string;
+  finished_at?: string;
+  duration_ms?: number;
+  sampling_enabled?: boolean | null;
+  sample_seed?: number | null;
+  row_count?: number | null;
+  row_count_method?: MetricMethod;
+  column_count?: number | null;
+  grain?: string | null;
+  temporal_coverage?: TemporalCoverage | null;
+  check_status_counts?: { [key: string]: number };
+  finding_count?: number;
+  check_count?: number;
+  recommendation_count?: number;
+  error_count?: number;
+  warning_count?: number;
+  result_refs?: { [key: string]: string };
+  error_log?: { [key: string]: JsonValue }[];
+  [key: string]: unknown;
+}
+
+/** §5.2 ``report.get_columns`` result — one paged page of §3.2 ColumnProfiles. */
+export interface ReportGetColumnsResult {
+  run_id: string;
+  items: ColumnProfile[];
+  page: Page;
 }
 
 // ---------------------------------------------------------------------------

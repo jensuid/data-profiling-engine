@@ -1,6 +1,6 @@
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import DatasetSelection from "./pages/DatasetSelection";
-import Placeholder from "./pages/Placeholder";
+import Report from "./pages/Report";
 import RunConfig from "./pages/RunConfig";
 import RunProgress from "./pages/RunProgress";
 
@@ -21,7 +21,7 @@ export default function App() {
           <Route path="/" element={<DatasetSelection />} />
           <Route path="/run" element={<RunConfig />} />
           <Route path="/progress" element={<RunProgress />} />
-          <Route path="/report" element={<Placeholder title="Report (M6-T4/T5/T6)" />} />
+          <Route path="/report" element={<Report />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

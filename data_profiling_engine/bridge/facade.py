@@ -15,10 +15,10 @@ and only registered when the facade is constructed with
 ``enable_spike_commands=True`` (the M0 spike test suite does; the packaged app
 does not). The real MVP commands from CONTRACTS §5.2 are all wired here:
 ``profile.start`` / ``profile.get_status`` / ``profile.cancel`` land on the
-store-backed job manager (M5-T2), and the six read commands
+store-backed job manager (M5-T2), and the seven read commands
 (``dataset.inspect`` / ``dataset.preview`` / ``quality.get_results`` /
-``findings.get`` / ``report.get_summary`` / ``artifact.open``) are served from
-the M3 stores with paging and the §5.4 caps enforced on **both** directions
+``findings.get`` / ``report.get_summary`` / ``report.get_columns`` (ADR-019) /
+``artifact.open``) are served from the M3 stores with paging and the §5.4 caps enforced on **both** directions
 (request at the envelope, response re-checked before it is handed back) — M5-T1.
 Progress (§5.5) is polled here and is authoritative; the optional host→JS push
 lives in :mod:`runtime` and emits the *same* §5.3 status object this module
@@ -54,6 +54,7 @@ from .envelope import (
     ProfileStartPayload,
     QualityGetResultsPayload,
     ReportSummaryPayload,
+    ReportGetColumnsPayload,
     WorkerEchoJobPayload,
 )
 from .worker import default_manager
@@ -600,6 +601,60 @@ def _report_summary_handler(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _report_columns_handler(payload: dict[str, Any]) -> dict[str, Any]:
+    """§5.2 ``report.get_columns`` (ADR-019): paged §3.2 ``ColumnProfile`` bodies.
+
+    The full column document is not in the metadata store's normalised rows (those
+    carry only the scalar metric leaves, a cheap-diff projection — M3-T3), so the
+    authoritative source is the persisted ``profile_json`` artifact: the same file
+    ``artifact.open`` reveals, read host-side here and **paged by column ordinal**
+    so no single response exceeds the §5.4 message cap (the facade re-checks the
+    serialized page). Each returned item is rebuilt through the §3.2
+    :class:`ColumnProfile` model so what crosses the bridge is the contract object
+    — per-metric ADR-015 provenance and the ``not_computed`` + ``reason``
+    absence rule are preserved verbatim, never a silent null. Counts and the
+    §3.1 scalar rollup stay in ``report.get_summary``; this command adds no metric
+    and computes nothing."""
+    from data_profiling_engine.schemas.models import ColumnProfile
+    from data_profiling_engine.storage.artifact_store import ArtifactStore, ArtifactStoreError
+
+    store = runtime.get_metadata_store()
+    run_key = _resolve_run_id(store, payload)
+    if isinstance(run_key, dict):  # pragma: no cover - defensive
+        return run_key
+    if not run_key:
+        return _error_result("", errors.REQUEST_INVALID, "no stored run for request")
+    ref = store.artifact_ref(run_key, "profile_json")
+    if ref is None:
+        return _error_result("", errors.REQUEST_INVALID, "profile document not recorded for run")
+    try:
+        files = ArtifactStore(data_root=runtime.data_root())
+        document = json.loads(files.read_text(ref))
+    except (ArtifactStoreError, ValueError):
+        # A missing/unreadable/undecodable artifact is a read failure, not a
+        # crash; the message stays generic (SECURITY §5 — no path or raw bytes).
+        return _error_result("", errors.DATASET_READ_FAILED, "profile document could not be read")
+    columns = (document.get("profile") or {}).get("columns") or []
+    total = len(columns)
+    start = int(payload["offset"])
+    stop = start + int(payload["limit"])
+    items: list[dict[str, Any]] = []
+    for col in columns[start:stop]:
+        try:
+            items.append(
+                ColumnProfile.model_validate(col).model_dump(mode="json", exclude_none=True)
+            )
+        except ValidationError:
+            # A stored body that no longer satisfies §3.2 is a contract violation;
+            # surface it typed rather than passing a malformed object across (§1).
+            return _error_result("", errors.REQUEST_INVALID, "stored column profile invalid")
+    return {
+        "run_id": run_key,
+        "items": items,
+        "page": {"limit": payload["limit"], "offset": start, "total": total},
+    }
+
+
 def _artifact_open_handler(payload: dict[str, Any]) -> dict[str, Any]:
     """§5.2 ``artifact.open``: ack an allow-listed artifact (SECURITY §3/§4).
 
@@ -680,6 +735,11 @@ COMMANDS: dict[str, CommandSpec] = {
         name="report.get_summary",
         payload_model=ReportSummaryPayload,
         handler=_report_summary_handler,
+    ),
+    "report.get_columns": CommandSpec(
+        name="report.get_columns",
+        payload_model=ReportGetColumnsPayload,
+        handler=_report_columns_handler,
     ),
     "artifact.open": CommandSpec(
         name="artifact.open",

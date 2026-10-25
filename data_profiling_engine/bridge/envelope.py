@@ -45,6 +45,7 @@ __all__ = [
     "QualityGetResultsPayload",
     "FindingsGetPayload",
     "ReportSummaryPayload",
+    "ReportGetColumnsPayload",
     "ArtifactOpenPayload",
 ]
 
@@ -213,6 +214,17 @@ class ReportSummaryPayload(BaseModel):
         if self.run_id is None and self.dataset_id is None:
             raise ValueError("run_id or dataset_id is required")
         return self
+
+
+class ReportGetColumnsPayload(PagedResultPayload):
+    """§5.2 ``report.get_columns`` (ADR-019) — paged §3.2 ``ColumnProfile``
+    bodies for the Report View's column-profiling screen.
+
+    Reuses the shared paging/addressing block verbatim (one run by ``run_id``
+    or the dataset's latest by ``dataset_id``; ``limit`` bounds the page length
+    and the facade re-checks the serialized page against the §5.4 cap). Pages
+    columns by ordinal, so a wide/high-cardinality run narrows ``limit`` rather
+    than tripping the cap."""
 
 
 class ArtifactOpenPayload(BaseModel):
