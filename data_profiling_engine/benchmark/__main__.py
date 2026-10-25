@@ -13,6 +13,9 @@
     python -m data_profiling_engine.benchmark guarantees \\
         [--rows 5000] --workdir .benchmarks --out .benchmarks/guarantees.json
 
+    python -m data_profiling_engine.benchmark watch \\
+        --workdir .benchmarks/ladder --sizes 10000000,100000000 [--interval 30] [--json]
+
 ``baseline`` is the release-gate entry: it runs the row-scaling RSS curve plus
 the exact-vs-sampled wall-clock pair and writes a self-describing results doc
 (machine context + workload + guarantees, TESTING §4.2/§4.4). The heavy
@@ -96,6 +99,19 @@ def build_parser() -> argparse.ArgumentParser:
     guar.add_argument("--seed", type=int, default=7)
     guar.add_argument("--workdir", default=".benchmarks/guarantees")
     guar.add_argument("--out", default=".benchmarks/guarantees/results.json")
+
+    watch = sub.add_parser(
+        "watch",
+        help="read-only % -done indicator for a long-running ladder (estimate, not a product metric)",
+    )
+    watch.add_argument("--sizes", default="10000000,100000000", help="same ladder as the baseline run")
+    watch.add_argument("--columns", type=int, default=8, help="accepted for symmetry with `baseline`; unused")
+    watch.add_argument("--format", dest="fmt", choices=("csv", "parquet"), default="csv")
+    watch.add_argument("--mode", default="standard")
+    watch.add_argument("--workdir", default=".benchmarks/ladder")
+    watch.add_argument("--interval", type=float, default=0.0,
+                       help="poll every N seconds until results.json appears (0 = one snapshot)")
+    watch.add_argument("--json", action="store_true", dest="as_json")
     return p
 
 
@@ -133,6 +149,26 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.command == "guarantees":
         return _run_guarantees(args)
+
+    if args.command == "watch":
+        from data_profiling_engine.benchmark.watch import watch_ladder
+
+        import time as _time
+
+        sizes = tuple(_parse_sizes(args.sizes))
+        code = watch_ladder(
+            sizes=sizes, workdir=args.workdir, fmt=args.fmt, mode=args.mode,
+            json_out=args.as_json,
+        )
+        if args.interval <= 0:
+            return code
+        while code == 1:  # live polling: one snapshot per tick
+            _time.sleep(args.interval)
+            code = watch_ladder(
+                sizes=sizes, workdir=args.workdir, fmt=args.fmt, mode=args.mode,
+                json_out=args.as_json,
+            )
+        return code
 
     return 2  # pragma: no cover - argparse enforces the subcommand
 
