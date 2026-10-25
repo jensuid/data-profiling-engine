@@ -463,3 +463,74 @@ a.btn-link,
   .q-WARN { background: #7c2d12; color: #fed7aa; }
   .q-ERROR { background: #4c1d95; color: #ddd6fe; }
 }
+
+/* §3.4/§4.2 Findings — each finding keeps facts / interpretation / hypotheses
+   structurally separate (§7); recommendations render as cited §4.3 bodies. */
+.finding-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+  margin: 0.7rem 0;
+  background: #fff;
+}
+@media (prefers-color-scheme: dark) {
+  .finding-card { background: #1e293b; border-color: #334155; }
+}
+.finding-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.finding-id { font-size: 0.78rem; opacity: 0.7; }
+.finding-title { font-size: 1.05rem; font-weight: 700; margin: 0; flex: 1 1 auto; }
+.finding-summary { margin: 0.5rem 0 0.25rem; }
+.fingerprint { font-size: 0.72rem; word-break: break-all; margin: 0.1rem 0; }
+.finding-scope { margin: 0.15rem 0 0.4rem; }
+.sev-pill, .cat-pill, .reason-pill, .hypo-status {
+  display: inline-block;
+  padding: 0.08rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: #e2e8f0;
+  color: #334155;
+}
+.sev-critical { background: #7f1d1d; color: #fecaca; }
+.sev-high { background: #fee2e2; color: #991b1b; }
+.sev-medium { background: #ffedd5; color: #9a3412; }
+.sev-low, .sev-warning { background: #fef9c3; color: #854d0e; }
+.sev-info { background: #e0f2fe; color: #075985; }
+.conf { font-size: 0.74rem; }
+.detail-block h4 { margin: 0.7rem 0 0.3rem; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.03em; opacity: 0.7; }
+.fact-list, .hypo-list, .rec-donot { margin: 0; padding-left: 1.1rem; }
+.fact-item { margin: 0.2rem 0; }
+.hypo-status { font-size: 0.68rem; }
+.hypo-unverified { background: #fef9c3; color: #854d0e; }
+.recommendations { border-top: 1px dashed #e2e8f0; margin-top: 0.7rem; padding-top: 0.3rem; }
+@media (prefers-color-scheme: dark) {
+  .recommendations { border-top-color: #334155; }
+}
+.rec-block {
+  border-left: 3px solid #94a3b8;
+  padding: 0.35rem 0.7rem;
+  margin: 0.5rem 0;
+  background: #f8fafc;
+  border-radius: 0 8px 8px 0;
+}
+@media (prefers-color-scheme: dark) {
+  .rec-block { background: #0f172a; }
+}
+.rec-head { display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; }
+.rec-id { font-weight: 700; }
+.rec-action { margin: 0.3rem 0 0.15rem; font-weight: 600; }
+.rec-rationale, .rec-target { margin: 0.15rem 0; font-size: 0.85rem; }
+.rec-donot li { color: #b91c1c; }
+.rec-evidence { font-size: 0.72rem; margin: 0.3rem 0 0; }
+.reason-evidence { background: #dcfce7; color: #166534; }
+.reason-heuristic { background: #e0f2fe; color: #075985; }
+.reason-business_context_required { background: #fef9c3; color: #854d0e; }
+
+/* §3.5 Export — artifact.open ack + reveal buttons. */
+.export-row { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 0.5rem; }
+.export-row .btn { min-width: 9rem; }

@@ -15,9 +15,10 @@ and only registered when the facade is constructed with
 ``enable_spike_commands=True`` (the M0 spike test suite does; the packaged app
 does not). The real MVP commands from CONTRACTS §5.2 are all wired here:
 ``profile.start`` / ``profile.get_status`` / ``profile.cancel`` land on the
-store-backed job manager (M5-T2), and the seven read commands
+store-backed job manager (M5-T2), and the eight read commands
 (``dataset.inspect`` / ``dataset.preview`` / ``quality.get_results`` /
-``findings.get`` / ``report.get_summary`` / ``report.get_columns`` (ADR-019) /
+``findings.get`` / ``recommendations.get`` (ADR-020) / ``report.get_summary`` /
+``report.get_columns`` (ADR-019) /
 ``artifact.open``) are served from the M3 stores with paging and the §5.4 caps enforced on **both** directions
 (request at the envelope, response re-checked before it is handed back) — M5-T1.
 Progress (§5.5) is polled here and is authoritative; the optional host→JS push
@@ -53,6 +54,7 @@ from .envelope import (
     JobIdPayload,
     ProfileStartPayload,
     QualityGetResultsPayload,
+    RecommendationsGetPayload,
     ReportSummaryPayload,
     ReportGetColumnsPayload,
     WorkerEchoJobPayload,
@@ -552,6 +554,43 @@ def _findings_get_handler(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _recommendations_get_handler(payload: dict[str, Any]) -> dict[str, Any]:
+    """§5.2 ``recommendations.get`` (ADR-020): one paged §4.3 recommendation set.
+
+    The Finding cites only ``recommendation_ids``; the recommendation *bodies*
+    (action / rationale / ``do_not`` / reason_type) live in the store's own
+    ``recommendations`` rows and were otherwise reachable only through the
+    ``profile_json`` artifact behind ``artifact.open``. Each row is rebuilt through
+    :meth:`MetadataStore.load_recommendations`, so what crosses the bridge is the
+    §4.3 contract object; the read narrows to a single ``finding_id`` when asked
+    and adds no recommendation, re-shaping nothing (the §7 fact/interpretation/
+    recommendation separation is preserved verbatim)."""
+    store = runtime.get_metadata_store()
+    run_key = _resolve_run_id(store, payload)
+    if isinstance(run_key, dict):  # pragma: no cover - defensive
+        return run_key
+    if not run_key:
+        return _error_result("", errors.REQUEST_INVALID, "no stored run for request")
+    finding_id = payload.get("finding_id")
+    filters = {"finding_id": finding_id}
+    total = store.count_recommendations(run_key, **filters)
+    page = store.list_recommendations(
+        run_key, limit=payload["limit"], offset=payload["offset"], **filters
+    )
+    ids = [row["recommendation_id"] for row in page]
+    by_id = {r.recommendation_id: r for r in store.load_recommendations(run_key)}
+    items = [
+        by_id[rid].model_dump(mode="json", exclude_none=True)
+        for rid in ids
+        if rid in by_id
+    ]
+    return {
+        "run_id": run_key,
+        "items": items,
+        "page": {"limit": payload["limit"], "offset": payload["offset"], "total": total},
+    }
+
+
 def _report_summary_handler(payload: dict[str, Any]) -> dict[str, Any]:
     """§5.2 ``report.get_summary``: the §2 run record + §3.1 rollup + tallies.
 
@@ -694,7 +733,7 @@ def _artifact_open_handler(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 # Real MVP command registry (CONTRACTS §5.2) — complete as of M5-T1: the
-# async profiling trio (M5-T2) plus the six store-served read commands.
+# async profiling trio (M5-T2) plus the eight store-served read commands.
 COMMANDS: dict[str, CommandSpec] = {
     "profile.start": CommandSpec(
         name="profile.start",
@@ -730,6 +769,11 @@ COMMANDS: dict[str, CommandSpec] = {
         name="findings.get",
         payload_model=FindingsGetPayload,
         handler=_findings_get_handler,
+    ),
+    "recommendations.get": CommandSpec(
+        name="recommendations.get",
+        payload_model=RecommendationsGetPayload,
+        handler=_recommendations_get_handler,
     ),
     "report.get_summary": CommandSpec(
         name="report.get_summary",

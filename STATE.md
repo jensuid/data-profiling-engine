@@ -22,43 +22,57 @@ Milestone : M6 — UI Screens (GATE M1 CONTRACTS FREEZE PASSED
           dev-mode 2026-10-25 — T1 read commands + caps, T2 job manager +
           real profile.start worker, T3 §5.5 progress push; packaged
           bridge/worker verification on both OS deferred to M7/Phase-3)
-Task      : none in progress — M6-T4 done (Report View: Overview §3.1 +
-          Column Profiling §3.2). **Required a contract change**: added the
-          §5.2 read command `report.get_columns` (ADR-019) because no existing
-          command returned the §3.2 ColumnProfile metric *bodies* (get_summary is
-          counts-only; dataset.inspect is identity+types only; the store's
-          normalised rows carry only scalar leaves) — raised per AGENTS §8 and
-          approved before coding. Frontend `pages/Report.tsx` renders /report.
-          M5 + M6-T1..T4 landed. 772/772 pytest green, tsc clean, vite build clean.
+Task      : none in progress — **M6 COMPLETE**. M6-T6 done (Report View: Findings
+          & Recommendations §4.2–4.3 + Export §3.5). **Required a contract change**:
+          added the §5.2 read command `recommendations.get` (ADR-020) because a
+          Finding carries only `recommendation_ids` — no existing command returned
+          the §4.3 recommendation *bodies* (they lived only in the `profile_json`
+          artifact), the same gap class ADR-019 closed for columns; raised per AGENTS
+          §8 and approved before coding. M5 + M6-T1..T6 landed. 775/775 pytest green,
+          tsc clean, vite build clean.
 GATE M4   : reporting-layer tasks T1-T4 COMPLETE (706/706 pytest, tsc clean,
           golden byte-stable). MVP acceptance is on the PACKAGED build
           (BLUEPRINT §5 Phase-1 gate / §6), not dev mode — do not stamp M4
           "accepted" until the packaged run is verified in M7/Phase-3.
-NEXT      : M6-T6 — Report View: Findings & Recommendations + Export actions.
-          *Spec: expected-output §3.4–3.5 (references/).*
-          Findings (§4.2) via `findings.get` (paged, severity/category filters);
-          each Finding carries its deterministic `fingerprint` (ADR-016) and
-          structurally-separated facts / interpretation / hypotheses — render
-          facts as evidence, NEVER fold a recommendation into a fact. The
-          recommendations (§4.3) a finding cites live on the Finding's
-          `recommendation_ids`; fetch/render against the SAME run_id the summary
-          resolves (ADR-019 pattern as M6-T4/T5). Export (§3.5) = `artifact.open`
-          for the HTML report / JSON result / CSV issue export (kind ∈ the
-          DEFAULT_FILENAMES/result_refs set; NO bytes cross — ack + reveal).
-          No new command expected; if a read gap surfaces, escalate (AGENTS §8),
-          don't invent one silently.
-          Files to open: `references/expected_output_...obsidian.md` §3.4–3.5,
-          `docs/CONTRACTS.md` §4.2/§4.3/§4.4 + §5.2 (`findings.get`,
-          `artifact.open`), `frontend/src/pages/Report.tsx` (extend — reuse the
-          run_id/state pattern from M6-T5; findings already typed in
-          `types/contracts.ts` Finding/Recommendation), `bridge/api.ts`,
-          `reporting/csv_export.py` + `quality/registry.py` (export kinds).
-          GOTCHA (M6-T5): Plotly is loaded from the ONE vendored bundle via
-          `publicDir` + a document-relative `<script src="plotly.min.js">`; a
-          `?url` import of that outside-root asset breaks the vite build.
-          Test:  cd frontend && npx tsc --noEmit && npm run build
-                 .venv/bin/python -m pytest data_profiling_engine/tests -q
-Blocked by: none (M6-T4/T5 delivered the read + chart path).
+NEXT      : M7-T1 — Benchmark harness + synthetic generator; baseline numbers
+          recorded into TESTING §4.3. *Spec: docs/TESTING_BENCHMARKS.md §4.*
+          M6 UI screens are COMPLETE in dev mode; M7 is the hardening/release gate
+          and is PACKAGED-build work (PyInstaller on macOS + Windows), not more UI.
+          Files to open: `docs/TESTING_BENCHMARKS.md` §4 (harness + §4.3 baseline
+          table), `docs/BLUEPRINT.md` §5–6 (M7 gate), `data_profiling_engine/cli`
+          + `bridge/worker` (the paths a benchmark drives). Read-only check first:
+          confirm whether a benchmark harness already exists before writing one.
+          Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
+Blocked by: none (M6 delivered every MVP screen in dev mode).
+Session notes: M6-T6 landed Report Findings & Recommendations (§3.4/§4.2–4.3) +
+               Export (§3.5) — M6 COMPLETE. **ADR-020 / CONTRACTS §5.2 contract
+               change**: added `recommendations.get` (8th read cmd; seven→eight) —
+               the §4.3 recommendation *bodies* (action/rationale/do_not/reason_type)
+               were unreachable (a Finding carries only `recommendation_ids`;
+               `report.get_summary` is counts-only; the full bodies lived only in the
+               `profile_json` artifact behind `artifact.open`, no bytes cross) — the
+               identical column-body gap ADR-019 closed. Store already persisted the
+               rows (`_insert_recommendations`/`load_recommendations`). Reused the
+               ADR-019 pattern verbatim: `RecommendationsGetPayload(PagedResultPayload)`
+               +`finding_id`, `_recommendations_get_handler` rebuilds each row through
+               `MetadataStore.load_recommendations` (contract-shaped, §7 separation
+               intact), pages under the §5.4 1 MiB cap. `list_recommendations` gained
+               DEFAULTED `finding_id`/`limit`/`offset` kwargs so the existing
+               full-list `load_recommendations` caller is unaffected; added
+               `count_recommendations` mirroring `count_findings`. NO schema/model
+               change (Finding/Recommendation already in pydantic↔TS parity).
+               Frontend `pages/Report.tsx`: Findings cards (`findings.get`, severity/
+               category filters, fingerprint, facts-as-evidence with MethodTag,
+               interpretation + hypotheses rendered apart, never folded into a fact)
+               each nesting its cited recommendation bodies resolved from a run-wide
+               `recommendations.get` id-map; Export section = `artifact.open`
+               (reveal) for the three kinds present in `summary.result_refs`.
+               `styles.css` +71 (finding-card, sev/cat/reason pills, rec-block,
+               export-row). GOTCHA: a recommendation `reason_type` ∈
+               {evidence,heuristic,business_context_required} — a
+               `business_context_required` one must render as an investigation
+               question, never a proven cause (§4.3/§7). 775/775 pytest, tsc clean,
+               vite build clean 2026-10-25. **→ NEXT: M7-T1.**
 Session notes: M6-T5 landed Report Visualizations (§3.3) + Quality Assessment
                (§3.4). Files: `frontend/src/charts/plotly.ts` (spec builders
                mirroring html_report.py `_charts_for_column`/`_box_spec`/
@@ -1348,7 +1362,7 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 - [x] **M6-T3** Run Progress (status/percent/cancel). *Spec: CONTRACTS §6.* ✅ `RunProgress.tsx` (/progress): polls `profile.get_status` @700ms (authoritative §5.5) + merges `onPushedJobStatus` hints through one state-rank gate (QUEUED<RUNNING<CANCEL_REQUESTED<terminal — a late message never regresses the bar; the only legal backwards move is a polled RUNNING after CANCEL_REQUESTED, §6.5); §6.2 badge + progress bar (completed/total_steps, current_step); Cancel → `profile.cancel`, locks on optimistic CANCEL_REQUESTED until a polled terminal confirms; JOB_NOT_FOUND (not-retryable §8) stops the poll with an explicit message; SUCCEEDED renders the bounded `_bounded_result` summary (run_id, counts, artifact ref names). `App.tsx` +route/nav, `RunConfig.tsx` banner links to /progress, `styles.css` +62. No Python/contract change; 765/765 pytest green, tsc clean, vite build clean 2026-10-25. **→ NEXT: M6-T4.**
 - [x] **M6-T4** Report View: Overview + Column Profiling. *Spec: expected-output §3.1–3.2.* ✅ Added §5.2 `report.get_columns` read command (ADR-019 — the sanctioned contract change; see session note). Overview via `report.get_summary`, column bodies paged from the persisted `profile_json` artifact. `pages/Report.tsx`. No fabricated statuses; ADR-015 method badges rendered. 772/772 pytest, tsc+vite clean 2026-10-25. **→ NEXT: M6-T5.**
 - [x] **M6-T5** Report View: Visualizations + Quality Assessment. *Spec: expected-output §3.3–3.4.* ✅ Client-side Plotly (histogram/categorical-freq/missing-rate/IQR-box, §3.3) built ONLY from the M6-T4 `report.get_columns` bodies — NO new §5.2 command; chart shapes mirror `reporting/html_report.py` `_charts_for_column`/`_box_spec`/`_missingness_chart` for parity. Quality Assessment (§3.4) = paged `quality.get_results` table + status/dimension filters, FAIL≠ERROR kept distinct (§4.1), ADR-015 method badges. Files: `frontend/src/charts/plotly.ts` (new — spec builders + lazy vendored-Plotly loader), `charts/PlotlyChart.tsx` (new — draw/purge), `vite-env.d.ts` (new — `window.Plotly` ambient), `pages/Report.tsx` (+Visualizations +Quality sections, MethodTag, ChartFigure), `styles.css` +31. Plotly wiring: `vite.config.ts` `publicDir="../data_profiling_engine/reporting/assets"` reuses the ONE vendored 4.8 MB bundle (no npm dep, no git duplication) → copied to `dist/plotly.min.js`; UI loads it with a DOCUMENT-relative `<script src="plotly.min.js">` so it resolves offline under `file://` (no CDN/network, ADR-005/009/010). GOTCHA: a `?url` import of the outside-root asset FAILS rollup resolution ("Could not resolve … ?url") — use publicDir + document-relative src, not `?url`. No Python/contract change (QualityCheckResult/QualityGetResults* already in contracts.ts, parity test green). 772/772 pytest, tsc clean, vite build clean (dist/plotly.min.js present) 2026-10-25. **→ NEXT: M6-T6.**
-- [ ] **M6-T6** Report View: Findings & Recommendations + Export actions. *Spec: expected-output §3.4–3.5.*
+- [x] **M6-T6** Report View: Findings & Recommendations + Export actions. *Spec: expected-output §3.4–3.5.* ✅ **Required a contract change**: added the §5.2 read command `recommendations.get` (**ADR-020**) — a Finding (§4.2) carries only `recommendation_ids`, and no existing command returned the §4.3 recommendation *bodies* (action/rationale/do_not/reason_type); `report.get_summary` is counts-only and the bodies lived only in the `profile_json` artifact behind `artifact.open` — the exact ADR-019 column-body gap, raised per AGENTS §8 and approved before coding. Findings via `findings.get` (paged, severity/category filters, fingerprint + §7 fact/interpretation/hypothesis separation rendered apart); recommendation bodies via `recommendations.get` (paged, optional `finding_id`, resolved against the SAME run_id). Export (§3.5) = `artifact.open` for the three run-recorded kinds (`html_report`/`profile_json`/`issue_csv`, from `summary.result_refs`) — ack + reveal, no bytes cross. Files: `bridge/envelope.py` (+`RecommendationsGetPayload`), `bridge/facade.py` (+`_recommendations_get_handler`, COMMANDS, docstring seven→eight reads), `storage/metadata_store.py` (+`count_recommendations`, paged/filtered `list_recommendations` kwargs — defaulted, `load_recommendations` caller unaffected), `docs/CONTRACTS.md` §5.2 row + note, `docs/ARCHITECTURE_AND_ADRS.md` ADR-020 + matrix row, tests `test_bridge_read_commands.py` (+3: exact-set +1, contract-shape/paging/finding_id-filter). Frontend: `types/contracts.ts` (+RecommendationsGetPayload/Result), `pages/Report.tsx` (+Findings/Recommendations cards +Export section, FindingCard/RecommendationBlock, run_id state pattern from T5), `styles.css` +71. No schema/model change (Finding/Recommendation already in pydantic↔TS parity). 775/775 pytest, tsc clean, vite build clean 2026-10-25. **→ NEXT: M7-T1 (M6 UI screens COMPLETE).**
 
 ## M7 — Hardening & Release Gate
 

@@ -624,6 +624,11 @@ export interface FindingsGetPayload extends PagedResultPayload {
   category?: QualityDimension;
 }
 
+/** §5.2 ``recommendations.get`` (ADR-020) — paged §4.3 recommendation bodies. */
+export interface RecommendationsGetPayload extends PagedResultPayload {
+  finding_id?: string;
+}
+
 export interface ReportSummaryPayload {
   run_id?: string;
   dataset_id?: string;
@@ -697,6 +702,13 @@ export interface QualityGetResultsResult {
 export interface FindingsGetResult {
   run_id: string;
   items: Finding[];
+  page: Page;
+}
+
+/** §5.2 ``recommendations.get`` result — one paged page of §4.3 Recommendations. */
+export interface RecommendationsGetResult {
+  run_id: string;
+  items: Recommendation[];
   page: Page;
 }
 

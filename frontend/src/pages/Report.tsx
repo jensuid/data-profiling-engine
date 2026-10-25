@@ -1,11 +1,15 @@
 /**
- * M6-T4/T5 — Report View: Dataset Overview (§3.1) + Schema & Column Profiling
- * (§3.2) + Visualizations (§3.3) + Quality Assessment (§3.4).
+ * M6-T4/T5/T6 — Report View: Dataset Overview (§3.1) + Schema & Column Profiling
+ * (§3.2) + Visualizations (§3.3) + Quality Assessment (§3.4) + Findings &
+ * Recommendations (§3.4/§4.2–4.3) + Export actions (§3.5).
  *
  * Drives the report reads through the typed bridge client:
  *   • ``report.get_summary``   — the counts-only §3.1 rollup + check scorecard.
  *   • ``report.get_columns``   — the §3.2 ColumnProfile bodies, paged (ADR-019).
  *   • ``quality.get_results``  — the §4.1 check table, paged + filtered (§3.4).
+ *   • ``findings.get``         — the §4.2 findings, paged + severity/category filtered.
+ *   • ``recommendations.get``  — the §4.3 recommendation bodies (ADR-020).
+ *   • ``artifact.open``        — the §3.5 exports (ack + reveal, no bytes cross).
  *
  * The §3.3 charts consume the SAME ``report.get_columns`` bodies — histogram,
  * categorical frequency, missing-rate bar, IQR box — rendered client-side from
@@ -14,15 +18,19 @@
  *
  * The screen is addressed by the dataset the user last ran (from the shared
  * selection store); the store resolves the *latest run*, and the summary supplies
- * that ``run_id`` so the column/quality pages are pinned to the same run (ADR-019
- * — the UI ``StartedJob`` store deliberately does NOT carry ``run_id``).
+ * that ``run_id`` so the column/quality/finding/recommendation pages are pinned to
+ * the same run (ADR-019/ADR-020 — the UI ``StartedJob`` store deliberately does NOT
+ * carry ``run_id``).
  *
  * Rules honoured here: every numeric carries its ADR-015 ``method`` (an
  * approximate value shows a "≈" badge, a sampled one a "sampled" badge, a
  * ``not_computed`` one shows its reason and never a silent null/zero); a unit not
  * confirmed by config is labelled ``assumed``/``unknown``, never silently asserted
- * (§3.2.1); FAIL≠ERROR is kept distinct in the quality table (§4.1). Findings and
- * export actions are M6-T6 — no status is fabricated here.
+ * (§3.2.1); FAIL≠ERROR is kept distinct in the quality table (§4.1). Findings keep
+ * the §7 epistemic separation: ``facts`` render as evidence (with their own
+ * provenance), ``interpretation``/``hypotheses`` render separately and a hypothesis
+ * is never folded into a fact; a recommendation renders as its own §4.3 block cited
+ * by the finding's ``recommendation_ids`` — never merged into a fact.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
@@ -31,20 +39,33 @@ import { useSelectedDataset, useStartedJob } from "../state/selection";
 import PlotlyChart from "../charts/PlotlyChart";
 import { chartsForColumn, missingnessChart, type PlotlySpec } from "../charts/plotly";
 import type {
+  ArtifactOpenPayload,
+  ArtifactOpenResult,
   CheckStatus,
   ColumnProfile,
+  Finding,
+  FindingsGetPayload,
+  FindingsGetResult,
   MetricValue,
   Provenance,
   QualityCheckResult,
   QualityDimension,
   QualityGetResultsPayload,
   QualityGetResultsResult,
+  Recommendation,
+  RecommendationsGetPayload,
+  RecommendationsGetResult,
   ReportGetColumnsPayload,
   ReportGetColumnsResult,
   ReportSummaryPayload,
   ReportSummaryResult,
+  Severity,
 } from "../types/contracts";
-import { CheckStatusValues, QualityDimensionValues } from "../types/contracts";
+import {
+  CheckStatusValues,
+  QualityDimensionValues,
+  SeverityValues,
+} from "../types/contracts";
 
 // Column page size — bounded so a page stays well under the §5.4 1 MiB cap; a
 // wide/high-cardinality run loads more on demand rather than tripping it.
@@ -52,6 +73,19 @@ const COLUMN_PAGE_SIZE = 20;
 
 // Quality-check page size (§3.4) — same bounded-fetch rule as the columns.
 const QUALITY_PAGE_SIZE = 25;
+
+// Findings page size (§4.2) — a finding carries free-text facts/interpretation/
+// hypotheses, so a smaller page keeps each response well under the §5.4 1 MiB cap.
+const FINDING_PAGE_SIZE = 10;
+
+// §3.5 MVP export artifacts, in the render order the report surfaces them. Each
+// maps to an ``artifact.open`` ``kind`` the run records in its ``result_refs``.
+// No bytes cross — the command acks + reveals the file through the OS viewer.
+const EXPORT_KINDS: { kind: string; label: string; hint: string }[] = [
+  { kind: "html_report", label: "HTML report", hint: "Human-readable report" },
+  { kind: "profile_json", label: "JSON result", hint: "Machine-readable full result" },
+  { kind: "issue_csv", label: "CSV issue export", hint: "Issue list for follow-up" },
+];
 
 type LoadStatus = "idle" | "loading" | "ready" | "error";
 
@@ -154,6 +188,25 @@ export default function Report() {
   const [statusFilter, setStatusFilter] = useState<"" | CheckStatus>("");
   const [dimensionFilter, setDimensionFilter] = useState<"" | QualityDimension>("");
 
+  // §3.4/§4.2 Findings — paged, severity/category-filterable findings.get set.
+  const [findings, setFindings] = useState<Finding[]>([]);
+  const [findingsTotal, setFindingsTotal] = useState(0);
+  const [findingsStatus, setFindingsStatus] = useState<LoadStatus>("idle");
+  const [findingsError, setFindingsError] = useState<string | null>(null);
+  const [severityFilter, setSeverityFilter] = useState<"" | Severity>("");
+  const [categoryFilter, setCategoryFilter] = useState<"" | QualityDimension>("");
+
+  // §4.3 Recommendation bodies, fetched once for the run and keyed by id so each
+  // finding can render exactly the recommendations it cites (recommendation_ids).
+  const [recsById, setRecsById] = useState<Record<string, Recommendation>>({});
+  const [recsStatus, setRecsStatus] = useState<LoadStatus>("idle");
+  const [recsError, setRecsError] = useState<string | null>(null);
+
+  // §3.5 Export — artifact.open ack state (no bytes cross; reveal opens the file).
+  const [exportingKind, setExportingKind] = useState<string | null>(null);
+  const [exportMsg, setExportMsg] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+
   // Fetch one page of column profiles, appending to what is already loaded.
   const loadColumns = useCallback(async (runId: string, offset: number) => {
     setColsStatus("loading");
@@ -200,6 +253,98 @@ export default function Report() {
       } catch (e) {
         setChecksStatus("error");
         setChecksError(errText(e));
+      }
+    },
+    [],
+  );
+
+  // Fetch one page of findings (§4.2), appending on "load more"; the severity/
+  // category filters narrow server-side exactly like the quality table.
+  const loadFindings = useCallback(
+    async (
+      runId: string,
+      offset: number,
+      severity: "" | Severity,
+      category: "" | QualityDimension,
+    ) => {
+      setFindingsStatus("loading");
+      setFindingsError(null);
+      try {
+        const payload: FindingsGetPayload = {
+          run_id: runId,
+          limit: FINDING_PAGE_SIZE,
+          offset,
+        };
+        if (severity) payload.severity = severity;
+        if (category) payload.category = category;
+        const result = await bridgeSend<FindingsGetPayload, FindingsGetResult>(
+          "findings.get",
+          payload,
+        );
+        setFindings((prev) => (offset === 0 ? result.items : [...prev, ...result.items]));
+        setFindingsTotal(result.page.total);
+        setFindingsStatus("ready");
+      } catch (e) {
+        setFindingsStatus("error");
+        setFindingsError(errText(e));
+      }
+    },
+    [],
+  );
+
+  // Load the run's §4.3 recommendation bodies across pages into one id-keyed map
+  // (recommendation rows are compact; looping bounded 50-row pages stays under the
+  // §5.4 cap and lets any displayed finding resolve the recs it cites without a
+  // per-finding round-trip).
+  const loadRecommendations = useCallback(async (runId: string) => {
+    setRecsStatus("loading");
+    setRecsError(null);
+    try {
+      const acc: Record<string, Recommendation> = {};
+      let offset = 0;
+      let total = Infinity;
+      while (offset < total) {
+        const payload: RecommendationsGetPayload = {
+          run_id: runId,
+          limit: 50,
+          offset,
+        };
+        const result = await bridgeSend<RecommendationsGetPayload, RecommendationsGetResult>(
+          "recommendations.get",
+          payload,
+        );
+        total = result.page.total;
+        for (const rec of result.items) acc[rec.recommendation_id] = rec;
+        offset += result.items.length;
+        if (result.items.length === 0) break; // guard against a non-advancing page
+      }
+      setRecsById(acc);
+      setRecsStatus("ready");
+    } catch (e) {
+      setRecsStatus("error");
+      setRecsError(errText(e));
+    }
+  }, []);
+
+  // §3.5 Export: artifact.open a run's recorded kind. Ack + reveal (no bytes
+  // cross); the command can only reach a kind already in the run's result_refs,
+  // so a missing artifact fails closed as a typed error, never a path leak.
+  const exportArtifact = useCallback(
+    async (runId: string, kind: string, label: string) => {
+      setExportingKind(kind);
+      setExportError(null);
+      setExportMsg(null);
+      try {
+        const payload: ArtifactOpenPayload = { run_id: runId, kind, reveal: true };
+        const result = await bridgeSend<ArtifactOpenPayload, ArtifactOpenResult>(
+          "artifact.open",
+          payload,
+        );
+        setExportMsg(`${label} opened (${result.size_bytes.toLocaleString()} bytes).`);
+      } catch (e) {
+        setExportError(`${label}: ${errText(e)}`);
+      } finally {
+        setExportingKind(null);
       }
     },
     [],
@@ -252,6 +397,22 @@ export default function Report() {
     setChecksTotal(0);
     void loadQuality(runId, 0, statusFilter, dimensionFilter);
   }, [runId, hasBridge, statusFilter, dimensionFilter, loadQuality]);
+
+  // Reload the findings page whenever the run or a §4.2 filter changes; reset to
+  // the first page on filter change (severity/category narrow server-side).
+  useEffect(() => {
+    if (!runId || !hasBridge) return;
+    setFindings([]);
+    setFindingsTotal(0);
+    void loadFindings(runId, 0, severityFilter, categoryFilter);
+  }, [runId, hasBridge, severityFilter, categoryFilter, loadFindings]);
+
+  // Fetch the run's recommendation bodies once per run — they decorate whichever
+  // findings display (the same run_id the findings/summary resolve, ADR-020).
+  useEffect(() => {
+    if (!runId || !hasBridge) return;
+    void loadRecommendations(runId);
+  }, [runId, hasBridge, loadRecommendations]);
 
   // §3.3 dataset-level missing-rate bar, from the loaded column bodies only.
   const missingness = useMemo(() => missingnessChart(columns), [columns]);
@@ -561,6 +722,110 @@ export default function Report() {
           Scorecard counts above come from {summary?.check_count ?? 0} checks.
         </p>
       </div>
+
+      {/* §3.4/§4.2 Findings & Recommendations — paged findings.get, §4.3 bodies via recommendations.get (ADR-020) */}
+      <h2>Findings &amp; Recommendations</h2>
+      <div className="panel">
+        <div className="field-row">
+          <span className="field-label">Severity</span>
+          <select
+            value={severityFilter}
+            onChange={(e) => setSeverityFilter(e.target.value as "" | Severity)}
+          >
+            <option value="">all</option>
+            {SeverityValues.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+          <span className="field-label">Category</span>
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value as "" | QualityDimension)}
+          >
+            <option value="">all</option>
+            {QualityDimensionValues.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {findingsError && <p className="mask-warn">{findingsError}</p>}
+        {recsError && <p className="mask-warn">Recommendations: {recsError}</p>}
+        {findings.length === 0 && !findingsError && (
+          <p className="hint">
+            {findingsStatus === "loading"
+              ? "Loading findings…"
+              : "No findings recorded for this run."}
+          </p>
+        )}
+        {findings.map((f) => (
+          <FindingCard
+            key={f.finding_id}
+            finding={f}
+            recsById={recsById}
+            recsLoading={recsStatus === "loading"}
+          />
+        ))}
+        {findings.length > 0 && (
+          <div className="pager">
+            <span className="muted">
+              {findings.length} of {findingsTotal} findings
+            </span>
+            {findings.length < findingsTotal && (
+              <button
+                className="btn btn-sm"
+                disabled={findingsStatus === "loading"}
+                onClick={() =>
+                  runId && loadFindings(runId, findings.length, severityFilter, categoryFilter)
+                }
+              >
+                Load more
+              </button>
+            )}
+          </div>
+        )}
+        <p className="hint">
+          Each Finding keeps facts / interpretation / hypotheses structurally separate
+          (§7): facts are computed evidence (with provenance), a hypothesis is an
+          unverified suspected cause, and a recommendation is a suggested action citing
+          evidence — never folded into a fact. The <span className="mono">fingerprint</span>{" "}
+          is deterministic across runs (ADR-016).
+        </p>
+      </div>
+
+      {/* §3.5 Export — artifact.open ack + reveal (no bytes cross) */}
+      <h2>Export</h2>
+      <div className="panel">
+        {exportError && <p className="mask-warn">{exportError}</p>}
+        {exportMsg && <p className="hint">{exportMsg}</p>}
+        <div className="export-row">
+          {EXPORT_KINDS.map(({ kind, label, hint }) => {
+            const available =
+              !summary?.result_refs || Object.prototype.hasOwnProperty.call(summary.result_refs, kind);
+            return (
+              <button
+                key={kind}
+                className="btn"
+                disabled={!runId || !available || exportingKind !== null}
+                title={available ? hint : "Not produced by this run"}
+                onClick={() => runId && void exportArtifact(runId, kind, label)}
+              >
+                {exportingKind === kind ? "Opening…" : label}
+                {!available && " (unavailable)"}
+              </button>
+            );
+          })}
+        </div>
+        <p className="hint">
+          Opens the run&apos;s report / full JSON result / issue CSV through the OS viewer.
+          No file bytes cross the bridge — the command only acks + reveals an artifact
+          already recorded for the run (SECURITY §3).
+        </p>
+      </div>
     </section>
   );
 }
@@ -789,5 +1054,141 @@ function ChartFigure({ spec }: { spec: PlotlySpec }) {
         {spec.provenance?.reason && <span className="muted reason">{spec.provenance.reason}</span>}
       </figcaption>
     </figure>
+  );
+}
+
+// --- §4.2 Finding + §4.3 Recommendation cards (epistemic separation kept) -----
+
+/**
+ * One §4.2 Finding. facts / interpretation / hypotheses render in their own
+ * blocks and a recommendation renders as a cited §4.3 body — never folded into a
+ * fact (CONTRACTS §7). The body of each cited recommendation resolves against the
+ * run's {@link recommendations.get} map (ADR-020); a cited id with no loaded body
+ * is shown as a reference, never invented.
+ */
+function FindingCard({
+  finding,
+  recsById,
+  recsLoading,
+}: {
+  finding: Finding;
+  recsById: Record<string, Recommendation>;
+  recsLoading: boolean;
+}) {
+  const cited = finding.recommendation_ids ?? [];
+  const resolved = cited
+    .map((id) => recsById[id])
+    .filter((r): r is Recommendation => Boolean(r));
+  const unresolved = cited.filter((id) => !recsById[id]);
+  const scope = finding.scope ?? {};
+  const affected = scope.affected_records;
+
+  return (
+    <article className="finding-card">
+      <header className="finding-head">
+        <span className="mono finding-id">{finding.finding_id}</span>
+        <h3 className="finding-title">{finding.title}</h3>
+        <span className={`sev-pill sev-${finding.severity}`}>{finding.severity}</span>
+        <span className="cat-pill">{finding.category}</span>
+        <span className="muted conf">confidence: {finding.confidence}</span>
+      </header>
+      <p className="finding-summary">{finding.summary}</p>
+      <p className="mono muted fingerprint" title="deterministic across runs (ADR-016)">
+        fingerprint: {finding.fingerprint}
+      </p>
+      {(scope.column || affected != null) && (
+        <p className="hint finding-scope">
+          {scope.column && (
+            <>
+              column <span className="mono">{scope.column}</span>
+            </>
+          )}
+          {scope.column && affected != null && " · "}
+          {affected != null && <>{affected.toLocaleString()} affected records</>}
+        </p>
+      )}
+
+      {finding.facts.length > 0 && (
+        <div className="detail-block">
+          <h4>Facts (evidence)</h4>
+          <ul className="fact-list">
+            {finding.facts.map((fact, i) => (
+              <li key={`${fact.metric_ref}-${i}`} className="fact-item">
+                <span className="mono">{fact.metric_ref}</span>{" "}
+                <span className="metric-cell">
+                  <MethodTag provenance={fact.provenance} />
+                  <span className="mono">{formatValue(fact.value as Jsonish)}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {finding.interpretation && (
+        <div className="detail-block">
+          <h4>Interpretation</h4>
+          <p>{finding.interpretation}</p>
+        </div>
+      )}
+
+      {finding.hypotheses.length > 0 && (
+        <div className="detail-block">
+          <h4>Hypotheses (unverified)</h4>
+          <ul className="hypo-list">
+            {finding.hypotheses.map((h, i) => (
+              <li key={i}>
+                <span className={`hypo-status hypo-${h.status}`}>{h.status}</span> {h.text}
+                {h.suggested_probe && <span className="muted"> — probe: {h.suggested_probe}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="detail-block recommendations">
+        <h4>Recommendations</h4>
+        {resolved.map((rec) => (
+          <RecommendationBlock key={rec.recommendation_id} rec={rec} />
+        ))}
+        {resolved.length === 0 && recsLoading && (
+          <p className="hint">Loading recommendations…</p>
+        )}
+        {resolved.length === 0 && !recsLoading && cited.length === 0 && (
+          <p className="muted">No recommendation recorded for this finding.</p>
+        )}
+        {unresolved.length > 0 && (
+          <p className="hint">
+            Also cites <span className="mono">{unresolved.join(", ")}</span> — body not
+            available for this run.
+          </p>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function RecommendationBlock({ rec }: { rec: Recommendation }) {
+  return (
+    <div className="rec-block">
+      <div className="rec-head">
+        <span className="mono rec-id">{rec.recommendation_id}</span>
+        <span className={`reason-pill reason-${rec.reason_type}`}>{rec.reason_type}</span>
+        <span className="muted">{rec.status}</span>
+      </div>
+      <p className="rec-action">{rec.action}</p>
+      <p className="muted rec-rationale">{rec.rationale}</p>
+      {rec.target_improvement && <p className="rec-target">Target: {rec.target_improvement}</p>}
+      {rec.do_not && rec.do_not.length > 0 && (
+        <ul className="rec-donot">
+          {rec.do_not.map((d, i) => (
+            <li key={i}>{d}</li>
+          ))}
+        </ul>
+      )}
+      {rec.evidence_refs.length > 0 && (
+        <p className="mono muted rec-evidence">evidence: {rec.evidence_refs.join(", ")}</p>
+      )}
+    </div>
   );
 }

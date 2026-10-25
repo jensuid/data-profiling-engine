@@ -98,6 +98,7 @@ def test_commands_are_exactly_the_mvp_set() -> None:
         "profile.cancel",
         "quality.get_results",
         "findings.get",
+        "recommendations.get",
         "report.get_summary",
         "report.get_columns",
         "artifact.open",
@@ -296,6 +297,34 @@ class TestFindingsGet:
         page = ok(facade, "findings.get", {"run_id": RUN_ID, "limit": 1})
         assert page["page"]["total"] == total
         assert len(page["items"]) == min(1, total)
+
+
+class TestRecommendationsGet:
+    def test_items_are_contract_shaped_and_carry_their_finding_ref(self, facade, bridge) -> None:
+        result = ok(facade, "recommendations.get", {"run_id": RUN_ID})
+        assert result["items"], "golden fixture yields recommendations"
+        for item in result["items"]:
+            assert S.validate("recommendation.schema.json", item) == []
+            assert item["recommendation_id"] and item["finding_id"]
+            assert item["evidence_refs"], "§4.3: a recommendation must cite evidence"
+        assert result["page"]["total"] == len(result["items"])
+
+    def test_recommendations_are_paged(self, facade, bridge) -> None:
+        total = ok(facade, "recommendations.get", {"run_id": RUN_ID})["page"]["total"]
+        page = ok(facade, "recommendations.get", {"run_id": RUN_ID, "limit": 1})
+        assert page["page"]["total"] == total
+        assert len(page["items"]) == min(1, total)
+
+    def test_finding_id_filter(self, facade, bridge) -> None:
+        findings = ok(facade, "findings.get", {"run_id": RUN_ID})["items"]
+        cited = next(
+            (f for f in findings if f.get("recommendation_ids")), None
+        )
+        if cited is None:  # pragma: no cover - golden fixture always cites one
+            pytest.skip("no finding in the fixture cites a recommendation")
+        fid = cited["finding_id"]
+        result = ok(facade, "recommendations.get", {"run_id": RUN_ID, "finding_id": fid})
+        assert all(item["finding_id"] == fid for item in result["items"])
 
 
 # ---------------------------------------------------------------------------

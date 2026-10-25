@@ -261,6 +261,7 @@ The bridge exposes a **fixed, allow-listed command facade** — never arbitrary 
 | `profile.cancel` | Request cancellation | accepted |
 | `quality.get_results` | Fetch quality check results (paged) | result set |
 | `findings.get` | Fetch findings (paged) | result set |
+| `recommendations.get` | Fetch recommendations (paged) | result set |
 | `report.get_summary` | Fetch run summary | summary object |
 | `report.get_columns` | Fetch §3.2 column profiles (paged) | result set |
 | `artifact.open` | Open/export an allow-listed artifact | ack |
@@ -279,6 +280,19 @@ The bridge exposes a **fixed, allow-listed command facade** — never arbitrary 
 > provenance (ADR-015) — the command adds no new metric and re-shapes nothing. Array
 > bodies (histogram bins, category frequencies) are returned whole per column and
 > page smaller when a wide/high-cardinality run would exceed the cap.
+
+> [!NOTE] `recommendations.get` (ADR-020) — the §4.3 **recommendation-body** read
+> A `Finding` (§4.2) cites its recommendations only by `recommendation_ids`; the
+> §4.3 bodies (`action` / `rationale` / `do_not` / `reason_type` / evidence refs)
+> were reachable by no earlier §5.2 command — `report.get_summary` is counts-only
+> and the full bodies lived only in the `profile_json` artifact behind
+> `artifact.open` (no bytes cross). `recommendations.get` closes that gap with the
+> same ADR-019 pattern: addressed by `run_id` (else the dataset's latest run),
+> optionally narrowed to a single `finding_id`, pages §4.3 `Recommendation`
+> objects (`limit` ≤ 200, default 50) so each response stays under the §5.4 1 MiB
+> cap. Each item is the unchanged §4.3 `Recommendation` (validated against
+> `recommendation.schema.json`); the command adds no recommendation and re-shapes
+> nothing, keeping the §7 fact/interpretation/recommendation separation intact.
 
 ### 5.3 Message envelopes
 

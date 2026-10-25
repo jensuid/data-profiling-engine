@@ -1586,10 +1586,40 @@ class MetadataStore:
             out.append(finding)
         return out
 
-    def list_recommendations(self, run_id: str) -> List[Dict[str, Any]]:
-        return self._query(
-            "SELECT * FROM recommendations WHERE run_id = ? ORDER BY recommendation_id", (run_id,)
-        )
+    def list_recommendations(
+        self,
+        run_id: str,
+        *,
+        finding_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        sql = "SELECT * FROM recommendations WHERE run_id = ?"
+        params: List[Any] = [run_id]
+        if finding_id:
+            sql += " AND finding_id = ?"
+            params.append(finding_id)
+        sql += " ORDER BY recommendation_id"
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params.extend([int(limit), int(offset)])
+        return self._query(sql, params)
+
+    def count_recommendations(
+        self,
+        run_id: str,
+        *,
+        finding_id: Optional[str] = None,
+    ) -> int:
+        """Total rows the identically-filtered :meth:`list_recommendations` would
+        return — see :meth:`count_findings` for why the paged fetch needs it."""
+        sql = "SELECT COUNT(*) AS n FROM recommendations WHERE run_id = ?"
+        params: List[Any] = [run_id]
+        if finding_id:
+            sql += " AND finding_id = ?"
+            params.append(finding_id)
+        row = self._query_one(sql, params)
+        return int(row["n"]) if row else 0
 
     def load_recommendations(self, run_id: str) -> List[Recommendation]:
         out: List[Recommendation] = []

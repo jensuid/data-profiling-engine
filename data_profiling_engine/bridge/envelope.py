@@ -128,7 +128,7 @@ PREVIEW_ROW_CAP = 200
 
 class PagedResultPayload(BaseModel):
     """Shared paging block for the paged result fetches (``quality.get_results``
-    / ``findings.get``). ``limit`` bounds the page *length*; whether the serialized
+    / ``findings.get`` / ``recommendations.get``). ``limit`` bounds the page *length*; whether the serialized
     page fits §5.4 is verified per response by the facade, because one row's
     size is data-dependent (facts/hypotheses are free text)."""
 
@@ -198,6 +198,20 @@ class FindingsGetPayload(PagedResultPayload):
 
     severity: Optional[str] = Field(default=None, max_length=16)
     category: Optional[str] = Field(default=None, max_length=32)
+
+
+class RecommendationsGetPayload(PagedResultPayload):
+    """§5.2 ``recommendations.get`` (ADR-020) — paged §4.3 recommendation bodies.
+
+    A Finding cites only ``recommendation_ids`` (§4.2); the action/rationale/
+    ``do_not`` bodies were otherwise reachable only inside the ``profile_json``
+    artifact behind ``artifact.open``. This read closes that gap exactly as
+    ADR-019 closed the column-body one: addressed by a single run (``run_id``, or
+    the dataset's latest by ``dataset_id`` via the shared paging block), optionally
+    narrowed to one ``finding_id``. It adds no recommendation and re-shapes nothing
+    — each item is the unchanged §4.3 Recommendation."""
+
+    finding_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
 
 
 class ReportSummaryPayload(BaseModel):
