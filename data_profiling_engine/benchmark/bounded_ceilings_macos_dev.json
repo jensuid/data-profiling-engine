@@ -2,7 +2,7 @@
   "task": "M7-T2c",
   "title": "Owned DuckDB ceilings: 10M bounded re-measure under three ceilings",
   "adr": "ADR-021",
-  "test_doc": "TESTING_BENCHMARKS.md §4.3.4",
+  "test_doc": "TESTING_BENCHMARKS.md \u00a74.3.4",
   "machine": {
     "os": "Darwin 22.6.0",
     "arch": "x86_64",
@@ -75,6 +75,43 @@
     "The 4 GiB default and 1 GiB floor both run above the 10M working set, so their RSS difference vs the unbounded 677.0 MB (-0.3% / -6.7%) is variance, not an improvement.",
     "Only the 256 MB pass spills because only it sits below the working set; it is also the fastest because 28 metrics became ERROR instead of computing.",
     "spill_peak_kb for the shipped-default pass is null: that pass ran before the sampler existed. Its 4 GiB ceiling is above the working set, so a spill was not expected.",
-    "Spill is sampled from the scratch dir every 5 s; duckdb_memory() reports live buffers only and reads 0 once a query completes."
-  ]
+    "Spill is sampled from the scratch dir every 5 s; duckdb_memory() reports live buffers only and reads 0 once a query completes.",
+    "100M under the shipped 4 GiB default: RSS 3724.0 MiB (90.9% of the ceiling) with 87.7 MiB spilled. The ceiling is only just reached at this tier, so the curve keeps its shape (rows^0.74 vs 0.77); demonstrating a plateau needs a ceiling BELOW the 100M working set, which is still owed."
+  ],
+  "top_of_ladder": {
+    "rows": 100000000,
+    "source_mb": 6219.0,
+    "unbounded_reference": {
+      "source": "TESTING \u00a74.3.3 (M7-T2a, before the ceiling helper existed)",
+      "wall_clock_s": 9843.6824,
+      "peak_rss_mb": 3948.2,
+      "n_errors": 0
+    },
+    "shipped_default": {
+      "memory_limit": "4294967296 B",
+      "wall_clock_s": 8847.8072,
+      "peak_rss_bytes": 3904925696,
+      "peak_rss_mib": 3724.0,
+      "spill_peak_kb": 89760,
+      "n_errors": 0,
+      "run_status": "SUCCEEDED",
+      "measured_at": "2026-10-25T16:21:57Z"
+    },
+    "delta_vs_unbounded": {
+      "peak_rss_pct": -5.7,
+      "wall_clock_pct": -10.1
+    },
+    "ceiling_utilisation_pct": 90.9
+  },
+  "growth_exponents": {
+    "note": "Two fits, both far above the plateau threshold of b <= 0.25.",
+    "pair_10m_100m_unbounded": 0.766,
+    "pair_10m_100m_bounded": 0.742,
+    "series_200k_100m_unbounded": 0.607,
+    "series_200k_100m_bounded": 0.599,
+    "forecast_gib_at_1b_rows": {
+      "pair_bounded": 22.5,
+      "series_bounded": 12.4
+    }
+  }
 }

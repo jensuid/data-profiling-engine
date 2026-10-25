@@ -440,6 +440,35 @@ def dir_bytes(path: Optional["Path | str"]) -> Optional[int]:
     return total
 
 
+def spill_sample_log(workdir: "Path | str", pass_name: str) -> Path:
+    """The runner's ``du -sk`` sampler log for one pass (``run_pass.sh``)."""
+    return Path(workdir) / f"spill_samples_{pass_name}.log"
+
+
+def read_spill_peak(path: Optional["Path | str"]) -> Optional[tuple[int, int]]:
+    """``(peak_kb, n_samples)`` from a sampler log, ``None`` when absent/empty.
+
+    A finished pass deletes its spill blocks, so the scratch directory reads 0
+    afterwards; the sampler is the only surviving record of what actually
+    happened during the run (measured: 87.7 MiB peak, 0 B left on disk)."""
+    if path is None:
+        return None
+    log = Path(path)
+    if not log.is_file():
+        return None
+    peak, n = 0, 0
+    for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+        head = line.strip().split(None, 1)
+        if not head:
+            continue
+        try:
+            kb = int(head[0])
+        except ValueError:
+            continue
+        peak, n = max(peak, kb), n + 1
+    return (peak, n) if n else None
+
+
 def resolve_spill_dir() -> Optional[Path]:
     """Where the described pass spills: ``DPE_DUCKDB_TEMP_DIR`` or the engine
     default (ADR-021). Resolved **without creating anything** — a monitor must
@@ -550,8 +579,16 @@ def format_pass(progress: PassProgress) -> str:
         )
     if progress.spill_bytes is not None:
         mib = progress.spill_bytes / 1_048_576
-        note = "ceiling is binding" if progress.spill_bytes else "working set under the ceiling"
-        lines.append(f"  spill     {mib:.1f} MiB in the scratch dir ({note})")
+        source = d.get("spill_source")
+        if source == "samples":
+            lines.append(
+                f"  spill     {mib:.1f} MiB peak over {d.get('spill_samples')} samples "
+                "during the run (scratch dir already emptied)"
+            )
+        else:
+            note = "ceiling is binding" if progress.spill_bytes else \
+                "working set under the ceiling"
+            lines.append(f"  spill     {mib:.1f} MiB in the scratch dir ({note})")
     ceilings = d.get("ceilings") or {}
     if ceilings.get("memory_limit"):
         lines.append(
@@ -581,12 +618,25 @@ def watch_pass(
     age = None
     if not out.exists():
         age = process_age_seconds(f"measure_bounded.py --rows {rows}")
-    if spill_dir is None:
-        spill_dir = resolve_spill_dir()
     progress = build_pass_progress(
         rows=rows, pass_name=pass_name, workdir=workdir, fmt=fmt, mode=mode,
-        process_age_s=age, spill_bytes=dir_bytes(spill_dir),
+        process_age_s=age,
     )
+    if spill_dir is None:
+        # A finished pass records the workspace it actually used; that is
+        # authoritative and differs from this process's default when the runner
+        # overrode DPE_DUCKDB_TEMP_DIR (measured: reading the default reported
+        # "0 MiB spilled" for a pass that had spilled 87.7 MiB).
+        recorded = (progress.detail.get("ceilings") or {}).get("temp_directory")
+        spill_dir = Path(recorded) if recorded else resolve_spill_dir()
+    progress.spill_bytes = dir_bytes(spill_dir)
+    progress.detail["spill_source"] = "directory"
+    sampled = read_spill_peak(spill_sample_log(workdir, pass_name))
+    if sampled is not None:
+        # The sampler outlives the spill blocks it measured, so it wins.
+        progress.spill_bytes = sampled[0] * 1024
+        progress.detail["spill_source"] = "samples"
+        progress.detail["spill_samples"] = sampled[1]
     if json_out:
         payload = {
             "workdir": str(workdir), "spill_dir": str(spill_dir) if spill_dir else None,
@@ -613,6 +663,8 @@ __all__ = [
     "PassProgress",
     "pass_output_path",
     "dir_bytes",
+    "spill_sample_log",
+    "read_spill_peak",
     "resolve_spill_dir",
     "build_pass_progress",
     "format_pass",

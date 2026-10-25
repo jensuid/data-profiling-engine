@@ -25,6 +25,8 @@ from data_profiling_engine.benchmark.watch import (
     format_stages,
     parse_ps_etime,
     pass_output_path,
+    read_spill_peak,
+    spill_sample_log,
     tier_label,
     tier_paths,
     watch_pass,
@@ -308,3 +310,71 @@ def test_watch_pass_exit_codes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     assert watch_pass(rows=_ROWS_BIG, pass_name="top", workdir=tmp_path,
                       spill_dir=scratch) == 0
     assert "done" in capsys.readouterr().out
+
+
+def test_watch_pass_reads_the_spill_dir_the_pass_recorded(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The pass records the workspace it actually used; trusting this process's
+    default instead reported "0 MiB spilled" for a pass that had spilled 87.7 MiB
+    (measured on the M7-T2c 100M pass, whose runner overrides the temp dir)."""
+    pass_scratch = tmp_path / "pass_scratch"
+    pass_scratch.mkdir()
+    (pass_scratch / "block.tmp").write_bytes(b"x" * 4096)
+    pass_output_path(_ROWS_BIG, "top", tmp_path).write_text(json.dumps({
+        "wall_clock_s": 8847.8, "peak_rss_bytes": 3_904_925_696, "n_errors": 0,
+        "extra": {"run_status": "SUCCEEDED"},
+        "ceilings": {"memory_limit": "4294967296 B",
+                     "temp_directory": str(pass_scratch),
+                     "max_temp_directory_size": "8589934592 B"},
+    }), encoding="utf-8")
+
+    assert watch_pass(rows=_ROWS_BIG, pass_name="top", workdir=tmp_path,
+                      json_out=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["spill_dir"] == str(pass_scratch)
+    assert payload["spill_bytes"] == 4096
+
+
+def test_read_spill_peak_takes_the_high_water_mark(tmp_path: Path) -> None:
+    log = tmp_path / "spill_samples_top.log"
+    log.write_text("0\t/tmp/x\n89760\t/tmp/x\n1024 /tmp/x\n", encoding="utf-8")
+    assert read_spill_peak(log) == (89760, 3)
+    assert read_spill_peak(tmp_path / "missing.log") is None
+    log.write_text("", encoding="utf-8")
+    assert read_spill_peak(log) is None
+
+
+def test_watch_pass_prefers_the_sampler_over_the_emptied_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """DuckDB deletes its spill blocks when the run ends, so a done pass reads 0 B
+    on disk; the sampler log is the only surviving record (87.7 MiB measured)."""
+    emptied = tmp_path / "scratch_after"
+    emptied.mkdir()
+    pass_output_path(_ROWS_BIG, "top", tmp_path).write_text(json.dumps({
+        "wall_clock_s": 8847.8, "peak_rss_bytes": 3_904_925_696, "n_errors": 0,
+        "extra": {"run_status": "SUCCEEDED"},
+        "ceilings": {"temp_directory": str(emptied)},
+    }), encoding="utf-8")
+    spill_sample_log(tmp_path, "top").write_text(
+        "0\t/x\n89760\t/x\n89760\t/x\n", encoding="utf-8")
+
+    assert watch_pass(rows=_ROWS_BIG, pass_name="top", workdir=tmp_path,
+                      json_out=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["spill_bytes"] == 89760 * 1024
+    assert payload["detail"]["spill_source"] == "samples"
+    assert payload["detail"]["spill_samples"] == 3
+
+
+def test_format_pass_does_not_claim_zero_when_the_sampler_saw_spill(
+    tmp_path: Path,
+) -> None:
+    progress = build_pass_progress(rows=_ROWS_BIG, pass_name="top", workdir=tmp_path)
+    progress.status = "done"
+    progress.spill_bytes = 89760 * 1024
+    progress.detail.update({"spill_source": "samples", "spill_samples": 1734})
+    out = format_pass(progress)
+    assert "87.7 MiB peak over 1734 samples" in out
+    assert "working set under the ceiling" not in out

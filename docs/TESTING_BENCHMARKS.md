@@ -244,9 +244,13 @@ spill ceilings engine policy applied by one connection helper, and **§4.3.4**
 records the re-measure that proves the ceiling binds and what it costs. That
 re-measure also explains why a plateau is still **not** proven: at 10M rows peak
 RSS *is* the SQL working set (~630–680 MB), which sits **below** the ceiling, so
-the ceiling never becomes the binding constraint there. Still owed from this
-ladder: re-measuring the **top of the ladder (100M) under the shipped default**
-and the whole series on the **packaged build** (§5.1).
+the ceiling never becomes the binding constraint there. The top of the ladder was
+then re-measured under the shipped default (`bounded_100m_top`): **3 724.0 MiB**
+(90.9 % of the 4 GiB ceiling, 87.7 MiB spilled, 0 errors, 8 847.8 s) — −5.7 % RSS
+vs the unbounded run and still `rows^0.74`, confirming the ceiling is *reached*
+but not yet *decisive* at 100M. Still owed from this ladder: a pass with the
+ceiling forced **below** the 100M working set (the only direct plateau
+demonstration) and the whole series on the **packaged build** (§5.1).
 
 Still owed at the release gate: the 500-column and 0/40 %-missingness corners of
 §4.1, Parquet sources, and the **packaged** macOS + Windows baseline (§5.1) —
@@ -281,6 +285,19 @@ report *live* buffers only and read `0` once a query finishes, so they cannot
 witness a spill after the fact. Machine-readable copy:
 `data_profiling_engine/benchmark/bounded_ceilings_macos_dev.json`.
 
+**The top of the ladder under the shipped default (100M rows, same fixture, retained):**
+
+| Pass | `memory_limit` | Wall-clock | Peak RSS | Peak spill | Errors |
+|---|---|---:|---:|---:|---:|
+| M7-T2a (no helper) | 12.7 GiB (inherited) | 9 843.7 s | 3 948.2 MB | — | 0 |
+| shipped default | 4 GiB | **8 847.8 s** | **3 724.0 MiB** (3 904 925 696 B) | **87.7 MiB** | 0 |
+
+Against the unbounded run: 100M peak RSS **−5.7 %**, wall **−10.1 %**, 0 errors.
+The ceiling reached **90.9 % of its own value** (3 724 of 4 096 MiB) and the engine
+spilled for the first time on this tier (**87.7 MiB peak**, sampled in the pass's
+own scratch dir). The −10.1 % wall-clock is a **single run per configuration** and
+is not attributed to the ceiling — it is within plausible page-cache variance.
+
 **Honest reading — what this proves and what it does not:**
 
 1. **The ceiling is installed and it binds.** The 256 MB pass spilled 146 MiB to
@@ -301,12 +318,17 @@ spills instead of growing (ADR-007's assumption made real).
 4. **The tight pass is the fastest run only because it skipped work** (914 s vs
    ≈1 220–1 310 s). Wall-clock is not comparable across these four passes; only
    the three ceiling-above-working-set passes are.
-5. **A plateau is still not proven.** `evaluate_rss_plateau` can only flatten a
-   curve at the tiers where the ceiling is *below* the working set. At 10M it is
-   not; the §4.3.3 100M point (3 948.2 MB) sits just under the 4 GiB default, so
-   the top of the ladder is where the ceiling may finally bind. The binding gate
-   therefore remains `evaluate_rss_boundedness` + `SUCCEEDED` + 0 errors; the
-   plateau exponent is reported as a diagnostic.
+5. **A plateau is still not proven — now measured, not extrapolated.** The
+   curve's shape barely moved: the 10M→100M exponent is **0.742** under the
+   ceiling vs **0.766** unbounded, and fitting the whole 200k→100M series gives
+   **0.599** vs 0.607 (×3.97 vs ×4.05 per decade, ≈12.4 vs 13.2 GiB at 1B rows).
+   That is expected, not a failure: a ceiling can only flatten the region **above
+   its own value**, and at 100M the working set (3 724 MiB) still fits inside the
+   4 GiB default — it only *touches* the ceiling (90.9 %, 87.7 MiB spilled).
+   Flattening would require a ceiling *below* the 100M working set (e.g. 1 GiB,
+   which would pin RSS near 1 GiB at the cost of ~3 GB of spill). Until that pass
+   exists, the binding gate stays `evaluate_rss_boundedness` + `SUCCEEDED` + 0
+   errors and the plateau exponent is reported as a diagnostic.
 
 Reference tests for the policy (pure arithmetic over a faked RAM size, read-back
 verification, blank-env = unset, floor per thread count, a tight-ceiling
@@ -314,10 +336,16 @@ aggregation matched against a pure-Python reference, and a source-level guard
 that fails on any new bare `duckdb.connect()`) live in
 `tests/test_duckdb_session.py`.
 
-**Still owed from this follow-up:** the **100M** tier re-measured under the
-shipped default (its §4.3.3 number came from the unbounded engine), a **forced
-ceiling below the 100M working set** to demonstrate the flattening directly, and
-the whole series on the **packaged build** (§5.1).
+**Still owed from this follow-up:** a **forced ceiling below the 100M working
+set** (the only direct demonstration of flattening: pin RSS near 1 GiB at 100M
+and accept the spill), a 100M re-run to turn the −10.1 % wall-clock into a
+defensible number, and the whole series on the **packaged build** (§5.1).
+
+**GOTCHA (monitor, found here):** the pass *records* the workspace it used in its
+`ceilings.temp_directory`. A progress watcher that reads its own process default
+instead reported "0 MiB spilled" for the very pass that had spilled 87.7 MiB —
+read the recorded value, never assume the default. `benchmark watch --pass-name`
+now does that.
 
 ### 4.4 Regression tracking
 
