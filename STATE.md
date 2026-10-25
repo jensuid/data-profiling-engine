@@ -24,7 +24,8 @@ Milestone : M7 — Hardening & Release Gate — M6 UI screens COMPLETE
           real profile.start worker, T3 §5.5 progress push; packaged
           bridge/worker verification on both OS deferred to M7/Phase-3)
 Task      : none in progress — **M6 COMPLETE; M7-T1 DONE; M7-T2 COMPLETE;
-          M7-T2c DONE; M7-T4 + M7-T4b DONE; M7-T3 macOS-track LANDED (unsigned) — Windows + codesign/
+          M7-T2c DONE; M7-T4 + M7-T4b DONE; M7-T6 OPEN (ADR-023 port finding, decision pending);
+          M7-T3 macOS-track LANDED (unsigned) — Windows + codesign/
           notarize legs BLOCKED (no Win box, no Developer ID), see M7 section**
           (T2a = the scheduled 10M→100M RSS-curve ladder, TESTING §4.3.3 +
           `benchmark/ladder_10m_100m_macos_dev.json`: verdict **`bounded`**
@@ -50,8 +51,29 @@ GATE M4   : reporting-layer tasks T1-T4 COMPLETE (706/706 pytest, tsc clean,
           golden byte-stable). MVP acceptance is on the PACKAGED build
           (BLUEPRINT §5 Phase-1 gate / §6), not dev mode — do not stamp M4
           "accepted" until the packaged run is verified in M7/Phase-3.
-NEXT      : M7-T5 — **GATE MVP: every box of TESTING §5.1 green on packaged
-          builds.** OPEN ONLY docs/TESTING_BENCHMARKS.md §5.1 (+ §5.4 results).
+NEXT      : M7-T6 — **DECIDE ADR-023 (Proposed): the packaged macOS `--smoke`
+          reports `PORTS_SMOKE_FAILED`** — pywebview binds a loopback HTTP
+          server because the SPA loads over `file://` (`start()` fires its bottle
+          server on `http_server or has_local_urls`, even with `http_server=False`).
+          This trips SECURITY §8.1 "no bound port" + brushes ADR-005. Escalated
+          per AGENTS §8 — **do NOT pick silently, no code written.** OPEN ONLY
+          `docs/ARCHITECTURE_AND_ADRS.md` ADR-023 + `docs/M7_T3_INSTALLER_MATRIX.md`
+          line 71 + `data_profiling_engine/main.py` (`_run_ports_smoke`, `start`).
+          Choose **Option A** (bound & document the exception: prove loopback-only/
+          ephemeral/process-local, pin `http_port`, tighten the ports check to
+          allow-list precisely the pywebview listener) or **Option B** (eliminate
+          the listener: load the SPA via a WebKit custom-scheme so `has_local_urls`
+          is False — needs a spike, interacts with ADR-013 HashRouter + offline
+          plotly asset). Sibling LOW-sev task, fix alongside: the `--smoke`
+          worker/bridge probes still send Phase-0 spike commands
+          (`worker_echo_job`/`echo`/`job.get_status`) that are NOT in the §5.2
+          allow-list (correctly rejected as `BRIDGE_COMMAND_UNKNOWN`) — retarget to
+          `dataset.inspect` or retire. GOTCHA (verified, reusable): loading any
+          local `file://` URL makes pywebview start an internal localhost HTTP
+          server regardless of `http_server=False`.
+          THEN M7-T5 — **GATE MVP: every box of TESTING §5.1 green on packaged
+          builds** (ADR-023 must land first — the §8.1 box cannot pass while the
+          port check FAILs).** OPEN docs/TESTING_BENCHMARKS.md §5.1 (+ §5.4 results).
           M7-T4 landed (security acceptance automation, 34 tests in
           `tests/test_security_acceptance.py`, 904/904 green — see task line;
           it also fixed two real HTML masking bugs in `reporting/html_report.py`
