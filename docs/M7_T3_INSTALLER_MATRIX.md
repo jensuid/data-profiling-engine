@@ -133,8 +133,11 @@ spctl --assess --type open --context context:primary-signature -vv dist/DataProf
 ## 4. Windows track — operator runbook (native Windows 10/11 x64)
 
 Mirrors `WINDOWS_M0_T5_CHECKLIST.md` for the Phase-0 spike, extended to the full
-installer matrix. Prereqs: Git, Node LTS, **uv**, **Python 3.12** (parity),
-**NSIS** (`makensis`), WebView2 Evergreen runtime (or the bootstrapper).
+installer matrix. **The detailed, step-by-step operator version lives in
+[`WINDOWS_M7_T3_CHECKLIST.md`](./WINDOWS_M7_T3_CHECKLIST.md)** — run that top to
+bottom on the Windows box. Prereqs: Git, Node LTS, **uv**, **Python 3.12** (parity),
+**NSIS** (`makensis`), **psutil** (Windows RSS baseline, §6), WebView2 Evergreen
+runtime (or the bootstrapper).
 
 ```powershell
 # 1. env + deps (see WINDOWS_M0_T5_CHECKLIST.md §1-2 for the exact uv steps)
@@ -181,3 +184,4 @@ legs are green.
 | Blank window (win) | no WebView2 runtime | install Evergreen / bootstrapper (§6.4) |
 | Gatekeeper blocks on first open (mac) | not signed/notarized | run §3 in a Developer ID env |
 | AV quarantines exe (win) | unsigned onefile heuristic | record; sign via `signtool` in release env |
+| `baseline` RSS verdict `insufficient_data` (win) | `psutil` not installed (POSIX `resource` absent on Windows) | `uv pip install psutil`; RSS then records as a **sampled** peak (`peak_rss_method="psutil_sampled_peak"`, ADR-015 — never claim it exact) |

@@ -11,3 +11,9 @@ pytest>=8.0
 
 # Packaging / build tooling (ADR-009 PyInstaller spike, M0-T4; SECURITY §6)
 pyinstaller>=6.10
+
+# Benchmark RSS sampling (M7-T3): peak-RSS fallback on Windows, where POSIX
+# `resource` is absent. Optional at import (the harness degrades to `None`); the
+# benchmark module is never bundled into the frozen app, so this does not affect
+# the packaged build (TESTING §4.2 / §5.1 packaged Windows baseline).
+psutil>=6.0

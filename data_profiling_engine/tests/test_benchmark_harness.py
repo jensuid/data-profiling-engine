@@ -20,6 +20,7 @@ import duckdb
 import pytest
 
 from data_profiling_engine import schemas as S
+from data_profiling_engine.benchmark import harness
 from data_profiling_engine.benchmark.generator import (
     DatasetSpec,
     column_names,
@@ -29,7 +30,9 @@ from data_profiling_engine.benchmark.generator import (
 from data_profiling_engine.benchmark.harness import (
     PLATEAU_MAX_EXPONENT,
     CaseResult,
+    _RssPeakSampler,
     _peak_rss_bytes,
+    _peak_rss_method,
     evaluate_rss_boundedness,
     evaluate_rss_plateau,
     evaluate_sampled_cheaper,
@@ -133,6 +136,48 @@ def test_peak_rss_reports_bytes_or_none():
     rss = _peak_rss_bytes()
     # POSIX → positive int (bytes); Windows → None. Never a negative/zero int.
     assert rss is None or rss > 0
+
+
+# ---- peak-RSS mechanism label + Windows fallback sampler (M7-T3) ----------
+
+def test_peak_rss_method_label_is_honest():
+    # POSIX high-water wins over psutil; a sampled peak is never labelled exact;
+    # neither library available → an explicit "unavailable", never a silent 0.
+    assert _peak_rss_method(resource_available=True, psutil_available=True) == "resource.ru_maxrss"
+    assert _peak_rss_method(resource_available=False, psutil_available=True) == "psutil_sampled_peak"
+    assert _peak_rss_method(resource_available=False, psutil_available=False) == "unavailable"
+
+
+def test_peak_rss_method_matches_this_platform():
+    # Whatever is importable here must be exactly what the label reports — the
+    # recorded peak is never attributed to a mechanism that is not loaded.
+    method = _peak_rss_method(
+        resource_available=harness._resource is not None,
+        psutil_available=harness._psutil is not None,
+    )
+    if harness._resource is not None:
+        assert method == "resource.ru_maxrss"
+        assert _peak_rss_bytes() is not None
+    else:  # pragma: no cover - exercised only on Windows
+        assert method in {"psutil_sampled_peak", "unavailable"}
+
+
+def test_rss_sampler_is_inert_without_psutil(monkeypatch):
+    # No 'resource' AND no psutil → the sampler yields None (an honest gap),
+    # never a fabricated 0 that would wrongly flip the RSS verdicts.
+    monkeypatch.setattr(harness, "_psutil", None)
+    sampler = _RssPeakSampler()
+    assert sampler.start() is sampler
+    assert sampler.stop() is None
+
+
+@pytest.mark.skipif(harness._psutil is None, reason="psutil not installed (only required on Windows)")
+def test_rss_sampler_reports_positive_peak():
+    sampler = _RssPeakSampler(interval_s=0.01).start()
+    buf = bytearray(8 * 1_048_576)  # touch memory so there is a non-trivial RSS
+    peak = sampler.stop()
+    del buf
+    assert isinstance(peak, int) and peak > 0
 
 
 # ---- structural guarantee: RSS boundedness (pure logic) ------------------

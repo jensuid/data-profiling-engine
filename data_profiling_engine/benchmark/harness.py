@@ -36,9 +36,14 @@ flatten memory above its own value, so the plateau is the stricter diagnostic
 (TESTING §4.3) while ``bounded`` stays the binding gate.
 
 Platform note: peak RSS uses POSIX ``resource.getrusage`` (macOS reports bytes,
-Linux kilobytes). On Windows ``resource`` is absent → ``peak_rss_bytes`` is
-``None`` and the RSS guarantee is skipped there until the packaged Windows
-baseline (deferred to M7/Phase-3 per STATE); wall-clock + disk still record.
+Linux kilobytes), which is the process's true high-water mark. On Windows
+``resource`` is absent, so the measured child falls back to a ``psutil``
+self-sampler that polls RSS at :data:`RSS_SAMPLE_INTERVAL_S` and reports the
+maximum — a *sampled* peak, honestly labelled ``peak_rss_method =
+"psutil_sampled_peak"`` (ADR-015: never present a sampled value as the exact
+high-water). If neither ``resource`` nor ``psutil`` is available,
+``peak_rss_bytes`` stays ``None`` and the RSS guarantees report
+``insufficient_data``; wall-clock + disk still record.
 """
 from __future__ import annotations
 
@@ -57,6 +62,16 @@ try:  # POSIX only; absent on Windows (see module docstring)
     import resource as _resource
 except ImportError:  # pragma: no cover - exercised only on Windows
     _resource = None  # type: ignore[assignment]
+
+try:  # Windows RSS fallback sampler; optional on every platform
+    import psutil as _psutil
+except ImportError:  # pragma: no cover - only required where 'resource' is absent
+    _psutil = None  # type: ignore[assignment]
+
+#: How often the ``psutil`` fallback samples RSS (seconds). Small enough to
+#: catch a plateau over a multi-second DuckDB pass at negligible overhead, but
+#: still a *sampling* interval — hence the sampled-peak label, not a true max.
+RSS_SAMPLE_INTERVAL_S = 0.05
 
 from data_profiling_engine.benchmark.generator import (
     DatasetSpec,
@@ -83,6 +98,70 @@ def _peak_rss_bytes() -> Optional[int]:
     return int(peak) * 1024
 
 
+def _peak_rss_method(*, resource_available: bool, psutil_available: bool) -> str:
+    """Which mechanism produced (or will produce) ``peak_rss_bytes`` — recorded
+    so a Windows *sampled* peak is never mistaken for the POSIX high-water mark
+    (ADR-015). Pure + unit-testable without importing either library."""
+    if resource_available:
+        return "resource.ru_maxrss"
+    if psutil_available:
+        return "psutil_sampled_peak"
+    return "unavailable"
+
+
+class _RssPeakSampler:
+    """Poll this process's RSS (plus any child's) in a background thread and
+    report the peak — the Windows stand-in for ``resource.ru_maxrss``.
+
+    DuckDB's Python binding computes in-process, so the measured profile pass
+    lives in *this* process and self-sampling suffices; children are summed to
+    cover a case that ever spawns one. When ``psutil`` is unavailable the sampler
+    is inert and :meth:`stop` returns ``None``, so the caller keeps the honest
+    ``unavailable`` path instead of a fabricated zero."""
+
+    def __init__(self, interval_s: float = RSS_SAMPLE_INTERVAL_S) -> None:
+        self._interval_s = interval_s
+        self._proc = None
+        self._peak_bytes = 0
+        self._stop_evt = None
+        self._thread = None
+
+    def start(self) -> "_RssPeakSampler":
+        if _psutil is None:
+            return self
+        import threading
+
+        self._proc = _psutil.Process()
+        self._peak_bytes = 0
+        self._stop_evt = threading.Event()
+
+        def _loop() -> None:
+            while not self._stop_evt.wait(self._interval_s):
+                total = 0
+                try:
+                    total = self._proc.memory_info().rss or 0
+                    for child in self._proc.children(recursive=True):
+                        try:
+                            total += child.memory_info().rss or 0
+                        except (_psutil.NoSuchProcess, _psutil.AccessDenied):
+                            pass
+                except (_psutil.NoSuchProcess, _psutil.AccessDenied):
+                    pass
+                if total > self._peak_bytes:
+                    self._peak_bytes = total
+
+        self._thread = threading.Thread(target=_loop, daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self) -> Optional[int]:
+        if _psutil is None or self._thread is None or self._stop_evt is None:
+            return None
+        self._stop_evt.set()
+        self._thread.join(timeout=2 * self._interval_s + 1.0)
+        return self._peak_bytes or None
+
+
 def measure_and_emit(input_path: "Path | str", config_path: "Path | str", emit_path: "Path | str") -> Dict[str, object]:
     """Run one profiling pass in the current (child) process and write the
     metrics JSON to ``emit_path``. This is the ``measure`` subcommand body — it
@@ -96,16 +175,26 @@ def measure_and_emit(input_path: "Path | str", config_path: "Path | str", emit_p
     out.parent.mkdir(parents=True, exist_ok=True)
     result_ref = out.with_suffix(".profile.json")
 
+    # POSIX: the child self-reports its true high-water via resource.ru_maxrss.
+    # Windows (no resource): wrap the same call in a psutil sampled peak.
+    sampler = _RssPeakSampler()
+    if _resource is None:
+        sampler.start()
     t0 = time.perf_counter()
     bundle = profile_dataset(
         "bench_ds", input_path, config, run_id="bench-run",
         result_refs={"profile_json": str(result_ref)},
     )
     wall = time.perf_counter() - t0
+    peak_rss_bytes = _peak_rss_bytes() if _resource is not None else sampler.stop()
 
     payload: Dict[str, object] = {
         "wall_clock_s": round(wall, 4),
-        "peak_rss_bytes": _peak_rss_bytes(),
+        "peak_rss_bytes": peak_rss_bytes,
+        "peak_rss_method": _peak_rss_method(
+            resource_available=_resource is not None,
+            psutil_available=_psutil is not None,
+        ),
         "row_count": _row_count(bundle),
         "column_count": bundle.profile.column_count,
         "mode": str(config.profiling.mode),
@@ -264,6 +353,7 @@ def measure_case(
             "process_startup_overhead_s": round(parent_wall - float(metrics["wall_clock_s"]), 4),
             "run_status": metrics.get("run_status"),
             "planner_sampling_enabled": metrics.get("sampling_enabled"),
+            "peak_rss_method": metrics.get("peak_rss_method"),
         },
     )
 
@@ -478,7 +568,9 @@ def _machine_context() -> Dict[str, object]:
         "python": platform.python_version(),
         "cpu_count": multiprocessing.cpu_count(),
         "total_ram_gb": _total_ram_gb(),
-        "rss_measurement": "resource.getrusage(RUSAGE_SELF).ru_maxrss (child process)" if _resource else "unavailable on this platform",
+        "rss_measurement": _peak_rss_method(
+            resource_available=_resource is not None, psutil_available=_psutil is not None
+        ),
     }
 
 
