@@ -64,10 +64,13 @@ NEXT      : M7-T2c — own the memory ceiling, then re-measure the top of the
           tracked ladder JSON — the target is a *flat* curve, not merely a
           sub-linear one.
           Test:  .venv/bin/python -m pytest data_profiling_engine/tests -q
-Blocked by: none. GOTCHA (disk): volume was 96 % full before this task — a 100M
-          CSV is 6.2 GB and DuckDB spill needs room on the same volume; check
-          `df -h` and delete `.benchmarks/ladder/csv_100000000_std.csv`
-          (regenerable in ~8 min) to make room for a re-run.
+Blocked by: none. GOTCHA (disk): volume sits at 97 % full — a 100M CSV is 6.2 GB
+          and DuckDB spill needs room on the SAME volume. The ladder fixtures
+          (`.benchmarks/ladder/csv_10000000_std.csv` + `csv_100000000_std.csv`,
+          6.8 GB, gitignored) are **deliberately RETAINED for the M7-T2c
+          re-measure** (user decision 2026-10-25) — reuse them via the harness's
+          `fixture_paths`, don't regenerate; check `df -h` before adding any new
+          tier, and expect spill to eat a few more GiB.
 Session notes: M7-T2a DONE — the 10M→100M RSS-curve ladder ran 14:46→18:04
                local (3 h 18 m wall incl. fixture generation) on
                `.benchmarks/ladder/`, verdict **`bounded`**:
@@ -95,8 +98,8 @@ Session notes: M7-T2a DONE — the 10M→100M RSS-curve ladder ran 14:46→18:04
                the §4.2 "stays flat" claim proven. GOTCHA (disk): the volume was
                already 96 % full — a 100M CSV is 6.2 GB and DuckDB spill wants
                room on the same volume; check `df -h` before scheduling the tier
-               ladder, and delete `.benchmarks/ladder/csv_100000000_std.csv`
-               (regenerable in ~8 min) when re-running.
+               ladder. Both ladder fixtures are RETAINED (user decision
+               2026-10-25) so M7-T2c re-measures without regenerating 6.8 GB.
 Session notes: M7-T2a helper — `benchmark watch`, the % -done progress
                indicator the user asked for mid-run ("buat indikator progress
                pooling berupa persentase done"). `benchmark/watch.py` is
@@ -1500,7 +1503,7 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 
 - [x] **M7-T1** Benchmark harness + synthetic generator; baseline numbers recorded into TESTING §4.3. *Spec: TESTING §4.* ✅ `data_profiling_engine/benchmark/` — `generator.py` (`DatasetSpec`, DuckDB-side `COPY … FROM range(n)` synthetic CSV/Parquet, deterministic hash-salted values — never a Python row loop, ADR-007; core kinds pk_id/amount/stage/category/event_date + alternating extras, card/missingness/distribution/seed knobs), `harness.py` (`measure_case` runs each profile in a **fresh child process** so `resource.getrusage` RSS is per-run isolated; pure `evaluate_rss_boundedness` / `evaluate_sampled_cheaper`; `run_suite` emits a self-describing results JSON + machine context), `__main__.py` (`generate|measure|baseline`). `baseline_macos_dev.json` (tracked) = dev-mode baseline; TESTING §4.3.1 records it: RSS 94→169 MB across 200k→1M (×5 rows, ×1.8 RSS = **bounded**, no Python materialization); sampled 144.7s < deep-exact 157.5s (**degrade strictly cheaper**, marginal — full-relation quality rules + query-count dominate). Fast regression test `tests/test_benchmark_harness.py` (+13, never runs the heavy ladder). **GOTCHA:** macOS `os.sysconf` has no `SC_PHYS_PAGES` → RAM read via `sysctl hw.memsize`; `resource` absent on Windows → RSS `None` there (Windows/packaged baseline owed at §5.1). 788/788 pytest green 2026-10-25. **→ NEXT: M7-T2.**
 - [x] **M7-T2** Scale guarantees verified (RSS flatness, cancel latency, recovery). *Spec: TESTING §4.3.* ✅ Landed as **M7-T2b** (cancellation latency + crash recovery, TESTING §4.3.2) and **M7-T2a** (the scheduled 10M→100M RSS-curve ladder, TESTING §4.3.3 + `benchmark/ladder_10m_100m_macos_dev.json`): verdict **`bounded`** (`rss_ratio 5.832 < row_ratio 10.0`), both tiers `SUCCEEDED` / 0 errors — 10M 1310.2 s / 677.0 MB, 100M 9843.7 s / 3948.2 MB. **Honest caveat recorded in §4.3.3:** bounded ≠ flat; the joined 200k→100M series grows ≈ `rows^0.65`, extrapolating to ~17 GB at 1B rows, so the §4.2 "must stay flat" claim is NOT yet proven at that scale → follow-up task below. Also added the read-only `benchmark watch` % -done indicator (11 tests). 812/812 pytest green 2026-10-25. **→ NEXT: M7-T2c.**
-- [ ] **M7-T2c** Explicit memory ceiling + spill verification, then re-measure the top of the ladder. *Spec: BLUEPRINT Phase 3 "memory ceilings"; TESTING §4.2 (peak RSS) / §4.3.3.* Set DuckDB `memory_limit` + `temp_directory` explicitly in the engine connection (verified 2026-10-25: every connect site is a bare `duckdb.connect()` — `connectors/base.py`, `orchestration/rollup.py`, `orchestration/__init__.py`, `bridge/facade.py` — so the ~80 %-of-RAM default applies and RSS is free to scale with data; likely, not yet proven, cause of the §4.3.3 growth), prove spill-to-disk engages instead of buffer-pool growth, add the ceiling to config/env, re-run `benchmark baseline --sizes 10000000,100000000` and update §4.3.3. **→ after it: M7-T3.**
+- [ ] **M7-T2c** Explicit memory ceiling + spill verification, then re-measure the top of the ladder. *Spec: BLUEPRINT Phase 3 "memory ceilings"; TESTING §4.2 (peak RSS) / §4.3.3.* Set DuckDB `memory_limit` + `temp_directory` explicitly in the engine connection (verified 2026-10-25: every connect site is a bare `duckdb.connect()` — `connectors/base.py`, `orchestration/rollup.py`, `orchestration/__init__.py`, `bridge/facade.py` — so the ~80 %-of-RAM default applies and RSS is free to scale with data; likely, not yet proven, cause of the §4.3.3 growth), prove spill-to-disk engages instead of buffer-pool growth, add the ceiling to config/env, re-run `benchmark baseline --sizes 10000000,100000000` and update §4.3.3. **Fixture note:** the 6.8 GB ladder fixtures are RETAINED in `.benchmarks/ladder/` — drive `measure_case` with explicit `input_path`/`base_config` (as `run_suite` does) so the re-run reuses them instead of regenerating. **Cheapest honest sequence:** a 10M pair first (unbounded 677 MB vs bounded, ~22 min/pass) to prove the growth is buffer-pool-dominated, then ONE confirming 100M pass. **→ after it: M7-T3.**
 - [ ] **M7-T3** Both-OS installer matrix: install→job→export→upgrade→uninstall. *Spec: SECURITY §6; TESTING §5.1.*
 - [ ] **M7-T4** Security acceptance automation. *Spec: SECURITY §8; TESTING §5.4.*
 - [ ] **M7-T5** **→ GATE MVP: every box of TESTING §5.1 green on packaged builds.**
