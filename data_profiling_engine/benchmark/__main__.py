@@ -16,6 +16,9 @@
     python -m data_profiling_engine.benchmark watch \\
         --workdir .benchmarks/ladder --sizes 10000000,100000000 [--interval 30] [--json]
 
+    python -m data_profiling_engine.benchmark watch \\
+        --pass-name top --rows 100000000 --workdir .benchmarks/ladder [--interval 60]
+
 ``baseline`` is the release-gate entry: it runs the row-scaling RSS curve plus
 the exact-vs-sampled wall-clock pair and writes a self-describing results doc
 (machine context + workload + guarantees, TESTING §4.2/§4.4). The heavy
@@ -112,6 +115,11 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--interval", type=float, default=0.0,
                        help="poll every N seconds until results.json appears (0 = one snapshot)")
     watch.add_argument("--json", action="store_true", dest="as_json")
+    watch.add_argument("--pass-name", dest="pass_name", default=None, metavar="NAME",
+                       help="track ONE bounded pass (M7-T2c run_pass.sh, e.g. 'top') "
+                            "instead of the tier ladder")
+    watch.add_argument("--rows", type=int, default=None,
+                       help="tier of the tracked pass (default: the last --sizes entry)")
     return p
 
 
@@ -151,11 +159,24 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _run_guarantees(args)
 
     if args.command == "watch":
-        from data_profiling_engine.benchmark.watch import watch_ladder
+        from data_profiling_engine.benchmark.watch import watch_ladder, watch_pass
 
         import time as _time
 
         sizes = tuple(_parse_sizes(args.sizes))
+        if args.pass_name:
+            rows = args.rows if args.rows is not None else sizes[-1]
+            code = watch_pass(
+                rows=rows, pass_name=args.pass_name, workdir=args.workdir,
+                fmt=args.fmt, mode=args.mode, json_out=args.as_json,
+            )
+            while code == 1 and args.interval > 0:
+                _time.sleep(args.interval)
+                code = watch_pass(
+                    rows=rows, pass_name=args.pass_name, workdir=args.workdir,
+                    fmt=args.fmt, mode=args.mode, json_out=args.as_json,
+                )
+            return code
         code = watch_ladder(
             sizes=sizes, workdir=args.workdir, fmt=args.fmt, mode=args.mode,
             json_out=args.as_json,

@@ -17,12 +17,17 @@ import pytest
 from data_profiling_engine.benchmark import harness
 from data_profiling_engine.benchmark.watch import (
     LadderStage,
+    build_pass_progress,
     build_stages,
     compute_overall,
+    dir_bytes,
+    format_pass,
     format_stages,
     parse_ps_etime,
+    pass_output_path,
     tier_label,
     tier_paths,
+    watch_pass,
 )
 
 _ROWS_SMALL, _ROWS_BIG = 10_000_000, 100_000_000
@@ -190,3 +195,116 @@ def test_format_stages_marks_completion(tmp_path):
     running = format_stages(stages, {"overall_pct": 50.0, "eta_s": 60.0},
                             workdir=tmp_path, results_done=False)
     assert "eta ~" in running
+
+
+# -- single bounded pass (M7-T2c) --------------------------------------------
+
+def _write_pass_verdict(path: Path, *, wall: float = 9843.7,
+                        rss: int = 4_139_982_848, errors: int = 0) -> None:
+    path.write_text(json.dumps({
+        "wall_clock_s": wall, "peak_rss_bytes": rss, "n_errors": errors,
+        "extra": {"run_status": "SUCCEEDED"},
+        "ceilings": {"memory_limit": "4294967296 B",
+                     "max_temp_directory_size": "8589934592 B"},
+    }), encoding="utf-8")
+
+
+def test_pass_output_path_matches_the_runner_filename() -> None:
+    """The watcher reconstructs the file ``run_pass.sh`` writes; a drift here
+    would make every pass look ``not_started`` (the M7-T2a label-parity trap)."""
+    assert pass_output_path(_ROWS_BIG, "top", ".x").name == "bounded_100m_top.json"
+    assert pass_output_path(_ROWS_SMALL, "floor", ".x").name == "bounded_10m_floor.json"
+
+
+def test_build_pass_progress_done_reads_the_measured_verdict(tmp_path: Path) -> None:
+    _write_pass_verdict(pass_output_path(_ROWS_BIG, "top", tmp_path))
+    p = build_pass_progress(rows=_ROWS_BIG, pass_name="top", workdir=tmp_path)
+    assert p.status == "done" and p.pct == 100.0 and p.basis == "measured"
+    assert p.est_s == 9843.7
+    assert p.detail["peak_rss_mib"] == 3948.2
+    assert p.detail["n_errors"] == 0 and p.detail["run_status"] == "SUCCEEDED"
+    assert p.detail["ceilings"]["memory_limit"] == "4294967296 B"
+
+
+def test_build_pass_progress_running_calibrates_on_the_same_tier(tmp_path: Path) -> None:
+    """Estimate comes from the SAME tier's earlier measured run (identical
+    fixture), and is labelled ``reference`` — not a promise."""
+    _write_measure(tmp_path / f"{tier_label(_ROWS_BIG)}.measure.json", wall=9843.7,
+                   rows=_ROWS_BIG)
+    p = build_pass_progress(rows=_ROWS_BIG, pass_name="top", workdir=tmp_path,
+                            process_age_s=1800)
+    assert p.status == "running"
+    assert p.est_s == 9843.7 and p.basis == "reference"
+    assert p.pct == round(100.0 * 1800 / 9843.7, 1)
+    assert p.detail["child_measured"] is False
+
+
+def test_build_pass_progress_never_invents_an_estimate(tmp_path: Path) -> None:
+    p = build_pass_progress(rows=_ROWS_BIG, pass_name="top", workdir=tmp_path,
+                            process_age_s=100)
+    assert p.status == "running" and p.est_s is None
+    assert p.pct is None  # no duration known → no percentage, never a guess
+
+
+def test_build_pass_progress_marks_a_dead_driver_as_stalled(tmp_path: Path) -> None:
+    """Child emitted its measurement but the verdict file is missing: the driver
+    died. Must never be reported as finished."""
+    (tmp_path / f"{tier_label(_ROWS_BIG)}_bounded.measure.json").write_text(
+        "{}", encoding="utf-8")
+    p = build_pass_progress(rows=_ROWS_BIG, pass_name="top", workdir=tmp_path)
+    assert p.status == "stalled" and p.pct is None
+    assert p.detail["child_measured"] is True
+
+
+def test_build_pass_progress_not_started(tmp_path: Path) -> None:
+    p = build_pass_progress(rows=_ROWS_BIG, pass_name="top", workdir=tmp_path)
+    assert p.status == "not_started" and p.pct is None
+
+
+def test_dir_bytes_sums_nested_files_and_reports_unknown(tmp_path: Path) -> None:
+    nested = tmp_path / "scratch" / "sub"
+    nested.mkdir(parents=True)
+    (tmp_path / "scratch" / "a.tmp").write_bytes(b"x" * 100)
+    (nested / "b.tmp").write_bytes(b"y" * 50)
+    assert dir_bytes(tmp_path / "scratch") == 150
+    # an absent workspace means unknown, never "zero bytes spilled"
+    assert dir_bytes(tmp_path / "missing") is None
+    assert dir_bytes(None) is None
+
+
+def test_format_pass_reports_spill_and_the_disclaimer(tmp_path: Path) -> None:
+    p = build_pass_progress(rows=_ROWS_BIG, pass_name="top", workdir=tmp_path,
+                            process_age_s=100, spill_bytes=150 * 1_048_576)
+    text = format_pass(p)
+    assert "TIME ESTIMATES" in text
+    assert "150.0 MiB" in text and "ceiling is binding" in text
+    # unknown duration → a dash, never a fabricated percentage
+    assert "   -  " in text
+
+    empty = format_pass(build_pass_progress(rows=_ROWS_BIG, pass_name="top",
+                                            workdir=tmp_path, process_age_s=0,
+                                            spill_bytes=0))
+    assert "working set under the ceiling" in empty
+
+
+def test_watch_pass_exit_codes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                               capsys: pytest.CaptureFixture[str]) -> None:
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr("data_profiling_engine.benchmark.watch.process_age_seconds",
+                        lambda pattern: 600)
+    assert watch_pass(rows=_ROWS_BIG, pass_name="top", workdir=tmp_path,
+                      spill_dir=scratch) == 1
+    assert "running" in capsys.readouterr().out
+
+    monkeypatch.setattr("data_profiling_engine.benchmark.watch.process_age_seconds",
+                        lambda pattern: None)
+    assert watch_pass(rows=_ROWS_BIG, pass_name="top", workdir=tmp_path,
+                      spill_dir=scratch) == 2
+
+    _write_pass_verdict(pass_output_path(_ROWS_BIG, "top", tmp_path))
+    monkeypatch.setattr("data_profiling_engine.benchmark.watch.process_age_seconds",
+                        lambda pattern: 600)  # a still-listed pid cannot mask a verdict
+    assert watch_pass(rows=_ROWS_BIG, pass_name="top", workdir=tmp_path,
+                      spill_dir=scratch) == 0
+    assert "done" in capsys.readouterr().out

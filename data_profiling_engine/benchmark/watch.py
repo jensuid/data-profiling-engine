@@ -26,10 +26,25 @@ Usage (``python -m data_profiling_engine.benchmark watch …``):
     … watch --workdir .benchmarks/ladder --sizes 10000000,100000000
     … watch … --interval 30          # live polling, one line per tick
     … watch … --json                 # machine-readable
+
+Single-pass mode (M7-T2c, ``.benchmarks/ladder/run_pass.sh``):
+
+    … watch --pass top --rows 100000000 [--interval 60]
+
+A bounded pass has no tier ladder to reconstruct, so the same discipline is
+applied to a much shorter evidence chain: the pass verdict JSON
+(``bounded_<N>m_<name>.json``) means *done*, a live ``measure_bounded.py``
+process means *running*, and a child ``*_bounded.measure.json`` without a
+verdict means the driver **died** — reported as ``stalled``, never as done. The
+estimate is calibrated on the *same tier's* measured wall-clock from an earlier
+ladder run, so it is a reference, not a guess. The pass mode additionally shows
+the live size of the DuckDB scratch directory: that is the one signal that says
+whether the ADR-021 ceiling is actually binding during the run.
 """
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -47,6 +62,11 @@ _APPROX_BYTES_PER_ROW = 64.0
 _FALLBACK_GEN_S_PER_BYTE = 89.0 / (10_000_000 * _APPROX_BYTES_PER_ROW)
 
 _DONE, _ACTIVE, _PENDING, _UNKNOWN = "done", "active", "pending", "unknown"
+
+#: Single-pass statuses (M7-T2c). ``stalled`` is a first-class state: a pass whose
+#: driver died must never be reported as finished.
+_PASS_RUNNING, _PASS_DONE = "running", "done"
+_PASS_STALLED, _PASS_NOT_STARTED = "stalled", "not_started"
 
 
 @dataclass
@@ -358,6 +378,228 @@ def watch_ladder(
     return 1 if running else 2
 
 
+# -- single bounded pass (M7-T2c) -------------------------------------------
+
+
+@dataclass
+class PassProgress:
+    """Progress of ONE bounded pass (``measure_bounded.py``, driven by
+    ``.benchmarks/ladder/run_pass.sh``)."""
+
+    rows: int
+    pass_name: str
+    status: str  # "running" | "done" | "stalled" | "not_started"
+    elapsed_s: Optional[float] = None
+    est_s: Optional[float] = None
+    basis: str = "estimate"  # "measured" | "reference" | "estimate"
+    spill_bytes: Optional[int] = None
+    detail: Dict[str, object] = field(default_factory=dict)
+
+    @property
+    def pct(self) -> Optional[float]:
+        """Completion percentage, or ``None`` when it cannot be determined."""
+        if self.status == _PASS_DONE:
+            return 100.0
+        if self.status != _PASS_RUNNING or not self.est_s:
+            return None
+        return round(100.0 * min(self.elapsed_s or 0.0, self.est_s) / self.est_s, 1)
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "rows": self.rows, "pass_name": self.pass_name, "status": self.status,
+            "pct": self.pct,
+            "elapsed_s": round(self.elapsed_s, 1) if self.elapsed_s else None,
+            "est_s": round(self.est_s, 1) if self.est_s else None,
+            "basis": self.basis, "spill_bytes": self.spill_bytes, "detail": self.detail,
+        }
+
+
+def pass_output_path(rows: int, pass_name: str, workdir: "Path | str") -> Path:
+    """The verdict file ``run_pass.sh`` names for a pass (must stay in sync with
+    that script's ``--out`` argument)."""
+    return Path(workdir) / f"bounded_{rows // 1_000_000}m_{pass_name}.json"
+
+
+def dir_bytes(path: Optional["Path | str"]) -> Optional[int]:
+    """Total bytes of the files under ``path`` — a live spill probe.
+
+    ``None`` when the directory does not exist, so an absent workspace reads as
+    *unknown*, never as *zero bytes spilled*."""
+    if path is None:
+        return None
+    root = Path(path)
+    if not root.is_dir():
+        return None
+    total = 0
+    for entry in root.rglob("*"):
+        try:
+            if entry.is_file():
+                total += entry.stat().st_size
+        except OSError:
+            continue  # a spill block DuckDB deleted mid-walk is not an error
+    return total
+
+
+def resolve_spill_dir() -> Optional[Path]:
+    """Where the described pass spills: ``DPE_DUCKDB_TEMP_DIR`` or the engine
+    default (ADR-021). Resolved **without creating anything** — a monitor must
+    not change the state it observes."""
+    try:
+        from data_profiling_engine import duckdb_session
+        from data_profiling_engine.storage import paths
+    except ImportError:  # pragma: no cover - package is always importable here
+        return None
+    raw = os.environ.get(duckdb_session.TEMP_DIR_ENV, "").strip()
+    if raw:
+        return Path(raw)
+    return paths.default_temp_root() / duckdb_session.SCRATCH_SUBDIR
+
+
+def build_pass_progress(
+    *,
+    rows: int,
+    pass_name: str,
+    workdir: "Path | str" = ".benchmarks/ladder",
+    fmt: str = "csv",
+    mode: str = "standard",
+    now: Optional[float] = None,
+    process_age_s: Optional[int] = None,
+    spill_bytes: Optional[int] = None,
+) -> PassProgress:
+    """Reconstruct one pass's state from its (short) on-disk evidence chain.
+
+    Precedence: verdict file → live process → child emit without verdict
+    (``stalled``: the driver died) → ``not_started``. The estimate for a running
+    pass is the **same tier's** measured wall-clock from an earlier ladder run
+    (identical fixture and knobs), labelled ``reference`` — a monitor never
+    invents a duration (ADR-015 discipline)."""
+    workdir = Path(workdir)
+    now = time.time() if now is None else now
+    label = tier_label(rows, fmt)
+    out = pass_output_path(rows, pass_name, workdir)
+    emit = workdir / f"{label}_bounded.measure.json"
+    reference = _wall_from_measure(workdir / f"{label}.measure.json")
+
+    if out.exists():
+        try:
+            payload = json.loads(out.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = {}
+        wall = payload.get("wall_clock_s")
+        rss = payload.get("peak_rss_bytes")
+        return PassProgress(
+            rows=rows, pass_name=pass_name, status=_PASS_DONE,
+            elapsed_s=wall, est_s=wall if wall else reference, basis="measured",
+            spill_bytes=spill_bytes,
+            detail={
+                "wall_clock_s": wall,
+                "peak_rss_mib": round(rss / 1_048_576, 1) if rss else None,
+                "n_errors": payload.get("n_errors"),
+                "run_status": (payload.get("extra") or {}).get("run_status"),
+                "ceilings": payload.get("ceilings") or {},
+                "output": str(out),
+            },
+        )
+
+    if process_age_s is not None:
+        return PassProgress(
+            rows=rows, pass_name=pass_name, status=_PASS_RUNNING,
+            elapsed_s=float(process_age_s), est_s=reference,
+            basis="reference" if reference else "estimate", spill_bytes=spill_bytes,
+            detail={
+                "child_measured": emit.exists(),
+                "reference_s": reference,
+                "output": str(out),
+            },
+        )
+
+    stalled = emit.exists()
+    return PassProgress(
+        rows=rows, pass_name=pass_name,
+        status=_PASS_STALLED if stalled else _PASS_NOT_STARTED,
+        est_s=reference, basis="reference" if reference else "estimate",
+        spill_bytes=spill_bytes,
+        detail={"child_measured": stalled, "output": str(out)},
+    )
+
+
+def format_pass(progress: PassProgress) -> str:
+    pct = progress.pct
+    seg = f"{pct:>5.1f}%" if pct is not None else "   -  "
+    d = progress.detail
+    lines = [
+        f"pass '{progress.pass_name}' @ {progress.rows:,} rows  "
+        f"({datetime.now().astimezone().strftime('%H:%M:%S')})  "
+        f"percentages are TIME ESTIMATES",
+    ]
+    if progress.status == _PASS_DONE:
+        lines.append(
+            f"  status    done     100.0% {_bar(100.0, 12)} wall={d.get('wall_clock_s')}s "
+            f"rss={d.get('peak_rss_mib')}MiB errors={d.get('n_errors')} {d.get('run_status')}"
+        )
+    elif progress.status == _PASS_RUNNING:
+        lines.append(
+            f"  status    running  {seg} {_bar(pct, 12)} "
+            f"elapsed={_humanize(progress.elapsed_s)} / est={_humanize(progress.est_s)} "
+            f"({progress.basis})"
+        )
+    else:
+        lines.append(
+            f"  status    {progress.status:<9} {seg} {'░' * 12} "
+            "no live measurement process and no verdict file"
+        )
+    if progress.spill_bytes is not None:
+        mib = progress.spill_bytes / 1_048_576
+        note = "ceiling is binding" if progress.spill_bytes else "working set under the ceiling"
+        lines.append(f"  spill     {mib:.1f} MiB in the scratch dir ({note})")
+    ceilings = d.get("ceilings") or {}
+    if ceilings.get("memory_limit"):
+        lines.append(
+            f"  ceiling   memory_limit={ceilings.get('memory_limit')} "
+            f"spill_cap={ceilings.get('max_temp_directory_size')}"
+        )
+    return "\n".join(lines)
+
+
+def watch_pass(
+    *,
+    rows: int,
+    pass_name: str,
+    workdir: "Path | str" = ".benchmarks/ladder",
+    fmt: str = "csv",
+    mode: str = "standard",
+    json_out: bool = False,
+    spill_dir: Optional["Path | str"] = None,
+) -> int:
+    """Print one progress snapshot of a single bounded pass.
+
+    Same exit-code convention as :func:`watch_ladder`: ``0`` the verdict file
+    exists, ``1`` a live measurement process, ``2`` neither — i.e. stalled, never
+    started, or a platform without ``pgrep`` where the watcher refuses to guess."""
+    workdir = Path(workdir)
+    out = pass_output_path(rows, pass_name, workdir)
+    age = None
+    if not out.exists():
+        age = process_age_seconds(f"measure_bounded.py --rows {rows}")
+    if spill_dir is None:
+        spill_dir = resolve_spill_dir()
+    progress = build_pass_progress(
+        rows=rows, pass_name=pass_name, workdir=workdir, fmt=fmt, mode=mode,
+        process_age_s=age, spill_bytes=dir_bytes(spill_dir),
+    )
+    if json_out:
+        payload = {
+            "workdir": str(workdir), "spill_dir": str(spill_dir) if spill_dir else None,
+            **progress.to_dict(),
+        }
+        print(json.dumps(payload, indent=2), flush=True)
+    else:
+        print(format_pass(progress), flush=True)
+    if progress.status == _PASS_DONE:
+        return 0
+    return 1 if progress.status == _PASS_RUNNING else 2
+
+
 __all__ = [
     "LadderStage",
     "tier_label",
@@ -368,4 +610,11 @@ __all__ = [
     "compute_overall",
     "format_stages",
     "watch_ladder",
+    "PassProgress",
+    "pass_output_path",
+    "dir_bytes",
+    "resolve_spill_dir",
+    "build_pass_progress",
+    "format_pass",
+    "watch_pass",
 ]

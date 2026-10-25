@@ -109,6 +109,22 @@ Session notes: M7-T2c DONE — own the DuckDB ceilings, then re-measure
                853/853 pytest green 2026-10-25 (no frontend change).
                **→ NEXT: M7-T3** — the 100M bounded pass is still running in the
                background; fold its row into TESTING §4.3.4 first.
+Session notes: M7-T2c helper — `benchmark watch --pass-name <name> --rows <N>`
+               (the user asked for a % -done indicator on the live pass). Same
+               read-only file as the ladder watcher: verdict JSON = done, live
+               `measure_bounded.py --rows N` = running, child
+               `*_bounded.measure.json` WITHOUT a verdict = **stalled** (a dead
+               driver is never reported as finished), else not_started; exit 0/1/2
+               like `watch_ladder`. Estimate = the SAME tier's measured wall-clock
+               from the M7-T2a ladder (`csv_<N>_std.measure.json`), basis
+               `reference`; with no reference it prints `-`, never a fabricated %.
+               It also prints the live size of the DuckDB scratch dir — the only
+               direct signal that the ADR-021 ceiling is binding mid-run — and
+               resolves that path WITHOUT creating it (a monitor must not change
+               what it observes). 9 tests in `tests/test_benchmark_watch.py` (20
+               total there, 38 with the harness file). Live log for this session:
+               `.benchmarks/ladder/watch_top.sh` → `watch_top.log` (1 snapshot /
+               5 min, exits when the pass ends).
 Session notes: M7-T2a DONE — the 10M→100M RSS-curve ladder ran 14:46→18:04
                local (3 h 18 m wall incl. fixture generation) on
                `.benchmarks/ladder/`, verdict **`bounded`**:
