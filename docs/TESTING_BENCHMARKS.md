@@ -369,7 +369,7 @@ All must pass on packaged macOS **and** Windows:
 - [ ] Profiling runs in the **worker**, not the UI thread; UI stays responsive; job observable + cancellable.
 - [ ] Worker crash does not corrupt the metadata store; recovery on restart works.
 - [ ] Source files are **not modified** by profiling.
-- [ ] Internal comms use the bridge only — **no HTTP/TCP port bound** — ADR-005; SPA routing works over local files (HashRouter) — ADR-013.
+- [ ] Internal comms use the bridge only — **no app-defined HTTP/TCP port bound** (ADR-005; the one scoped exception is pywebview's internal loopback static-file server — **ADR-023 Option A**, verified by the packaged `PORTS_SMOKE_RESULT: only_pywebview_loopback` marker); SPA routing works over local files (HashRouter) — ADR-013.
 - [ ] No local dev server required for the packaged run.
 - [ ] Unit + integration tests (§3) green; `sales_deals` fixture yields the known findings.
 - [ ] Installer: clean install, launch, one full job, export, upgrade (data preserved), uninstall (data preserved) on both OS.

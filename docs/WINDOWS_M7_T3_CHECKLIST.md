@@ -72,7 +72,7 @@ A window opens on the Home page from `file://`, then auto-closes (≤ ~15 s). Pa
 - [ ] `DUCKDB_SMOKE_RESULT: version=... rows=[(42,)]` (native `_duckdb.pyd` collected — ADR-009 top risk)
 - [ ] `WORKER_SMOKE_RESULT: job=... status=SUCCEEDED progress=...` (frozen **spawn** worker — the Windows-specific proof)
 - [ ] `BRIDGE_SMOKE_RESULT: {...'echo'...'ping'...}` (JS↔Python bridge round-trip)
-- [ ] `PORTS_SMOKE_RESULT: no_listening_sockets pids=[...]` (SECURITY §8.1 automated no-port check via `netstat -ano -p TCP`; `PORTS_SMOKE_FAILED` = a listening socket was found on app pids — stop, record, escalate; ADR-005)
+- [ ] `PORTS_SMOKE_RESULT: only_pywebview_loopback host=127.0.0.1 port=<n> pids=[...]` (SECURITY §8.1 automated no-port check via `netstat -ano -p TCP`). Per **ADR-023 (Option A)** the sole permitted listener is pywebview's internal loopback static-file server (no data/bridge crosses it); a run with no webview server may instead print `PORTS_SMOKE_RESULT: no_listening_sockets`. `PORTS_SMOKE_FAILED` = any other listening socket on app pids (second loopback, non-loopback/LAN, or a socket when no server runs) — stop, record, escalate; ADR-005/§8.1.
 - [ ] `SMOKE_OK: window opened and closed cleanly, index=C:\...\_MEIPASS\frontend\dist\index.html` (`file://` from _MEIPASS)
 
 ## 5. NSIS installer + the §5.1 product run

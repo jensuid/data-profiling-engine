@@ -16,7 +16,7 @@ doc_role: supporting
 
 - **Read-only by default** against every data source; the engine never mutates or deletes source data (also a product principle).
 - **Least-privilege bridge**: the JS↔Python surface exposes only allow-listed commands.
-- **No network listeners**: per ADR-005, the app binds no HTTP/TCP port; only outbound connections to explicitly configured external data sources (Phase 2) are permitted.
+- **No network listeners**: per ADR-005, the app binds no HTTP/TCP port of its own; only outbound connections to explicitly configured external data sources (Phase 2) are permitted. The one scoped exception is pywebview's internal loopback static-file transport (no data/bridge crosses it) — see **ADR-023 (Option A)** and §8.
 - **Data minimization**: don't persist raw data the product doesn't need; mask sensitive values in reports; keep credentials out of logs/results.
 
 ## 2. Directory separation (binding)
@@ -122,7 +122,7 @@ release gate: acceptance tests in TESTING_BENCHMARKS on BOTH OS from the package
 
 ## 8. Security acceptance (cross-ref [[TESTING_BENCHMARKS]] §5.4)
 
-- No port bound while app runs (automated check).
+- No **app-defined** port bound while app runs (automated check). Sole permitted exception (**ADR-023, Option A**): pywebview's own internal **loopback (`127.0.0.1`)** static-file server, which it auto-starts to serve the `file://` SPA and which carries **no profiling data and no bridge traffic** (js_api rides the native message channel). The packaged `PORTS_SMOKE_RESULT` check allow-lists only that exact loopback `(host,port)`; a second loopback socket, any non-loopback/LAN bind, or any listener when no server runs still FAILs the check.
 - Bridge rejects unknown commands, bad schemas, out-of-scope paths, oversized payloads.
 - PII-like columns masked in default HTML/CSV export.
 - Credentials absent from every log/result sample; stored only in native store (Phase 2).

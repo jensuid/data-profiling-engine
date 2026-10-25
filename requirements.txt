@@ -1,5 +1,10 @@
 # Runtime dependencies (MVP baseline — keep minimal per ADR-012: no YData/GX/Soda)
-pywebview>=5.1
+# pywebview floor raised to 6.2 and capped <7 (ADR-023 Option A): the packaged
+# §8.1 no-port check relies on its bottle server binding loopback 127.0.0.1 and
+# the /js_api HTTP route staying inert (js_api rides the native message handler).
+# tests/test_ports_smoke.py guards that behaviour, so a future bump that flips it
+# fails the suite rather than silently exposing a listener.
+pywebview>=6.2,<7
 duckdb>=1.1
 pydantic>=2.8
 jsonschema>=4.22  # canonical JSON Schema validation for contracts/ (M1, ADR-014; Draft 2020-12)

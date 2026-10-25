@@ -1,8 +1,12 @@
 """Data Profiling Engine — desktop host entry point (M0-T1/T2/T3).
 
 Opens the pywebview window and loads the built React frontend from local
-files over ``file://`` — no local HTTP/TCP server (ADR-005), HashRouter
-handles SPA routing on ``file://`` (ADR-013). The bridge facade
+files over ``file://`` — HashRouter handles SPA routing on ``file://`` (ADR-013).
+We add no network service of our own (ADR-005); the only listener that appears
+is pywebview's internal loopback static-file server, a scoped, documented
+exception (ADR-023 Option A) — no profiling data or bridge traffic crosses it
+(``js_api`` rides the native ``jsBridge`` handler on macOS / WebView2 message
+channel on Windows). The bridge facade
 (:class:`BridgeFacade`) is attached as ``js_api`` so the WebView can call
 allow-listed commands via ``window.pywebview.api.bridge_send``.
 
@@ -22,8 +26,10 @@ import sys
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import webview
+import webview.http
 
 from data_profiling_engine.bridge import (
     BridgeFacade,
@@ -117,46 +123,131 @@ def _run_duckdb_smoke() -> None:
         print(f"DUCKDB_SMOKE_FAILED: {type(exc).__name__}: {exc}")
 
 
+#: Hosts that are loopback-only (never reachable off-box). A listener bound to
+#: anything else (``0.0.0.0``/``*``/a LAN address) is a §8.1 violation.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "[::1]", "::ffff:127.0.0.1"})
+
+
+def _split_host_port(token: str) -> "tuple[str | None, int | None]":
+    """Split an lsof/netstat ``host:port`` token (IPv6 keeps its brackets, so a
+    right-partition on ``:`` is safe). Returns ``(None, None)`` when there is no
+    numeric port."""
+    host, sep, port = token.rpartition(":")
+    if not sep or not port.isdigit():
+        return None, None
+    return host, int(port)
+
+
+def _parse_listener_lines(lines: list[str], *, win: bool) -> list[tuple[int, str, int]]:
+    """Parse OS TCP-table text into ``(pid, host, port)`` LISTEN rows.
+
+    Pure (no OS call) so the classification is unit-testable. macOS/Linux
+    ``lsof -nP -iTCP -sTCP:LISTEN`` puts the pid at col 1 and the address as the
+    token before the trailing ``(LISTEN)`` state; Windows ``netstat -ano -p TCP``
+    puts the proto, local ``host:port``, remote, ``LISTENING``, pid."""
+    out: list[tuple[int, str, int]] = []
+    for line in lines:
+        parts = line.split()
+        if win:
+            # TCP  127.0.0.1:44212  0.0.0.0:0  LISTENING  2376
+            if len(parts) < 5 or parts[0] not in ("TCP", "TCPv6") or "LISTENING" not in parts:
+                continue
+            pid, addr = parts[-1], parts[1]
+        else:
+            # DataProfi 2376 jensu 4u IPv4 0x.. 0t0 TCP 127.0.0.1:44212 (LISTEN)
+            if len(parts) < 9 or not parts[1].isdigit():
+                continue
+            pid = parts[1]
+            addr = parts[-2] if parts[-1].startswith("(") else parts[-1]
+        if not pid.isdigit():
+            continue
+        host, port = _split_host_port(addr)
+        if host is None or port is None:
+            continue
+        out.append((int(pid), host, port))
+    return out
+
+
+def _pywebview_loopback_endpoint() -> "tuple[str, int] | None":
+    """The single non-app listener ADR-023 permits, or ``None``.
+
+    pywebview starts its built-in bottle server whenever the UI is loaded from a
+    local ``file://`` URL, serving ONLY the bundle's static files on
+    ``127.0.0.1:<port>`` (no data/bridge traffic — js_api uses the native
+    message handler). Returns ``(host, port)`` only when that server is bound to
+    loopback; a non-loopback bind returns ``None`` so it is flagged as an
+    offender (§8.1 must fail, per ADR-023's Option-A conditions)."""
+    server = getattr(webview.http, "global_server", None)
+    address = getattr(server, "address", None)
+    if not address:
+        return None
+    parsed = urlsplit(address)
+    host, port = parsed.hostname, parsed.port
+    if host in _LOOPBACK_HOSTS and port:
+        return host, port
+    return None
+
+
+def _select_port_offenders(
+    listeners: list[tuple[int, str, int]],
+    *,
+    app_pids: set[str],
+    allowed: "tuple[str, int] | None",
+) -> list[tuple[int, str, int]]:
+    """Return the §8.1-violating listeners owned by *app_pids*.
+
+    ``allowed`` is the exact pywebview loopback ``(host, port)`` to permit; only
+    that tuple on a loopback host is skipped — every other listener (a
+    different port, a non-loopback bind, or any socket of ours when no
+    pywebview server is running) is reported, so the check keeps its teeth."""
+    offenders: list[tuple[int, str, int]] = []
+    for pid, host, port in listeners:
+        if str(pid) not in app_pids:
+            continue
+        if allowed and host in _LOOPBACK_HOSTS and (host, port) == allowed:
+            continue
+        offenders.append((pid, host, port))
+    return offenders
+
+
 def _run_ports_smoke() -> None:
-    """SECURITY §8 bullet 1: "No port bound while app runs (automated check)".
+    """SECURITY §8 bullet 1: "No port bound while app runs (automated check)."
 
     Queries the OS-native TCP table (macOS/Linux ``lsof``, Windows ``netstat``
     — read-only diagnostics, no third-party dep, so nothing new enters the
-    frozen bundle) for LISTEN-state sockets owned by *this* process or its
-    live worker children (ADR-006 spawn workers included; ADR-005 allows no
-    listeners at all). OS-provided webview helper processes (WKWebView, the
-    WebView2 runtime) are system components, not app-bound ports, and are
-    deliberately out of scope — exactly the manual ``lsof``/``netstat`` line
-    in TESTING §5.1 / the M7-T3 runbook, automated."""
+    frozen bundle) for LISTEN-state sockets owned by *this* process or its live
+    worker children (ADR-006 spawn workers included). OS-provided webview helper
+    processes (WKWebView, the WebView2 runtime) are separate pids, out of scope.
+
+    ADR-023 Option A: the one permitted listener is pywebview's internal
+    loopback static-file server — matched to its exact ``(host, port)`` and
+    verified loopback; anything else our pids bind is a genuine §8.1 violation
+    and still FAILs (stop, escalate)."""
     pids = {str(os.getpid())} | {str(p.pid) for p in multiprocessing.active_children()}
-    if sys.platform == "win32":
+    win = sys.platform == "win32"
+    if win:
         cmd = ["netstat", "-ano", "-p", "TCP"]
-        state_token, pid_col = "LISTENING", -1
     else:
-        # ``lsof -sTCP:LISTEN`` already returns only LISTEN rows (the state
-        # prints as "(LISTEN)", so no per-line state token to match).
+        # ``lsof -sTCP:LISTEN`` already returns only LISTEN rows.
         cmd = ["lsof", "-nP", "-a", "-iTCP", "-sTCP:LISTEN"]
-        state_token, pid_col = "", 1
     try:
         done = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired) as exc:
         print(f"PORTS_SMOKE_FAILED: could not run {cmd[0]!r}: {exc}")
         return
-    offenders: list[str] = []
-    for line in done.stdout.splitlines():
-        parts = line.split()
-        if len(parts) < 2:
-            continue
-        if state_token and state_token not in parts:
-            continue
-        pid = parts[pid_col]
-        if pid.isdigit() and pid in pids:
-            offenders.append(line.strip())
+    listeners = _parse_listener_lines(done.stdout.splitlines(), win=win)
+    allowed = _pywebview_loopback_endpoint()
+    offenders = _select_port_offenders(listeners, app_pids=pids, allowed=allowed)
     if offenders:
-        print(f"PORTS_SMOKE_FAILED: {len(offenders)} listening socket(s) bound by "
-              f"app pids {sorted(pids, key=int)}")
-        for line in offenders[:5]:
-            print(f"  {line}")
+        print(f"PORTS_SMOKE_FAILED: {len(offenders)} unexpected listening socket(s) "
+              f"bound by app pids {sorted(pids, key=int)}")
+        for pid, host, port in offenders[:5]:
+            print(f"  {host}:{port} pid={pid}")
+    elif allowed is not None:
+        print(f"PORTS_SMOKE_RESULT: only_pywebview_loopback host={allowed[0]} "
+              f"port={allowed[1]} pids={sorted(pids, key=int)} "
+              "(ADR-023 Option A: pywebview static-file transport, loopback-only, "
+              "no data/bridge crosses it)")
     else:
         print(f"PORTS_SMOKE_RESULT: no_listening_sockets pids={sorted(pids, key=int)}")
 
