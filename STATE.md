@@ -110,9 +110,18 @@ NEXT      : M7-T5 run 2 — **GATE MVP: every box of TESTING §5.1 green on
           NOT flip an orphan RUNNING row until the first bridge call that
           materialises the manager (e.g. next `profile.start`).
           Still owed: Windows track, codesign/notarize, box 17 both-OS
-          baselines. Non-gate UI follow-up (user-logged 2026-10-26): Report
-          prints `Unique candidate yes|no` with no source hint directly under
-          `Distinct count ≈ 20,234` (`Report.tsx:888`).
+          baselines. Non-gate UI follow-ups (user-logged 2026-10-26) —
+          BOTH CLOSED 2026-10-26: (a) Report `Unique candidate yes|no` now
+          carries a source hint ("exact full-relation …", names the sampled
+          distinct_count's method) under the Uniqueness block in `Report.tsx`;
+          (b) Browse cancel-hang: pywebview 6.2.1/Cocoa can leave the
+          `dialog.open_file` promise unsettled when the NSOpenPanel is
+          cancelled, latching "Opening…" forever — `DatasetSelection.tsx`
+          `handleBrowse` now has a 15 s watchdog + `browseEpoch` ref guarding
+          late settles (late genuine picks still fill the path). tsc clean,
+          vite build clean, 947/947 pytest green. Not yet re-verified on the
+          packaged build (needs rebuild+reinstall; dev-mode behavior is the
+          same code path).
           ADR-023 is now **Accepted (Option A)** — the §8.1 "no app-defined port
           bound" box can be stamped on the packaged build with that scoping
           (`--smoke` emits `PORTS_SMOKE_RESULT: only_pywebview_loopback host=127.0.0.1
@@ -2149,6 +2158,8 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
   `Distinct count ≈ 20,234` — the bool is now a full-relation fact but a reader
   cannot tell. Worth a one-line hint ("from a full-relation count") in
   `frontend/src/pages/Report.tsx:888` next time that file is touched.
+  CLOSED 2026-10-26 (hint added under the Uniqueness block; see CURRENT
+  POSITION).
 
   **Run 3, step 8 — box 11 packaged worker-crash GREEN (2026-10-26, this
   session).** No code change — pure gate execution on the installed `.app`
@@ -2177,6 +2188,10 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
   cancelling the Browse NSOpenPanel with Escape leaves `browsing` stuck true
   (Browse shows "Opening…" forever; the promise never settles) — a real small
   frontend bug, non-gate, logged for the next Report/Dataset UI touch.
+  CLOSED 2026-10-26: 15 s watchdog + `browseEpoch` late-settle guard in
+  `DatasetSelection.handleBrowse`; root cause is pywebview 6.2.1/Cocoa not
+  settling the js_api promise on dialog cancel — do NOT re-litigate, the
+  frontend now tolerates it.
   Tools kept: `.benchmarks/m7t5/box11_gui.py` (focus-safe, re-derives window
   origin per action — RustDesk steals focus + the window hops displays),
   `box11_killwatch.py`, `box11_killhost.py`.
