@@ -23,10 +23,15 @@ Milestone : M7 — Hardening & Release Gate — M6 UI screens COMPLETE
           dev-mode 2026-10-25 — T1 read commands + caps, T2 job manager +
           real profile.start worker, T3 §5.5 progress push; packaged
           bridge/worker verification on both OS deferred to M7/Phase-3)
-Task      : **M7-T5 IN PROGRESS — run 1 (2026-10-26) = packaged macOS
-          rebuild + smoke markers GREEN; the interactive §5.1 matrix is NOT
-          walked, so GATE MVP is NOT stamped (M7-T3 Windows + notarize legs
-          still blocked). See the per-box board under the M7-T5 task line.**
+Task      : **M7-T5 IN PROGRESS — run 2 (2026-10-26) walked the installed
+          macOS `.app` end to end, incl. the box-16 uninstall leg (user data
+          byte-identical after removal) and **M7-T5c**, which fixed a
+          gate-class defect found while driving it: the packaged shell showed
+          "Desktop bridge not detected" because readiness was a one-shot
+          render-time snapshot taken before pywebview's async injection.
+          GATE MVP is NOT stamped: M7-T3's Windows + notarize legs are still
+          blocked and boxes 7/11/16/17 remain partial. See the per-box board
+          under the M7-T5 task line.**
           M6 COMPLETE; M7-T1 DONE; M7-T2 COMPLETE;
           M7-T2c DONE; M7-T4 + M7-T4b DONE; M7-T6 DONE (ADR-023 Option A landed —
           packaged loopback static-file server allow-listed, pywebview pinned);
@@ -64,9 +69,18 @@ NEXT      : M7-T5 run 2 — **GATE MVP: every box of TESTING §5.1 green on
           `DPE_ENABLE_SPIKE_COMMANDS=1` green on all five macOS markers
           (`PORTS_SMOKE_RESULT: only_pywebview_loopback` 127.0.0.1:45054 +
           `SMOKE_OK … _MEIPASS/frontend/dist/index.html`), 925 passed pytest.
-          Boxes 13/14/15 stamped from that run; boxes 1–12 (interactive
-          dataset→job→export walk on the INSTALLED app) and 17 (packaged RSS
-          baseline) still owed HERE; box 16 stays blocked on M7-T3.
+          Boxes 13/14/15 stamped from run 1; the interactive walk on the
+          INSTALLED app (boxes 1–12) landed in run 2, and box 16's macOS
+          install→launch→job→export→upgrade→**uninstall** legs are all green
+          (uninstall = 2026-10-26, data byte-identical, see the run-2 notes).
+          M7-T5c (2026-10-26) removed the UI-side blocker for boxes 7/8/11:
+          bridge readiness is now event-driven and verified on a rebuilt `.app`.
+          NEXT ACTION: box 7 (packaged `sampled`+seed run) — open
+          docs/TESTING_BENCHMARKS.md §5.1 box 7 and frontend/src/pages/RunConfig.tsx
+          (Sampling panel), start the job on the installed app, then read the
+          method labels + seed off the Report screen and `profile.json`.
+          Still owed: Windows track, codesign/notarize, box 7 `sampled`+seed on
+          a packaged run, box 11 packaged crash, box 17 both-OS baselines.
           ADR-023 is now **Accepted (Option A)** — the §8.1 "no app-defined port
           bound" box can be stamped on the packaged build with that scoping
           (`--smoke` emits `PORTS_SMOKE_RESULT: only_pywebview_loopback host=127.0.0.1
@@ -149,6 +163,181 @@ Session notes: M7-T5 (run 1) — packaged macOS smoke evidence, GATE NOT stamped
                copy used for the dmg survived `rm -rf` (deletes were refused in
                this sandboxed shell) — remove it by hand; it is gitignored.
 
+Session notes: M7-T5 run 2 (in progress) — **GATE-CATCHING DEFECT FOUND ON THE
+               INSTALLED APP, now fixed.** The user's first packaged
+               `profile.start` (TESTING §5.1 box run) returned
+               `BRIDGE_REQUEST_INVALID: handler failed: KeyError`. Root cause
+               verified, not guessed: `Contents/Frameworks/data_profiling_engine/`
+               shipped `reporting/` but **no `schemas/`**, so
+               `schemas.RAW_SCHEMAS` (built by globbing the package dir) was
+               EMPTY and `S.validate("dataset_config.schema.json", …)` raised
+               `KeyError` → the facade's catch-all reported it as
+               `BRIDGE_REQUEST_INVALID`. `dataset.inspect` still worked because
+               only `profile.start` validates a §9 config; the frozen
+               `--smoke` never validated anything either, so M7-T3's smoke was
+               green on a binary that could not start a single job. Fix (spec
+               `datas` + a marker that would have caught it):
+               `data_profiling_engine.spec` now collects
+               `schemas_datas = collect_data_files("data_profiling_engine.schemas",
+               includes=["*.schema.json"])`; `main._run_schemas_smoke()` prints
+               `SCHEMAS_SMOKE_RESULT: count=13 required=13 probe_errors=4` (and
+               `SCHEMAS_SMOKE_FAILED` twice over: missing files, or a registry
+               that loads but does not reject an empty document); new
+               `tests/test_packaging_assets.py` (7 tests) fails if ANY runtime
+               package-asset dir under `data_profiling_engine` is absent from the
+               spec (bench/ baselines exempt) — the generic form: a new asset dir
+               can no longer be forgotten. Rebuilt (`EXIT=0`, 131 s,
+               `pyinstaller_build_run2.log`), upgraded over the installed app
+               (13 schemas present, user data + `schema_migrations=2` intact →
+               also the §6.5 upgrade leg), re-smoked: **6 markers green**
+               (`smoke_installed_run2b.log`). Docs updated: SECURITY §6.2 risk
+               row, both installer runbooks' ¶1 marker lists. GOTCHA: a
+               dev-mode/suite-green bridge handler proves nothing about the
+               frozen app — any runtime read of *package data* must have a
+               `--smoke` marker, because `KeyError` becomes a generic
+               `handler failed`.
+               **Second defect (this run, fixed):** the first packaged job came
+               back `SUCCEEDED` while the Progress screen read
+               `5/6 steps · 83 % · reporting:csv`. Root cause in
+               `worker/profile_job.py`: the 6th boundary `persist:metadata`
+               existed as a constant but was NEVER emitted — `_progress(5,
+               _STEP_CSV)` → `save_run()` → terminal, so a finished job kept the
+               pre-persist progress forever. Fixed by emitting
+               `_progress(6, _STEP_PERSIST)` after `save_run` (progress is
+               monotonic; the terminal is the only state change left); +1 test
+               `test_succeeded_job_reports_every_step` (live slot AND the store
+               mirror `jobs.progress_completed`), 38 passed across
+               profile/worker/cancel-recovery. NOTE: the fix needs a rebuild to
+               reach the installed app — done together with the step-3/4 runs.
+               **Third defect (this run, fixed):** the step-3 big run (2 M rows
+               / 122 MB) exposed one gap with two faces. (a) **progress froze**
+               at `1/6 · 17 % · profiling:validate_config` for the whole
+               248 s compute pass — the engine spine was one blocking call with a
+               single `profiling:metrics` boundary. (b) **cancel was slow**: the
+               flag was only read at those two outer boundaries, so
+               `profile.cancel` on `job_6d03573bd0ba` took **4 min 18 s** to
+               reach CANCELLED (it did get there; nothing hung, and it wrote no
+               run row). CONTRACTS §6.5 asks for exactly what was missing —
+               "checks a cancel flag at task/step boundaries **and (for DuckDB)
+               interrupts the active query**" — and TESTING §5.1 asks for a job
+               that is "observable + cancellable", so this was an MVP miss, not
+               a Phase-3 nicety (the old docstring wrongly filed it as Phase-3).
+               Fix: (1) `orchestration.run_profiling_pipeline` /
+               `run_dataset_profiling` / `rollup.profile_dataset` take an optional
+               `checkpoint(label)` called **before** every pass (discover, plan,
+               the three metric families, quality, findings, recommendations,
+               dataset_metrics) — defaults keep the CLI unchanged; (2)
+               `worker/profile_job.py` now owns the DuckDB connection, feeds its
+               14-step ladder (`PROFILING_TOTAL_STEPS = len(_STAGE_LADDER)`; the
+               manager's QUEUED slot now defaults to the same constant instead of
+               a stale literal `6`) from those checkpoints, and runs a watchdog
+               thread that calls `DuckDBPyConnection.interrupt()` 0.2 s after a
+               cancel (measured: **20 ms** to abort a running query), mapping
+               `InterruptException` to **CANCELLED** while a real failure with no
+               cancel pending stays FAILED. **GOTCHA — the interrupt must be
+               RE-ARMED, not fired once:** `engine/metrics/profiler.py` catches
+               `duckdb.Error` per metric and records `METRIC_NOT_COMPUTED`, so a
+               single `interrupt()` stops exactly ONE query and the pass scans
+               on — the first implementation did this and the measured cancel
+               latency was still **114 s** on the 2 M-row fixture (it did stop at
+               the next stage checkpoint, so the job ended CANCELLED, just
+               slowly). While the flag stands the watchdog now re-interrupts each
+               poll, so every following query aborts in ms and the pass unwinds:
+               re-measured **6.9 s** from `cancel_job()` to CANCELLED
+               (`.benchmarks/m7t5/cancel_probe_run2.log`; probe cancels mid-
+               `statistics_missingness`, ends CANCELLED at 5/14, no run row).
+               Residual cost is the remaining metrics of the pass unwinding, not
+               the data size; a per-column checkpoint inside the profilers would
+               cut it further and is the obvious next refinement, not a blocker.
+               +7 tests in `test_worker_cancel_progress.py` (stage order,
+               abort-before-downstream, mid-query cancel → CANCELLED, interrupt
+               without cancel → FAILED, real interrupt latency, ladder coverage,
+               re-arm);
+               full suite **940 passed** (`.benchmarks/m7t5/pytest_run2e.log`).
+               Rebuilt + reinstalled: `smoke_installed_run2e.log` 6/6 markers.
+               **Verified from that first packaged job** (run
+               `0aa42cd5-c253-471a-bac1-91c07d9f6512`, `job_a8f1fcdbbfa6`,
+               `standard`, 3543 ms, 0 errors, source =
+               `tests/fixtures/golden/sales_deals.csv`): 3 artifacts on disk
+               (`report.html` 4.8 MB, `profile.json` 28 KB, `issues.csv` 353 B);
+               HTML self-contained (only Plotly/OSM *attribution hrefs*, no
+               `src`/`@import`/`url(http…)`); `issues.csv` = the 2 FAIL checks
+               with `evidence_ref` refs; 5 findings, 5 distinct
+               `sha256` fingerprints, every finding carrying `evidence_refs`
+               (`metric:`/`rule:`), `scope.affected_records`, `confidence`,
+               hypotheses explicitly `status=unverified` + `suggested_probe`
+               (box 6); 5 recommendations with `do_not` guardrails; checks =
+               `deal_id_unique FAIL` / `value_not_null FAIL` / `stage_domain
+               PASS`; provenance labels `exact` 35 + `not_computed` 1 (with a
+               `reason`, ENGINE §3 out-of-range needing a declared bound);
+               physical vs logical types per column (VARCHAR/string,
+               DATE/temporal_date, BIGINT/numeric_currency) and
+               missingness+uniqueness on all 5 columns, `distribution` on the
+               numeric one, `categorical`/`temporal` where applicable; run row
+               carries run_id / config_hash `sha256:9e9c673c…` / config_version 3
+               / engine_version 0.1.0 / duckdb 2.0.0 / duration_ms / status;
+               **source unmodified** — sha256 of the fixture still
+               `9b9cf013…` == the run's recorded `source_snapshot.content_hash`,
+               mtime/size unchanged (box 12). Still owed: UI-acked exports, the
+               Parquet leg + `method=sampled` + seed (step 2), cancel/crash
+               (steps 3–4), packaged RSS baseline (box 17).
+               **Fourth defect (found while driving the installed UI, fixed):** the
+               Report page rendered `Schema & Column Profiling` as
+               `BRIDGE_REQUEST_INVALID: handler failed: ProgrammingError`. Not a
+               payload problem: `MetadataStore` opened sqlite3 with the default
+               `check_same_thread=True` while `bridge.runtime.get_metadata_store()`
+               hands ONE process-wide store to both the pywebview `js_api` dispatch
+               thread and the job-manager monitor — the thread that opened it owns
+               it, so any later statement from another thread raises
+               `sqlite3.ProgrammingError: SQLite objects created in a thread can only
+               be used in that same thread`, and the facade's §5.3 boundary reports
+               it as that generic message. Proven in-process before touching code:
+               `.benchmarks/m7t5/store_thread_probe.py` (main-thread query ok,
+               second-thread query raises exactly that). Fix:
+               `sqlite3.connect(..., check_same_thread=False)` (+ `schema_version` /
+               `migration_history` under the RLock); every statement already goes
+               through `_query`/`_write_tx` under `self._lock`, so the shared handle
+               stays serialised. +1 test
+               `test_one_store_serves_calls_from_another_thread` (65 passed in
+               `test_storage_metadata.py`). GOTCHA: `handler failed: <Driver>Error`
+               is a plumbing defect, never a payload one — and a read handler that
+               passes in dev can still fail packaged, because the dev process often
+               happens to keep one thread and the real one does not.
+               **Computer use (this session):** the agent CAN drive the installed
+               app. `System Events` has assistive access now: AX tree read, `keystroke`,
+               and `click at {x,y}` all work; the window sits at 230,65 (800×600) so
+               screenshot coordinates are click coordinates. Driver:
+               `.benchmarks/m7t5/ax.js` (`settext` writes the AXTextField value and
+               React picks it up, `text` dumps screen text) + `screencapture -x` into
+               `.benchmarks/m7t5/gui_*.png`. GOTCHA: a full-tree walk (`dump`, `press`)
+               HANGS for minutes on content-heavy pages (the 8-column preview table) —
+               System Events does one IPC per element; use `click at` + screenshots
+               there and keep `text` for assertions. **Verified after the fix on the
+               installed build** (`gui_report_small*.png`): Report → `Schema & Column
+               Profiling` renders the 5-column table (deal_id/created_at/stage/…,
+               logical+semantic type, missing 0/40, distinct counts), and the same
+               page shows box 6/7 evidence in the UI — scorecard `PASS 1 · FAIL 0 ·
+               WARN 0 · ERROR 0`, the ``stage_not_null`` check row, and findings with
+               `fingerprint: sha256:6ede1d01…`, `column stage · 3 affected records`,
+               FACTS / INTERPRETATION / HYPOTHESES (UNVERIFIED + probe) /
+               RECOMMENDATIONS (`do_not` guardrail + `evidence:` ref) kept apart.
+               **Fifth defect (packaging, fixed):** that rebuild was the first
+               `--clean` build done from the tool sandbox, and it produced a bundle
+               with **no** `schemas/` at all — `pyinstaller_build_run2f.log` carries
+               `WARNING: collect_data_files - skipping data collection for module
+               'data_profiling_engine.schemas' as it is not a package`, i.e. the very
+               first defect's fix depended on the analysis interpreter's import
+               system and could silently collect nothing (the packaged smoke caught
+               it: `SCHEMAS_SMOKE_FAILED … 13 missing`). The spec now maps the
+               directory literally (`schemas_assets = (str(PROJECT_ROOT /
+               "data_profiling_engine" / "schemas"), "data_profiling_engine/schemas")`,
+               same shape as `reporting_assets`). Verified: rebuild `BUILD_EXIT=0`,
+               `spec_not_a_package_warnings=0`, `schemas_in_bundle=13`,
+               `DPE_ENABLE_SPIKE_COMMANDS=1 --smoke` → 6/6 markers
+               (`smoke_installed_run2g.log`). GOTCHA: name package data by PATH in the
+               spec, never via `collect_data_files(<pkg>)`, and always run the packaged
+               smoke with `DPE_ENABLE_SPIKE_COMMANDS=1` — a bare `--smoke` now reports
+               `BRIDGE_COMMAND_UNKNOWN` for `echo`/`worker_echo_job` by design.
 Session notes: M7-T4b DONE — native open-file dialog on Dataset Selection
                (**ADR-022 / CONTRACTS §5.2 + §8 contract change**, user-approved
                before coding per AGENTS §8; the "revisit in M6-T2" text-input TODO
@@ -228,27 +417,7 @@ Session notes: M7-T2c helper — `benchmark watch --pass-name <name> --rows <N>`
                driver is never reported as finished), else not_started; exit 0/1/2
                like `watch_ladder`. Estimate = the SAME tier's measured wall-clock
                from the M7-T2a ladder (`csv_<N>_std.measure.json`), basis
-               `referenc               driver is never reported as finished), else 
-               ⌘L
-               Add to Chat
-               Add to Chat
-               Explored
-               1 terminal
-               Thought · 1s
-               Thought · 2s
-               Thought · 6s
-               Thought · 2s
-               Explored
-               1 terminal
-               This command ran in the background. Its output appears in this card, not in the terminal panel.
-               Thought · 1s
-               This command ran in the background. Its output appears in this card, not in the terminal panel.
-               Thought · 1s
-               Explored
-               1 terminal
-               This command ran in the background. Its output appears in this card, not in the terminal panel.
-               Thought · 1s
-               e`; with no reference it prints `-`, never a fabricated %.
+               `reference`; with no reference it prints `-`, never a fabricated %.
                It also prints the live size of the DuckDB scratch dir — the only
                direct signal that the ADR-021 ceiling is binding mid-run — and
                resolves that path WITHOUT creating it (a monitor must not change
@@ -1233,6 +1402,23 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 - Smoke entry: `python -m data_profiling_engine.main --smoke` (opens window, auto-closes).
 - pywebview `evaluate_js` serialises a JS Promise as `{}` — stash the resolution on `window`
   and poll from Python instead of expecting an awaited return (M0-T2 gotcha).
+- pywebview injects `window.pywebview` AFTER page load and only then fires `pywebviewready`;
+  the packaged React bundle wins that race, so a render-time `bridgeAvailable()` snapshot is
+  always false there. Use `frontend/src/bridge/useBridgeReady.ts` (event + bounded poll) —
+  never read the flag once (M7-T5c).
+- `ditto src dst` MERGES: a reinstall over an existing `/Applications/DataProfilerEngine.app`
+  leaves stale `frontend/dist/assets/*.js` behind (the 13:21 asset survived a 14:44 build).
+  `rm -rf` the destination first when the point is bundle identity (M7-T5c).
+- The app's window can restore at x=1400 on a 1280-wide screen, so screen-coordinate clicks
+  land outside it (`System Events` AX clicks still "succeed"). Move it first:
+  `osascript -e 'tell application "System Events" to tell process "DataProfilerEngine" to set {position of window 1, size of window 1} to {{80, 60}, {1120, 740}}'`.
+- Driving the packaged UI: `screencapture` full-screen shows whatever is frontmost — use
+  `cgui.py winshot` (CGWindowID capture). Quartz `type_text` does NOT reach the WKWebView
+  text field; `pbcopy` + System Events `keystroke "v" using command down` does.
+- `artifact.open` really opens the OS viewer, and macOS swallows the FIRST click on a
+  non-key window (first-mouse). So after every export/reveal the viewer sits above the app
+  and the next click is eaten — re-activate and click from ONE process:
+  `cgui.py clickapp x y` (separate shell invocations let other apps steal focus).
 - Bridge spike codes `BRIDGE_REQUEST_INVALID` (bridge/errors.py) + `JOB_NOT_FOUND`
   (M0-T3) were promoted into the formal §8 registry (`data_profiling_engine/errors.py`,
   ErrorCode members + §8 doc rows) in M1-T6; `bridge/errors.py` now just re-exports
@@ -1551,9 +1737,21 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
     `enable_spike_commands=True` (or env `DPE_ENABLE_SPIKE_COMMANDS=1`); the
     packaged facade leaves them OFF so `echo` ⇒ COMMAND_UNKNOWN. Spike test
     fixtures must pass the flag (`test_bridge_facade.py` fixture does).
-  * §6.5 DuckDB mid-query interrupt is NOT implemented: cancel is checked at
-    worker STEP boundaries only (before/after the bounded `profile_dataset`
-    call). Phase-3 depth item, not a silent MVP gap — do not claim otherwise.
+  * §6.5 DuckDB mid-query interrupt **IS implemented** (M7-T5 run 2):
+    `profile_job.py` owns the connection and a watchdog calls
+    `DuckDBPyConnection.interrupt()` 0.2 s after the flag flips (measured ~20 ms
+    to abort a running query); the engine's stage `checkpoint` covers the
+    between-passes case. The pre-M7-T5 note here said the opposite
+    ("cancel is checked at STEP boundaries only … Phase-3 depth item") — that was
+    wrong against CONTRACTS §6.5, and it is why the packaged cancel took
+    4 min 18 s before the fix. GOTCHA: `con.interrupt()` raises
+    `duckdb.InterruptException` in the compute thread, so the worker must
+    classify it with `_interrupted_by_cancel` (cancel flag AND type) — otherwise
+    a genuine DuckDB failure that races a cancel would be excused as CANCELLED.
+    Second trap: `engine/metrics/profiler.py` catches `duckdb.Error` per metric
+    (correctly — §6.4 partial failure), so ONE `interrupt()` only kills ONE
+    query and the pass runs on. The watchdog must re-interrupt on every poll
+    while the flag stands, or cancel latency silently stays minutes long.
 - M5-T1 read-command gotchas:
   * `MetadataStore.load_profiling_run` preserves absence fidelity
     (`_present_keys` / `_retain_present`): a key the stored document never
@@ -1697,29 +1895,145 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 - [~] **M7-T3** Both-OS installer matrix: install→job→export→upgrade→uninstall. *Spec: SECURITY §6; TESTING §5.1.* ✅ **macOS packaging track LANDED (dev box, UNSIGNED).** Repo-side tooling now in `packaging/` (a NEW top-level dir — ARCHITECTURE §3 covers only the engine package, so build scripts sit at repo root beside the `.spec`, matching `data_profiling_engine.spec`): `macos/build_app_dmg.sh` (PyInstaller → `hdiutil` `.dmg`, no 3rd-party dmg tool), `macos/sign_notarize.sh` (Developer-ID codesign+notarize, **credentials via env, never in repo** — AGENTS §7), `macos/entitlements.plist`, `windows/profiler.nsi` (NSIS, per-user `$LOCALAPPDATA`, uninstall preserves `%APPDATA%` data per §6.5, WebView2 detect §6.4), and the operator runbook `docs/M7_T3_INSTALLER_MATRIX.md` (§5.1 checklist + macOS/Windows tracks). **Spec rewrite:** the frozen app is now a **windowed (console=False) onedir `.app` on macOS** (`COLLECT`+`BUNDLE`) and **still a onefile console `.exe` on Windows** (unchanged from the M0 spike — a windowed Win exe can't capture `--smoke > smoke_win.txt`). Rebuilt `dist/` from current code (was the stale Oct-24 binary) and the packaged `--smoke` is **green on all four §5.2 markers**: DUCKDB 2.0.0 rows=[(42,)] / WORKER `status=SUCCEEDED` 4/4 (frozen **spawn** worker) / BRIDGE echo `status=ok` / `SMOKE_OK` `file://` from `…/Contents/Frameworks/frontend/dist/index.html`. Built + `hdiutil verify` VALID the unsigned `dist/DataProfilerEngine-0.1.0-macos.dmg` (45 MB). GOTCHA (spec): PyInstaller 6.22 `BUNDLE()` kwarg names are **`bundle_identifier=` / `info_plist=` / `version=`** — the old `id=`/`info=` are silently ignored and left CFBundleIdentifier=`DataProfilerEngine`/version 0.0.0 (caught by diffing Info.plist). GOTCHA (smoke): the `--smoke` probes use the M0 spike commands (`echo`/`worker_echo_job`) which the packaged facade registers ONLY behind `DPE_ENABLE_SPIKE_COMMANDS=1` (spike OFF in production is correct — a bare `--smoke` rejects them as `BRIDGE_COMMAND_UNKNOWN`); run the packaged smoke with that env set. GOTCHA (sandbox): `hdiutil create/verify` need disk arbitration → fail `Operation not permitted` inside the restrictive sandbox, run outside. ⛔ **BLOCKED — cannot close from this box:** (1) the whole **Windows** track (BLUEPRINT Q4 "physical/virtual Windows required, not optional") → handed to the §4 operator runbook; (2) macOS **codesign + notarization** — `security find-identity` shows **0** Developer ID identities here, and AGENTS §7 forbids handling creds → handed to §3 release env. **Follow-up (2nd M7-T3 commit):** persisted the Windows operator runbook `docs/WINDOWS_M7_T3_CHECKLIST.md` (mirrors `WINDOWS_M0_T5_CHECKLIST.md`, extended to the full §5.1 install→job→export→upgrade→uninstall matrix) and added the missing **Windows peak-RSS** path so §5.1 "benchmarks documented" produces a real number instead of a caveat: `benchmark/harness.py` now wraps the measured child in a `_RssPeakSampler` (**psutil** self-poll @ 50 ms, self+children) when POSIX `resource` is absent, labelling every case with `peak_rss_method ∈ {resource.ru_maxrss, psutil_sampled_peak, unavailable}` — a Windows **sampled** peak, never presented as the POSIX high-water (ADR-015). New optional dep `psutil>=6.0` in `requirements.txt` (benchmark tooling only; never bundled in the frozen app). +4 pure tests in `test_benchmark_harness.py` (label honesty + inert-without-psutil; the positive-peak test skips where psutil absent). This commit DID touch package code (`benchmark/harness.py`) + `requirements.txt` + docs — the earlier macOS-track commit was spec/packaging/docs only. 58 passed / 1 skipped across the benchmark test group 2026-10-26 (no engine/contract change; full suite unaffected). **→ NEXT: M7-T4** (security acceptance automation) unless a Windows box + Developer ID become available to finish M7-T3's two blocked legs.
 - [x] **M7-T4** Security acceptance automation. *Spec: SECURITY §8; TESTING §5.4.* ✅ New `tests/test_security_acceptance.py` — one class per §8 bullet (34 tests): §8.1 static no-server/no-bind scans over engine+frontend sources + a LIVE psutil process-tree listener scan during a real `profile.start` + stdlib-only `PORTS_SMOKE_RESULT`/`PORTS_SMOKE_FAILED` self-check now wired into `main.py --smoke` (lsof `-iTCP -sTCP:LISTEN` / `netstat -ano -p TCP` filtered to app pids — psutil stays OUT of the frozen bundle); marker lines added to `docs/M7_T3_INSTALLER_MATRIX.md` §1 + `docs/WINDOWS_M7_T3_CHECKLIST.md` §4 and TESTING §5.4 points at the module. §8.2 packaged-facade rejections (unknown cmd / bad schema / out-of-scope path both source+artifact-ref / oversized request AND response) with a `SECRET` no-echo assertion. §8.3 real-run default HTML+CSV+preview carry no raw PII. §8.4 credential-name walk of every schema/model, no-keyring-imports scan, credential-shaped config refused pre-dispatch, planted secret survives nowhere (documents, artifacts, error_log, raw SQLite bytes). §8.5 copytree-isolated upgrade-preserves-rows(+backup)/cleaners-never-touch-referenced-files/app-bundle-refusal/NSIS-uninstall-and-macOS-scripts-delete-no-user-data/forward-only-migrations. **The suite immediately caught TWO real SECURITY §4 bugs in `reporting/html_report.py`** (fixed here): the per-column detail loop never recomputed `pii` — it inherited the LAST header-table column's flag, so an email column's Categories rendered raw whenever a non-PII column came last; and `rare_categories` were emitted with NO masking at all. GOTCHA (discovery): pattern refinement samples DISTINCT values (`SAMPLE_DISTINCT_LIMIT=32` reservoir), so a column needs **≥3 distinct** pattern-matching values before email/phone tagging fires — a 2-distinct phone column stays `categorical_nominal` (test fixture widened to 3 distinct phones accordingly; ENGINE §4.1 "≥3 to avoid single-value false hits", by design). GOTCHA (venv): `.venv` is uv-managed — no pip inside; use `uv pip install --python .venv/bin/python <pkg>` (psutil 7.2.2 now installed so the live §8.1 + peak-RSS tests run instead of skipping). 904/904 pytest green (0 skipped) 2026-10-26; no frontend/contract change. **→ NEXT: M7-T5 (GATE MVP) — but it CANNOT pass until M7-T3's Windows + codesign/notarize legs run green on packaged builds; rebuild `dist/` first so the new PORTS marker is in the shipped binary.**
 - [x] **M7-T6** ADR-023 — pywebview loopback HTTP server vs SECURITY §8.1 (escalated finding → Accepted Option A). *Spec: ADR-005/023; SECURITY §8; TESTING §5.1.* ✅ The macOS installer rebuild's packaged `--smoke` printed `PORTS_SMOKE_FAILED: 1 listening socket(s) … 127.0.0.1:<ephem> (LISTEN)`. Root cause verified against the installed pywebview 6.2.1 / bottle 0.13.4 (not assumed): `webview.start()` auto-fires its bottle server on `http_server or has_local_urls` because the SPA loads from `file://` (ADR-010/013), even with the default `http_server=False`; the server binds `127.0.0.1` only, serves ONLY the bundle's static files, and carries NO data/bridge traffic (macOS js_api rides the native `jsBridge` WKScriptMessageHandler; the bottle `/js_api` POST route is inert — `js_callback` is init'd `{}` and never populated). Escalated per AGENTS §8, user chose **Option A** (bound & document, no load-path change) over Option B (eliminate the server via a custom-scheme load — re-risks the packaged content-load path at the release gate; kept as post-1.0 cleanup). `main._run_ports_smoke` refactored into pure, unit-testable helpers (`_LOOPBACK_HOSTS`, `_split_host_port`, `_parse_listener_lines`, `_pywebview_loopback_endpoint`, `_select_port_offenders`) that allow-list EXACTLY pywebview's live loopback `(host,port)` — a second loopback socket, a non-loopback/LAN bind, or any our-pid socket when no server runs still FAILs. New `tests/test_ports_smoke.py` (+10: parsing, offender selection, loopback-gated endpoint derivation, and a guard asserting the adapter default bind is `127.0.0.1` + `BottleServer.js_callback=={}` — the inert-HTTP precondition). `requirements.txt` pins `pywebview>=6.2,<7` (an upgrade that flips the binding invariants fails the suite instead of silently exposing a listener). Docs: ADR-023 → Accepted (Option A), ADR-005 clarified, decision-matrix row updated, SECURITY §8 + §1 + TESTING §5.1 amended to "no **app-defined** port" scoping, both installer runbooks' PORTS line now expects `PORTS_SMOKE_RESULT: only_pywebview_loopback`. **CORRECTED misstatement:** the `--smoke` `echo`/`worker_echo_job`/`job.get_status` probes are NOT stale — intentional M0 spike commands gated behind `DPE_ENABLE_SPIKE_COMMANDS=1`; left UNTOUCHED (only the ports check needed the fix). 920/920 pytest (910 + 10) + packaged rebuild `--smoke` with spike env → `PORTS_SMOKE_RESULT: only_pywebview_loopback …` + `SMOKE_OK` 2026-10-26. **→ NEXT: M7-T5 (GATE MVP).**
-- [~] **M7-T5** **→ GATE MVP: every box of TESTING §5.1 green on packaged builds.** *Spec: TESTING §5.1; SECURITY §6.6; runbook `docs/M7_T3_INSTALLER_MATRIX.md` §1–§2.* **GATE NOT STAMPED.** Run 1 (2026-10-26, macOS dev box, HEAD `519914e`, working tree clean) = the smoke-provable subset only. Provenance: `dist/` rebuilt with `.venv/bin/python -m PyInstaller --clean --noconfirm data_profiling_engine.spec` (EXIT=0, 247 s, `.benchmarks/m7t5/pyinstaller_build.log`), `.app` @ 10:05, DMG re-cut @ 10:16 (45 335 447 B, `hdiutil verify` VALID, UNSIGNED); packaged `--smoke` under `DPE_ENABLE_SPIKE_COMMANDS=1` → EXIT=0 (`smoke_packaged.log`); suite `925 passed / 367.77 s` (`pytest_head.log`). §5.1 board (**3 GREEN · 2 PARTIAL · 12 OPEN**) — the authoritative per-box record:
+- [~] **M7-T5** **→ GATE MVP: every box of TESTING §5.1 green on packaged builds.** *Spec: TESTING §5.1; SECURITY §6.6; runbook `docs/M7_T3_INSTALLER_MATRIX.md` §1–§2.* **GATE NOT STAMPED.** Run 1 (2026-10-26, macOS dev box, HEAD `519914e`, working tree clean) = the smoke-provable subset only. Provenance: `dist/` rebuilt with `.venv/bin/python -m PyInstaller --clean --noconfirm data_profiling_engine.spec` (EXIT=0, 247 s, `.benchmarks/m7t5/pyinstaller_build.log`), `.app` @ 10:05, DMG re-cut @ 10:16 (45 335 447 B, `hdiutil verify` VALID, UNSIGNED); packaged `--smoke` under `DPE_ENABLE_SPIKE_COMMANDS=1` → EXIT=0 (`smoke_packaged.log`); suite `925 passed / 367.77 s` (`pytest_head.log`). §5.1 board (**12 GREEN · 4 PARTIAL · 1 OPEN**) — the authoritative per-box record, refreshed with the run-2 walk on the installed `.app`:
 
   | # | §5.1 box | Status | Evidence / gap |
   |---|---|---|---|
-  | 1 | CSV **and** Parquet load, no other connector (ADR-011) | OPEN | interactive UI flow not walked (code-wise only the 2 connectors exist) |
-  | 2 | summary + schema profile, physical vs logical types | OPEN | interactive UI flow not walked |
-  | 3 | statistics + distributions + missingness + uniqueness | OPEN | interactive UI flow not walked |
-  | 4 | rules run; PASS/FAIL/WARN/ERROR distinguished | OPEN | interactive UI flow not walked |
-  | 5 | findings carry evidence + metric/rule refs + `fingerprint` (ADR-016) | OPEN | interactive UI flow not walked |
-  | 6 | recommendations assert no unproven causes | OPEN | interactive UI flow not walked |
-  | 7 | method labels `exact/approximate/sampled` + seed (ADR-015) | OPEN | not read out of a packaged run |
-  | 8 | HTML + JSON from one result, CSV export, HTML self-contained | OPEN | export not run from the packaged app |
-  | 9 | run_id, config version/hash, status, duration, error log, engine version | OPEN | not read out of a packaged run |
-  | 10 | worker (not UI thread), UI responsive, job observable + cancellable | PARTIAL | frozen **spawn** worker round-trip `SUCCEEDED 4/4` inside the packaged binary; responsiveness/cancel not exercised |
-  | 11 | worker crash does not corrupt store; recovery on restart | OPEN | dev-mode automated only (`test_worker_job` / SECURITY §8.5) |
-  | 12 | sources never modified | OPEN | before/after checksum not run on a packaged job |
+  | 1 | CSV **and** Parquet load, no other connector (ADR-011) | **GREEN** | installed `.app`: `run 0aa42cd5…` (CSV) and `run 1256d929…` (Parquet) both loaded through Dataset Selection; only the two ADR-011 connectors exist |
+  | 2 | summary + schema profile, physical vs logical types | **GREEN** | inspect panel (`gui_inspect*.png`) + Report → Schema & Column Profiling show VARCHAR/string, DATE/temporal_date, BIGINT/numeric_currency |
+  | 3 | statistics + distributions + missingness + uniqueness | **GREEN** | `run 0aa42cd5…`: missingness+uniqueness on all 5 columns, `distribution` on the numeric one, `categorical`/`temporal` where applicable |
+  | 4 | rules run; PASS/FAIL/WARN/ERROR distinguished | **GREEN** | `deal_id_unique FAIL` / `value_not_null FAIL` / `stage_domain PASS`; UI scorecard `PASS 1 · FAIL 0 · WARN 0 · ERROR 0` on the small fixture |
+  | 5 | findings carry evidence + metric/rule refs + `fingerprint` (ADR-016) | **GREEN** | 5 findings / 5 distinct `sha256` fingerprints, `metric:`+`rule:` `evidence_refs`, UI renders `fingerprint: sha256:6ede1d01…` + `column stage · 3 affected records` |
+  | 6 | recommendations assert no unproven causes | **GREEN** | 5 recommendations with `do_not` guardrails; hypotheses stay `status=unverified` + `suggested_probe`, rendered apart from facts in the UI |
+  | 7 | method labels `exact/approximate/sampled` + seed (ADR-015) | PARTIAL | packaged run labels `exact` 35 + `not_computed` 1 (with a reason); a `sampled` value + recorded `seed` is still only exercised dev-mode (`degrade` benchmark case) |
+  | 8 | HTML + JSON from one result, CSV export, HTML self-contained | **GREEN** | `run 872fc949…`: `report.html` 4 839 726 B / `profile.json` 23 361 B / `issues.csv` 91 B (header only — 0 FAIL/WARN rows is correct, the CSV carries issue rows only) all from ONE result document; self-containment re-verified on the revealed file (0 `@import`, 0 `url(http…)`, only `src=""` + a `data:` URI); all three **`artifact.open` export clicks acked in the packaged UI** 2026-10-26 with the exact byte counts (`gui_box8_export_html|json|csv.png`) |
+  | 9 | run_id, config version/hash, status, duration, error log, engine version | **GREEN** | run row carries run_id / config_hash `sha256:9e9c673c…` / config_version 3 / engine 0.1.0 / duckdb 2.0.0 / python 3.12.4 / duration_ms / status / started_at / finished_at |
+  | 10 | worker (not UI thread), UI responsive, job observable + cancellable | **GREEN** | 3a cancel → CANCELLED **4.3 s** after the click, no run row, no artifact dir; 3b ladder `2/14 … 14/14 · 100 %` SUCCEEDED in 206.2 s |
+  | 11 | worker crash does not corrupt store; recovery on restart | OPEN | dev-mode automated only (`test_worker_job` / SECURITY §8.5); no crash injected into a packaged run yet |
+  | 12 | sources never modified | **GREEN** | fixture sha256s after every packaged run == `.benchmarks/m7t5/fixtures_pre_sha256.txt` |
   | 13 | bridge-only, **no app-defined port** (ADR-005/023) + HashRouter over local files (ADR-013) | **GREEN** | `PORTS_SMOKE_RESULT: only_pywebview_loopback host=127.0.0.1 port=45054 pids=[28870, 28880]` + `SMOKE_OK … _MEIPASS/frontend/dist/index.html` |
   | 14 | no local dev server required for the packaged run | **GREEN** | packaged load is `file://` from the bundle; no vite/dev server in the run |
   | 15 | unit + integration tests green; `sales_deals` yields known findings | **GREEN (dev env)** | `925 passed in 367.77 s` @ `519914e`; the M4-T1 golden harness pins the `sales_deals` findings — the packaged-env execution folds into box 16 |
-  | 16 | installer matrix both OS: install→launch→job→export→upgrade→uninstall | **BLOCKED** | Windows track needs native Windows (BLUEPRINT Q4); macOS install/upgrade/uninstall + codesign/notarize not run (0 Developer ID here) |
-  | 17 | benchmarks documented with recorded baselines | PARTIAL | TESTING §4.3.1–§4.3.4 dev baselines + ADR-021 ceilings recorded; packaged macOS/Windows baselines still owed |
+  | 16 | installer matrix both OS: install→launch→job→export→upgrade→uninstall | **PARTIAL** | macOS legs all verified on the installed `.app`: install (run-2 DMG), launch, one full job, export artifacts, upgrade (rows + `schema_migrations=2` preserved) and **uninstall (data preserved, 2026-10-26 — 21 files / 26 129 241 B byte-identical)**; still open: the Windows track (native Windows, BLUEPRINT Q4), codesign/notarize (0 Developer ID here) |
+  | 17 | benchmarks documented with recorded baselines | PARTIAL | TESTING §4.3.1–§4.3.4 dev baselines + ADR-021 ceilings recorded, plus a **packaged** macOS peak (UI 256.0 MiB / worker 263.1 MiB / app 562.4 MiB, `psutil_sampled_peak`); Windows + a packaged ladder series still owed |
 
-  **Do NOT stamp GATE MVP on this evidence.** Next: boxes 1–12 + 17 on the *installed* `.app` (runbook §2), then M7-T3's blocked legs. SPEC DOC UNCHANGED: `docs/TESTING_BENCHMARKS.md` §5.1 checkboxes stay unticked (the gate is still open); this board is the evidence log.
+  **Do NOT stamp GATE MVP on this evidence.** Next: a packaged `sampled`+seed run (box 7), box 11 (inject a worker crash into a packaged run), box 17 both-OS baselines — then M7-T3's blocked legs. SPEC DOC UNCHANGED: `docs/TESTING_BENCHMARKS.md` §5.1 checkboxes stay unticked (the gate is still open); this board is the evidence log.
+
+  **Run 2 (installed app, in progress).** Installed from the run-1 DMG to `/Applications` (copy, `spctl --assess` → **rejected**, ad-hoc signature only) and re-verified there: 6/6 §5.2 markers green incl. the new `SCHEMAS_SMOKE_RESULT` (`.benchmarks/m7t5/smoke_installed_run2b.log`) ⇒ boxes **13 + 14 GREEN on the installed artifact** (not just the bundle). The upgrade leg of box 16 is exercised (bundle re-copied over the install; `~/Library/Application Support/DataProfilingEngine` untouched, `schema_migrations=2`); the macOS **uninstall leg is done as step 4 below**, Windows + codesign/notarize still BLOCKED. Boxes 1–12 + 17 are walked on the installed app — started by the user, and now by the agent itself, since assistive access was granted mid-session (`System Events` reads the AX tree, types and `click at {x,y}`; every step is screenshot-verified, see the computer-use note at the top), with fixtures `sales_deals.csv` / `sales_deals.parquet` (40 rows) + `run2_big.csv` (2 M rows) staged under `.benchmarks/m7t5/fixtures/` and sha256-pinned for the box-12 "sources unmodified" check. The first walk attempt hit the schemas defect above — the packaged binary could not start ANY job, which is precisely what the packaged gate exists to catch.
+
+  **Run 2 evidence so far (agent-verified from disk).** `run 0aa42cd5…` (CSV,
+  3.5 s) and `run 1256d929…` (Parquet, 1.2 s) = boxes 1–9; `run 36ab428f…`
+  (2 M rows × 8 cols, 248.5 s) = the large-source leg. Box 17 RSS on the
+  packaged build, sampled 1 s while that job ran (`psutil_sampled_peak`,
+  `.benchmarks/m7t5/packaged_rss_samples.log`): UI process peak **256.0 MiB**,
+  worker peak **263.1 MiB**, whole-app peak **562.4 MiB** total — no OOM, no
+  swap pressure, native DuckDB spilling allowed. Cancel (`job_6d03573bd0ba`)
+  confirmed CANCELLED with **no runs row** written, i.e. §6.5 "nothing durable"
+  holds; its 4 min 18 s latency was the defect fixed above.
+
+  **Run 2, steps 3a/3b (agent-driven on the installed app, 2026-10-26).** With
+  `run2_big.csv` (2 M rows, 122 MB, `standard`, sampling off, one rule
+  `stage not_null`) the fix is now visible end to end. **3a cancel:**
+  `job_59f487377900` started 05:53:34Z, Cancel clicked at 05:54:33Z while it sat
+  on `4/14 profiling:statistics_missingness`; store showed `CANCEL_REQUESTED`
+  immediately and `CANCELLED` **~4.3 s** after the click, ending at
+  `5/14 profiling:uniqueness_categorical` — no run row, no artifact dir
+  (§6.2/§6.5 hold). **3b observable progress:** `job_76cefccb7898` walked the
+  ladder `2/14 discover → 3/14 plan → 4/14 statistics_missingness → 5/14
+  uniqueness_categorical → 6/14 distributions_temporal → 10/14 dataset_metrics →
+  14/14 persist:metadata` and ended **SUCCEEDED, 14/14 · 100 %** in 206.2 s
+  (`run b33f4455-e2f6-479d-8596-19854ef4021d`; artifacts `profile.json` 60 KB,
+  `report.html` 4.6 MB, `issues.csv` 202 B; run row carries run_id / status /
+  engine 0.1.0 / duckdb 2.0.0 / python 3.12.4 / config_hash `sha256:1f6c2a6a…`
+  / duration_ms / started_at / finished_at) ⇒ box 10 GREEN, and box 11 partly
+  evidenced by the UI itself (an empty-column rule blocks Start with
+  `Validation Issues: rule 1: select the column it checks`). Fixture sha256s
+  re-checked after all of it: identical to `.benchmarks/m7t5/fixtures_pre_sha256.txt`
+  (box 12). Screenshots: `gui_progress_page.png`, `gui_cancel_requested.png`,
+  `gui_cancelled.png`, `gui_3b_midrun.png`, `gui_3b_final.png`, `gui_report_page.png`;
+  log `.benchmarks/m7t5/run_3b.log`.
+
+  **Run 2, step 4 — box 16 UNINSTALL LEG (agent-driven, 2026-10-26).** App quit
+  (no `DataProfilerEngine` process left), then removed the way a macOS user
+  removes it: the bundle moved out of `/Applications` (Finder "Move to
+  Trash"), after which `open -a` refuses with `kLSAppInTrashErr` — macOS has
+  no uninstaller script, so the bundle *is* the installation. A stale install
+  DMG (`/Volumes/DataProfilerEngine`, mounted since 10:15) was ejected too.
+  User data was snapshotted before/after with `box16_inventory.py`, which
+  **copies the SQLite trio aside and reads the copy** so the data root is never
+  written to by the measurement itself: `box16_pre.json` vs `box16_post.json`
+  compare **IDENTICAL** on `data_root` + `cache_root` + `db` — 21 files /
+  26 129 241 B, `metadata.sqlite3` sha256 `dbf09cb8…`, every artifact sha256,
+  `schema_migrations=[1, 2]`, and the same 5 runs / 7 jobs / 30 findings /
+  9 checks / 15 artifacts. `box16_storeprobe.py` then replayed the real §5.2
+  read handlers against a COPY of the post-uninstall root:
+  `report.get_summary(dataset_id=sales_deals)` resolved the **pre-uninstall**
+  run `872fc949…` with all three `result_refs`, plus `report.get_columns` 5 /
+  `quality.get_results` 1 / `findings.get` 4 / `recommendations.get` 4 — the
+  surviving store + artifacts are still fully consumable. The byte-identical
+  bundle (`Info.plist` + executable sha256 match `dist/`) was reinstalled to
+  `/Applications`, launched, and inspected `sales_deals.csv` again; the third
+  snapshot `box16_post-reinstall.json` differs from pre-uninstall **only** in
+  `metadata.sqlite3-shm` (SQLite shared-memory index, recreated when the app
+  opens the DB) — the full diff is in `box16_post_uninstall.log`. Evidence:
+  `box16_pre.json` / `box16_post.json` / `box16_post-reinstall.json` /
+  `box16_post_uninstall.log` / `box16_storeprobe.log` /
+  `gui_box16_reinstalled_launch.png` / `gui_box16_reinstalled_inspect.png`.
+  GOTCHA (pre-existing UI gap, NOT caused by the uninstall): the Dataset
+  Selection screen never renders the "Previously profiled" badge or the
+  logical/semantic types because `DatasetSelection.tsx` sends only
+  `source_path`, while `facade._resolve_run_id` needs `dataset_id`/`run_id` —
+  so `last_run` is always null from the UI (the same `—` columns appear in the
+  pre-uninstall `gui_inspect.png`). The surviving data was therefore proven
+  through the bridge handlers rather than the badge; the one-line fix
+  (`dataset.inspect` should fall back to its own `path.stem` dataset_id when
+  resolving the run) belongs to a later UI task.
+  Still owed: Windows track, codesign/notarize, a packaged `sampled`+seed run
+  (box 7), a packaged worker crash (box 11), packaged benchmark baselines
+  (box 17).
+
+  **Run 2, step 5 — M7-T5c packaged bridge readiness (2026-10-26).** Driving the
+  installed app surfaced a real gate-class defect, not a driving problem: the
+  packaged UI rendered "Desktop bridge not detected" and disabled every read.
+  Root cause (_not_ a missing PyInstaller asset — `Resources/webview/js/api.js`
+  is in the bundle): `bridgeAvailable()` (`frontend/src/bridge/api.ts`) was
+  evaluated **once at render** in all four screens, but pywebview injects
+  `window.pywebview` after the page loads and only then dispatches
+  `pywebviewready` (`webview/js/finish.js`). The packaged bundle mounts before
+  the injection lands, so the banner latched on permanently; dev mode hid the
+  race because Vite loads slower. Fix: new `frontend/src/bridge/useBridgeReady.ts`
+  (seeds from the current state, listens for `pywebviewready`, bounded 100 ms
+  poll with a 10 s give-up so a plain browser still degrades) wired into
+  `DatasetSelection` / `RunConfig` / `RunProgress` / `Report`; `bridgeAvailable`
+  stays as the predicate the hook and the bridge call paths share. Verified on a
+  `--clean` rebuild + `ditto` reinstall: no banner on Dataset or Run, and a real
+  `dataset.inspect` round-trip renders Schema & Metadata + the 5-column table
+  (screenshots `/tmp/e0.png`…`/tmp/e4.png` on this box). `npm run typecheck` +
+  `vite build` clean; no Python/contract change, so the pytest suite is
+  unaffected (last full run 925 passed). No DOM test runner exists, so the fix
+  is pinned by a static-source guard instead:
+  `tests/test_frontend_bridge_readiness.py` (+3) fails if any component reads
+  `bridgeAvailable()` at render again, if `useBridgeReady()` falls out of the
+  hook, or if the hook loses the `pywebviewready` listener / bounded poll.
+  Full suite 944 passed 2026-10-26 (0 skipped).
+
+  **Run 2, step 6 — box 8 UI-acked export (2026-10-26).** On the installed app,
+  Report screen (resolved `run 872fc949…` via `dataset_id=sales_deals`), all
+  three `artifact.open` buttons were clicked and each returned its ack with the
+  real artifact size: **HTML report 4 839 726 B**, **JSON result 23 361 B**,
+  **CSV issue export 91 B**. The sizes match the files on disk exactly
+  (`report.html` / `profile.json` / `issues.csv` in the run's artifact dir), so
+  the ack is a real read of the recorded artifact, not a UI string. The CSV is
+  header-only because that run has **0 FAIL/WARN** rows (1 PASS) — correct by
+  design (the CSV carries issue rows only), so a 91 B file is the honest
+  output, not a bug. Self-containment re-verified on the file the UI actually
+  revealed: `@import` 0, `url(http…)` 0, the only `src` values are `src=""` and
+  a `data:image/png;base64` pixel. Evidence:
+  `.benchmarks/m7t5/gui_box8_export_html.png` / `…_json.png` / `…_csv.png`.
+  No product code changed. GOTCHA (see GOTCHAS): macOS swallows the first click
+  on a non-key window and the reveal puts a viewer above the app, so mid-walk
+  clicks silently did nothing until `cgui.py clickapp` (activate + click in one
+  process) was used — a driver artifact, not an app defect.
 
 ## Legend
 

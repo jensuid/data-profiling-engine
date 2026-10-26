@@ -66,6 +66,7 @@ dist\DataProfilerEngine.exe --smoke > smoke_win.txt 2>&1
 All markers must appear:
 
 - [ ] `DUCKDB_SMOKE_RESULT: version=... rows=[(42,)]` — native `_duckdb` collected (ADR-009 top risk)
+- [ ] `SCHEMAS_SMOKE_RESULT: count=13 required=13 probe_errors=<n>` — the CONTRACTS §1 JSON Schemas were collected **and** are applied (the probe additionally requires a non-zero error count on an empty document, so a present-but-inert registry cannot pass). `SCHEMAS_SMOKE_FAILED: missing required schema(s) …` = package data not collected: `profile.start` would fail with `BRIDGE_REQUEST_INVALID: handler failed: KeyError`; fix the spec, don't ship (SECURITY §6.2, M7-T5 run 2).
 - [ ] `WORKER_SMOKE_RESULT: job=... status=SUCCEEDED ...` — frozen **spawn** worker round-trip (ADR-006)
 - [ ] `BRIDGE_SMOKE_RESULT: ...echo...ping...` — JS↔Python bridge round-trip
 - [ ] `PORTS_SMOKE_RESULT: only_pywebview_loopback host=127.0.0.1 port=<n> pids=[...]` — SECURITY §8.1 self-check (lsof/netstat over app pids). Per **ADR-023 (Option A)** the sole permitted listener is pywebview's internal loopback static-file server (no data/bridge crosses it); a bare run with no webview server may instead print `PORTS_SMOKE_RESULT: no_listening_sockets`. `PORTS_SMOKE_FAILED` = any other socket bound (second loopback, non-loopback/LAN, or a socket when no server runs) — stop and escalate, ADR-005/§8.1.
@@ -107,6 +108,27 @@ installer on Windows), not the raw bundle. Every line of TESTING §5.1:
 - [ ] **Uninstall**: removing the app leaves user data intact (NSIS uninstall
       deletes only `$INSTDIR` + shortcuts + its ARP key). No silent deletion of
       results; removal of user data is an explicit opt-in only.
+
+**macOS uninstall semantics** (no uninstaller script exists by design): the
+installed artifact *is* `DataProfilerEngine.app`, so uninstalling = moving that
+bundle out of `/Applications` (Finder "Move to Trash"). Nothing else is removed
+by the app or by `packaging/macos/*.sh`; run history, findings and artifacts stay
+under `~/Library/Application Support/DataProfilingEngine` (cache under
+`~/Library/Caches/DataProfilingEngine` is re-creatable and may be left behind).
+Verify with a byte-level before/after snapshot of the user-data root — count and
+hash every file, and read the SQLite trio from a **copy** (opening the live
+`-wal` writes `-shm`): `.benchmarks/m7t5/box16_inventory.py pre|post` does this
+and is what proved the leg on 2026-10-26 (21 files / 26 129 241 B byte-identical
+across install → job → upgrade → uninstall → reinstall; the only post-reinstall
+delta is `metadata.sqlite3-shm`, a shared-memory index the app recreates on
+open). A `-shm`/`-wal` change is therefore never data loss; a changed
+`metadata.sqlite3` or artifact hash is.
+
+Verified on macOS 13.7.8 (unsigned dev build) 2026-10-26: uninstall preserved
+all 5 runs / 7 jobs / 30 findings / 9 checks / 15 artifacts, and re-installing the
+same bundle still resolved the pre-uninstall run `872fc949…` through
+`report.get_summary` (evidence in `STATE.md`, M7-T5 run-2 step 4). Windows
+uninstall is still owed (§4).
 
 ## 3. macOS track — codesign + notarize (needs Developer ID)
 

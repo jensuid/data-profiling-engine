@@ -12,7 +12,8 @@
  * file before proceeding.
  */
 import { useCallback, useEffect, useState } from "react";
-import { BridgeError, bridgeAvailable, bridgeSelectSourceFile } from "../bridge/api";
+import { BridgeError, bridgeSelectSourceFile } from "../bridge/api";
+import { useBridgeReady } from "../bridge/useBridgeReady";
 import { setSelectedDataset } from "../state/selection";
 import type {
   DatasetInspectResult,
@@ -54,7 +55,7 @@ export default function DatasetSelection() {
 
   // Bridge availability check — outside the desktop shell the commands fail
   // gracefully; we show a banner rather than crashing.
-  const hasBridge = bridgeAvailable();
+  const hasBridge = useBridgeReady();
 
   // --- handlers ---
 

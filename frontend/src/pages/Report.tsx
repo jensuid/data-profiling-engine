@@ -34,7 +34,8 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { BridgeError, bridgeAvailable, bridgeSend } from "../bridge/api";
+import { BridgeError, bridgeSend } from "../bridge/api";
+import { useBridgeReady } from "../bridge/useBridgeReady";
 import { useSelectedDataset, useStartedJob } from "../state/selection";
 import PlotlyChart from "../charts/PlotlyChart";
 import { chartsForColumn, missingnessChart, type PlotlySpec } from "../charts/plotly";
@@ -168,7 +169,7 @@ export default function Report() {
   const job = useStartedJob();
   const dataset = useSelectedDataset();
   const datasetId = job?.datasetId ?? dataset?.datasetId ?? null;
-  const hasBridge = bridgeAvailable();
+  const hasBridge = useBridgeReady();
 
   const [summary, setSummary] = useState<ReportSummaryResult | null>(null);
   const [summaryStatus, setSummaryStatus] = useState<LoadStatus>("idle");

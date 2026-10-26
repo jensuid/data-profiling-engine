@@ -13,7 +13,8 @@
  */
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { BridgeError, bridgeAvailable, bridgeStartJob } from "../bridge/api";
+import { BridgeError, bridgeStartJob } from "../bridge/api";
+import { useBridgeReady } from "../bridge/useBridgeReady";
 import {
   BRIDGE_MESSAGE_CAP_BYTES,
   buildConfigFromForm,
@@ -61,7 +62,7 @@ interface UploadState {
 
 export default function RunConfig() {
   const dataset = useSelectedDataset();
-  const hasBridge = bridgeAvailable();
+  const hasBridge = useBridgeReady();
 
   // --- form state ---
   const [mode, setMode] = useState<ProfileMode>("standard");

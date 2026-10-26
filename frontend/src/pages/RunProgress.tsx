@@ -14,7 +14,8 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { BridgeError, bridgeAvailable, bridgeSend, onPushedJobStatus } from "../bridge/api";
+import { BridgeError, bridgeSend, onPushedJobStatus } from "../bridge/api";
+import { useBridgeReady } from "../bridge/useBridgeReady";
 import { useStartedJob } from "../state/selection";
 import type { JobState, JobStatus, JsonValue } from "../types/contracts";
 import { JobStateValues } from "../types/contracts";
@@ -137,7 +138,7 @@ function ResultSummary({ result }: { result: { [key: string]: JsonValue } }) {
 
 export default function RunProgress() {
   const job = useStartedJob();
-  const hasBridge = bridgeAvailable();
+  const hasBridge = useBridgeReady();
 
   const [status, setStatus] = useState<JobStatus | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
