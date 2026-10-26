@@ -4,3 +4,8 @@
 # configurations. `-text` disables ALL end-of-line conversion for the
 # directory. See TESTING_BENCHMARKS.md §2 "golden result files" and §3.3.
 data_profiling_engine/tests/fixtures/golden/* -text
+
+# Same rule for the vendored, SHA256-pinned report asset (TestVendoredPlotly
+# pin in test_reporting_html.py): autocrlf=true otherwise rewrites plotly.min.js
+# to CRLF on Windows checkout and the provenance hash check fails (M7-T3).
+data_profiling_engine/reporting/assets/* -text

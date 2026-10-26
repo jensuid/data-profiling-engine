@@ -34,10 +34,15 @@ Unicode True
 !endif
 !define PRODUCT_NAME "Data Profiling Engine"
 !define EXE_NAME "DataProfilerEngine.exe"
+; NSIS resolves relative File/OutFile paths against the SCRIPT dir, not the CWD.
+; Default to the repo-root dist produced by PyInstaller; override with /DEXE_PATH.
+!ifndef EXE_PATH
+  !define EXE_PATH "..\..\dist\${EXE_NAME}"
+!endif
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
 
 !ifndef OUT_FILE
-  !define OUT_FILE "DataProfilerEngine-${PRODUCT_VERSION}-win64.exe"
+  !define OUT_FILE "..\..\DataProfilerEngine-${PRODUCT_VERSION}-win64.exe"
 !endif
 
 Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"
@@ -70,7 +75,7 @@ XPStyle on
 
 Section "Application" SecApp
   SetOutPath "$INSTDIR"
-  File "dist\${EXE_NAME}"
+  File "${EXE_PATH}"
 
   ; Desktop + Start-menu shortcuts (user scope).
   CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME}"

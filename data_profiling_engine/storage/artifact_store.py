@@ -272,7 +272,9 @@ class ArtifactStore:
             _safe_basename(filename) if filename else DEFAULT_FILENAMES.get(kind, f"{kind}.json")
         )
         try:
-            path.write_text(content, encoding="utf-8")
+            # newline="\n": artifacts must be byte-stable across OSes (TESTING §3.3
+            # golden snapshots); the default text mode would emit CRLF on Windows.
+            path.write_text(content, encoding="utf-8", newline="\n")
         except OSError as exc:
             raise ArtifactStoreError(
                 f"could not write artifact {kind!r} for run {run_id!r}: {exc}",

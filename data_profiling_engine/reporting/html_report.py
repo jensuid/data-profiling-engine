@@ -779,7 +779,8 @@ def write_html_report(bundle: ProfileBundle, out_path: "Path | str", *, mask_pii
     parents, UTF-8, trailing newline, returns the path."""
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render_html_report(bundle, mask_pii=mask_pii), encoding="utf-8")
+    # newline="\n": byte-stable across OSes; default text mode = CRLF on Windows
+    out.write_text(render_html_report(bundle, mask_pii=mask_pii), encoding="utf-8", newline="\n")
     return out
 
 

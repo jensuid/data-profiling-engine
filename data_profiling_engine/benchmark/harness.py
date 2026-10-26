@@ -136,7 +136,11 @@ class _RssPeakSampler:
         self._stop_evt = threading.Event()
 
         def _loop() -> None:
-            while not self._stop_evt.wait(self._interval_s):
+            # Sample-then-wait (do-while): a pass shorter than one interval still
+            # gets at least one RSS reading. The old wait-then-sample order raced:
+            # on Windows the thread never sampled before stop() and the peak came
+            # back None (M7-T3, test_rss_sampler_reports_positive_peak).
+            while True:
                 total = 0
                 try:
                     total = self._proc.memory_info().rss or 0
@@ -149,6 +153,8 @@ class _RssPeakSampler:
                     pass
                 if total > self._peak_bytes:
                     self._peak_bytes = total
+                if self._stop_evt.wait(self._interval_s):
+                    return
 
         self._thread = threading.Thread(target=_loop, daemon=True)
         self._thread.start()

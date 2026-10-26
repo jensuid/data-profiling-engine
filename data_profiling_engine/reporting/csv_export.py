@@ -206,7 +206,8 @@ def write_issue_csv(bundle: ProfileBundle, out_path: "Path | str") -> Path:
     creates parents, UTF-8, returns the written path."""
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render_issue_csv(bundle), encoding="utf-8")
+    # newline="\n": byte-stable across OSes; default text mode = CRLF on Windows
+    out.write_text(render_issue_csv(bundle), encoding="utf-8", newline="\n")
     return out
 
 

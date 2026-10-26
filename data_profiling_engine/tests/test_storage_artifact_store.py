@@ -193,6 +193,14 @@ class TestConfinement:
         assert store.exists(ref) is True
         assert store.open_path(ref).is_file()
 
+    def test_write_text_is_byte_stable_on_windows(self, store):
+        # M7-T3 Windows bug: default text mode translated \n -> \r\n, breaking the
+        # byte-stability that TESTING §3.3 golden snapshots rely on.
+        ref = store.write_text("run-lf", "html_report", "a\nb\n")
+        raw = store.open_path(ref).read_bytes()
+        assert raw == b"a\nb\n" and b"\r\n" not in raw
+        assert store.read_text(ref) == "a\nb\n"
+
 
 # ---------------------------------------------------------------------------
 # 3. lifecycle

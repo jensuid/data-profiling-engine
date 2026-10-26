@@ -62,7 +62,8 @@ def write_profile_json(bundle: ProfileBundle, out_path: "Path | str") -> Path:
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(result_document(bundle), indent=2, sort_keys=True, ensure_ascii=False)
-    out.write_text(text + "\n", encoding="utf-8")
+    # newline="\n": byte-stable across OSes; default text mode = CRLF on Windows
+    out.write_text(text + "\n", encoding="utf-8", newline="\n")
     return out
 
 
