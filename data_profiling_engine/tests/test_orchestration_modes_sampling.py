@@ -29,6 +29,7 @@ from data_profiling_engine.orchestration import (
     run_dataset_profiling,
     run_profiling_pipeline,
 )
+from data_profiling_engine.orchestration.rollup import build_dataset_profile
 from data_profiling_engine.schemas.models import (
     DatasetConfig,
     MetricMethod,
@@ -322,3 +323,110 @@ def test_run_dataset_profiling_end_to_end_csv(tmp_path: Path):
     amount = _by_name(res.columns, "amount")
     assert amount.stats is not None
     con.close()
+
+
+# ===========================================================================
+# 6. Derived uniqueness — is_unique_candidate is a FULL-relation fact
+# ===========================================================================
+class TestDerivedUniquenessIsFullRelation:
+    """``CONTRACTS §3.2`` types ``uniqueness.is_unique_candidate`` as a bare
+    bool with no provenance carrier, so the slot can never say
+    "sampled"/"approximate". The engine therefore derives it from the FULL
+    relation (ENGINE §2.2 / ADR-015): a sample must not be able to flip it and
+    an HLL estimate must not be able to falsify it. Each expectation is checked
+    against an INDEPENDENT SQL count, never against the engine's own numbers
+    (TESTING §3.1)."""
+
+    @staticmethod
+    def _handle(view: str, columns) -> RelationHandle:
+        return RelationHandle(
+            dataset_id="ds", connector="manual", view_name=view,
+            snapshot=SourceSnapshot(content_hash="sha256:" + "1" * 64),
+            columns=tuple(columns), row_id_column="_row_id",
+        )
+
+    @staticmethod
+    def _exact_uniqueness(con, view: str, column: str) -> bool:
+        distinct, non_null = con.execute(
+            f'SELECT count(DISTINCT "{column}"), count("{column}") FROM "{view}"'
+        ).fetchone()
+        return bool(non_null > 0 and int(distinct) == int(non_null))
+
+    def test_one_row_sample_cannot_make_a_duplicated_column_unique(self):
+        # 300 rows, `amount` takes 30 distinct values ⇒ duplicates at full
+        # scale. A ONE-row reservoir sample is trivially "distinct == non-null",
+        # which is exactly the false claim a sample-derived bool would make.
+        con = duckdb.connect()
+        con.execute(
+            'CREATE OR REPLACE VIEW "wide" AS SELECT i AS id, i % 30 AS amount, '
+            "'s' || (i % 2) AS status, i AS _row_id FROM range(300) t(i)"
+        )
+        handle = self._handle(
+            "wide", [("id", "BIGINT"), ("amount", "BIGINT"), ("status", "VARCHAR")]
+        )
+        config = _config(
+            "standard",
+            sampling={"enabled": True, "strategy": "reservoir", "size": 1, "seed": 424242},
+        )
+        result = run_profiling_pipeline(con, handle, config, "run-derived")
+
+        # The profiler abstains on a sampled decision instead of claiming.
+        assert result.columns
+        for column in result.columns:
+            if column.uniqueness is not None:
+                assert column.uniqueness.is_unique_candidate is False, column.column
+
+        profile = build_dataset_profile(con, result, config)
+        assert _by_name(profile.columns, "id").uniqueness.is_unique_candidate is True
+        assert _by_name(profile.columns, "amount").uniqueness.is_unique_candidate is False
+        # …and each one matches the independent full-relation reference.
+        for name in ("id", "amount", "status"):
+            assert _by_name(profile.columns, name).uniqueness.is_unique_candidate is (
+                self._exact_uniqueness(con, "wide", name)
+            ), name
+        # The cardinality itself stays honestly sampled (the bool is the only
+        # full-scale value in the block).
+        amount = _by_name(profile.columns, "amount")
+        assert amount.uniqueness.distinct_count.provenance.method == MetricMethod.SAMPLED.value
+        assert amount.uniqueness.distinct_count.provenance.method_params["seed"] == 424242
+        con.close()
+
+    def test_approximate_distinct_cannot_decide_uniqueness(self):
+        # 20 000 rows > LARGE_ROW_LIMIT ⇒ distinct_count is `approximate` (HLL);
+        # the bool must still be the exact full-relation fact, not the estimate.
+        con = duckdb.connect()
+        con.execute(
+            'CREATE OR REPLACE VIEW "wide2" AS SELECT i AS id, i % 7 AS bucket, i AS _row_id '
+            'FROM range(20000) t(i)'
+        )
+        handle = self._handle("wide2", [("id", "BIGINT"), ("bucket", "BIGINT")])
+        config = _config("standard")
+        result = run_profiling_pipeline(con, handle, config, "run-approx")
+        prov = _by_name(result.columns, "id").uniqueness.distinct_count.provenance
+        assert prov.method == MetricMethod.APPROXIMATE.value
+
+        profile = build_dataset_profile(con, result, config)
+        for name in ("id", "bucket"):
+            assert _by_name(profile.columns, name).uniqueness.is_unique_candidate is (
+                self._exact_uniqueness(con, "wide2", name)
+            ), name
+        con.close()
+
+    def test_key_candidates_and_derived_bool_share_one_source(self):
+        # Both surfaces come from the same full-relation scan, so they can never
+        # disagree: the candidate list IS the set of `is_unique_candidate` trues.
+        con = duckdb.connect()
+        con.execute(
+            'CREATE OR REPLACE VIEW "wide3" AS SELECT i AS id, i % 5 AS grp, i AS _row_id '
+            'FROM range(50) t(i)'
+        )
+        handle = self._handle("wide3", [("id", "BIGINT"), ("grp", "BIGINT")])
+        config = _config("standard")
+        result = run_profiling_pipeline(con, handle, config, "run-shared")
+        profile = build_dataset_profile(con, result, config)
+        trues = {
+            c.column for c in profile.columns
+            if c.uniqueness is not None and c.uniqueness.is_unique_candidate
+        }
+        assert set(profile.primary_key_candidates or []) == trues == {"id"}
+        con.close()

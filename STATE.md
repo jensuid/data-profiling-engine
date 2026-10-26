@@ -75,12 +75,24 @@ NEXT      : M7-T5 run 2 — **GATE MVP: every box of TESTING §5.1 green on
           (uninstall = 2026-10-26, data byte-identical, see the run-2 notes).
           M7-T5c (2026-10-26) removed the UI-side blocker for boxes 7/8/11:
           bridge readiness is now event-driven and verified on a rebuilt `.app`.
-          NEXT ACTION: box 7 (packaged `sampled`+seed run) — open
-          docs/TESTING_BENCHMARKS.md §5.1 box 7 and frontend/src/pages/RunConfig.tsx
-          (Sampling panel), start the job on the installed app, then read the
-          method labels + seed off the Report screen and `profile.json`.
-          Still owed: Windows track, codesign/notarize, box 7 `sampled`+seed on
-          a packaged run, box 11 packaged crash, box 17 both-OS baselines.
+          STEP 7 (2026-10-26) = box 7 EXECUTED on the installed app: packaged
+          `sampled`+seed run `095f3987…` (2M rows, reservoir/100000/seed
+          424242) labeled 67 `exact` + 9 `sampled` + 1 `not_computed`, every
+          sampled leaf carrying seed+strategy+window, UI showing
+          `Sampling seed 424242` + `sampled` badges. It also exposed ONE
+          remaining honesty gap: `Uniqueness.is_unique_candidate` is a bare
+          bool (no provenance slot) derived from the SAMPLE view → a sample
+          presented as a fact. STEP 7b (2026-10-26) = that gap FIXED per the
+          user's choice (full-relation derive, no §3.2 change): the profiler
+          now abstains for any non-EXACT decision and `orchestration.rollup`
+          stamps the bool from the same exact count(DISTINCT)/count(col) scan
+          that resolves `primary_key_candidates`. Rebuilt + reinstalled
+          (`63257fbff18fba71`) + packed-smoke 6/6 + **box 7 GREEN** on two
+          packaged runs (sampled and approximate) proved against independent
+          DuckDB truth. NEXT ACTION: box 11 (inject a worker crash into a
+          packaged run).
+          Still owed: Windows track, codesign/notarize, box 11 packaged crash,
+          box 17 both-OS baselines.
           ADR-023 is now **Accepted (Option A)** — the §8.1 "no app-defined port
           bound" box can be stamped on the packaged build with that scoping
           (`--smoke` emits `PORTS_SMOKE_RESULT: only_pywebview_loopback host=127.0.0.1
@@ -1895,7 +1907,7 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 - [~] **M7-T3** Both-OS installer matrix: install→job→export→upgrade→uninstall. *Spec: SECURITY §6; TESTING §5.1.* ✅ **macOS packaging track LANDED (dev box, UNSIGNED).** Repo-side tooling now in `packaging/` (a NEW top-level dir — ARCHITECTURE §3 covers only the engine package, so build scripts sit at repo root beside the `.spec`, matching `data_profiling_engine.spec`): `macos/build_app_dmg.sh` (PyInstaller → `hdiutil` `.dmg`, no 3rd-party dmg tool), `macos/sign_notarize.sh` (Developer-ID codesign+notarize, **credentials via env, never in repo** — AGENTS §7), `macos/entitlements.plist`, `windows/profiler.nsi` (NSIS, per-user `$LOCALAPPDATA`, uninstall preserves `%APPDATA%` data per §6.5, WebView2 detect §6.4), and the operator runbook `docs/M7_T3_INSTALLER_MATRIX.md` (§5.1 checklist + macOS/Windows tracks). **Spec rewrite:** the frozen app is now a **windowed (console=False) onedir `.app` on macOS** (`COLLECT`+`BUNDLE`) and **still a onefile console `.exe` on Windows** (unchanged from the M0 spike — a windowed Win exe can't capture `--smoke > smoke_win.txt`). Rebuilt `dist/` from current code (was the stale Oct-24 binary) and the packaged `--smoke` is **green on all four §5.2 markers**: DUCKDB 2.0.0 rows=[(42,)] / WORKER `status=SUCCEEDED` 4/4 (frozen **spawn** worker) / BRIDGE echo `status=ok` / `SMOKE_OK` `file://` from `…/Contents/Frameworks/frontend/dist/index.html`. Built + `hdiutil verify` VALID the unsigned `dist/DataProfilerEngine-0.1.0-macos.dmg` (45 MB). GOTCHA (spec): PyInstaller 6.22 `BUNDLE()` kwarg names are **`bundle_identifier=` / `info_plist=` / `version=`** — the old `id=`/`info=` are silently ignored and left CFBundleIdentifier=`DataProfilerEngine`/version 0.0.0 (caught by diffing Info.plist). GOTCHA (smoke): the `--smoke` probes use the M0 spike commands (`echo`/`worker_echo_job`) which the packaged facade registers ONLY behind `DPE_ENABLE_SPIKE_COMMANDS=1` (spike OFF in production is correct — a bare `--smoke` rejects them as `BRIDGE_COMMAND_UNKNOWN`); run the packaged smoke with that env set. GOTCHA (sandbox): `hdiutil create/verify` need disk arbitration → fail `Operation not permitted` inside the restrictive sandbox, run outside. ⛔ **BLOCKED — cannot close from this box:** (1) the whole **Windows** track (BLUEPRINT Q4 "physical/virtual Windows required, not optional") → handed to the §4 operator runbook; (2) macOS **codesign + notarization** — `security find-identity` shows **0** Developer ID identities here, and AGENTS §7 forbids handling creds → handed to §3 release env. **Follow-up (2nd M7-T3 commit):** persisted the Windows operator runbook `docs/WINDOWS_M7_T3_CHECKLIST.md` (mirrors `WINDOWS_M0_T5_CHECKLIST.md`, extended to the full §5.1 install→job→export→upgrade→uninstall matrix) and added the missing **Windows peak-RSS** path so §5.1 "benchmarks documented" produces a real number instead of a caveat: `benchmark/harness.py` now wraps the measured child in a `_RssPeakSampler` (**psutil** self-poll @ 50 ms, self+children) when POSIX `resource` is absent, labelling every case with `peak_rss_method ∈ {resource.ru_maxrss, psutil_sampled_peak, unavailable}` — a Windows **sampled** peak, never presented as the POSIX high-water (ADR-015). New optional dep `psutil>=6.0` in `requirements.txt` (benchmark tooling only; never bundled in the frozen app). +4 pure tests in `test_benchmark_harness.py` (label honesty + inert-without-psutil; the positive-peak test skips where psutil absent). This commit DID touch package code (`benchmark/harness.py`) + `requirements.txt` + docs — the earlier macOS-track commit was spec/packaging/docs only. 58 passed / 1 skipped across the benchmark test group 2026-10-26 (no engine/contract change; full suite unaffected). **→ NEXT: M7-T4** (security acceptance automation) unless a Windows box + Developer ID become available to finish M7-T3's two blocked legs.
 - [x] **M7-T4** Security acceptance automation. *Spec: SECURITY §8; TESTING §5.4.* ✅ New `tests/test_security_acceptance.py` — one class per §8 bullet (34 tests): §8.1 static no-server/no-bind scans over engine+frontend sources + a LIVE psutil process-tree listener scan during a real `profile.start` + stdlib-only `PORTS_SMOKE_RESULT`/`PORTS_SMOKE_FAILED` self-check now wired into `main.py --smoke` (lsof `-iTCP -sTCP:LISTEN` / `netstat -ano -p TCP` filtered to app pids — psutil stays OUT of the frozen bundle); marker lines added to `docs/M7_T3_INSTALLER_MATRIX.md` §1 + `docs/WINDOWS_M7_T3_CHECKLIST.md` §4 and TESTING §5.4 points at the module. §8.2 packaged-facade rejections (unknown cmd / bad schema / out-of-scope path both source+artifact-ref / oversized request AND response) with a `SECRET` no-echo assertion. §8.3 real-run default HTML+CSV+preview carry no raw PII. §8.4 credential-name walk of every schema/model, no-keyring-imports scan, credential-shaped config refused pre-dispatch, planted secret survives nowhere (documents, artifacts, error_log, raw SQLite bytes). §8.5 copytree-isolated upgrade-preserves-rows(+backup)/cleaners-never-touch-referenced-files/app-bundle-refusal/NSIS-uninstall-and-macOS-scripts-delete-no-user-data/forward-only-migrations. **The suite immediately caught TWO real SECURITY §4 bugs in `reporting/html_report.py`** (fixed here): the per-column detail loop never recomputed `pii` — it inherited the LAST header-table column's flag, so an email column's Categories rendered raw whenever a non-PII column came last; and `rare_categories` were emitted with NO masking at all. GOTCHA (discovery): pattern refinement samples DISTINCT values (`SAMPLE_DISTINCT_LIMIT=32` reservoir), so a column needs **≥3 distinct** pattern-matching values before email/phone tagging fires — a 2-distinct phone column stays `categorical_nominal` (test fixture widened to 3 distinct phones accordingly; ENGINE §4.1 "≥3 to avoid single-value false hits", by design). GOTCHA (venv): `.venv` is uv-managed — no pip inside; use `uv pip install --python .venv/bin/python <pkg>` (psutil 7.2.2 now installed so the live §8.1 + peak-RSS tests run instead of skipping). 904/904 pytest green (0 skipped) 2026-10-26; no frontend/contract change. **→ NEXT: M7-T5 (GATE MVP) — but it CANNOT pass until M7-T3's Windows + codesign/notarize legs run green on packaged builds; rebuild `dist/` first so the new PORTS marker is in the shipped binary.**
 - [x] **M7-T6** ADR-023 — pywebview loopback HTTP server vs SECURITY §8.1 (escalated finding → Accepted Option A). *Spec: ADR-005/023; SECURITY §8; TESTING §5.1.* ✅ The macOS installer rebuild's packaged `--smoke` printed `PORTS_SMOKE_FAILED: 1 listening socket(s) … 127.0.0.1:<ephem> (LISTEN)`. Root cause verified against the installed pywebview 6.2.1 / bottle 0.13.4 (not assumed): `webview.start()` auto-fires its bottle server on `http_server or has_local_urls` because the SPA loads from `file://` (ADR-010/013), even with the default `http_server=False`; the server binds `127.0.0.1` only, serves ONLY the bundle's static files, and carries NO data/bridge traffic (macOS js_api rides the native `jsBridge` WKScriptMessageHandler; the bottle `/js_api` POST route is inert — `js_callback` is init'd `{}` and never populated). Escalated per AGENTS §8, user chose **Option A** (bound & document, no load-path change) over Option B (eliminate the server via a custom-scheme load — re-risks the packaged content-load path at the release gate; kept as post-1.0 cleanup). `main._run_ports_smoke` refactored into pure, unit-testable helpers (`_LOOPBACK_HOSTS`, `_split_host_port`, `_parse_listener_lines`, `_pywebview_loopback_endpoint`, `_select_port_offenders`) that allow-list EXACTLY pywebview's live loopback `(host,port)` — a second loopback socket, a non-loopback/LAN bind, or any our-pid socket when no server runs still FAILs. New `tests/test_ports_smoke.py` (+10: parsing, offender selection, loopback-gated endpoint derivation, and a guard asserting the adapter default bind is `127.0.0.1` + `BottleServer.js_callback=={}` — the inert-HTTP precondition). `requirements.txt` pins `pywebview>=6.2,<7` (an upgrade that flips the binding invariants fails the suite instead of silently exposing a listener). Docs: ADR-023 → Accepted (Option A), ADR-005 clarified, decision-matrix row updated, SECURITY §8 + §1 + TESTING §5.1 amended to "no **app-defined** port" scoping, both installer runbooks' PORTS line now expects `PORTS_SMOKE_RESULT: only_pywebview_loopback`. **CORRECTED misstatement:** the `--smoke` `echo`/`worker_echo_job`/`job.get_status` probes are NOT stale — intentional M0 spike commands gated behind `DPE_ENABLE_SPIKE_COMMANDS=1`; left UNTOUCHED (only the ports check needed the fix). 920/920 pytest (910 + 10) + packaged rebuild `--smoke` with spike env → `PORTS_SMOKE_RESULT: only_pywebview_loopback …` + `SMOKE_OK` 2026-10-26. **→ NEXT: M7-T5 (GATE MVP).**
-- [~] **M7-T5** **→ GATE MVP: every box of TESTING §5.1 green on packaged builds.** *Spec: TESTING §5.1; SECURITY §6.6; runbook `docs/M7_T3_INSTALLER_MATRIX.md` §1–§2.* **GATE NOT STAMPED.** Run 1 (2026-10-26, macOS dev box, HEAD `519914e`, working tree clean) = the smoke-provable subset only. Provenance: `dist/` rebuilt with `.venv/bin/python -m PyInstaller --clean --noconfirm data_profiling_engine.spec` (EXIT=0, 247 s, `.benchmarks/m7t5/pyinstaller_build.log`), `.app` @ 10:05, DMG re-cut @ 10:16 (45 335 447 B, `hdiutil verify` VALID, UNSIGNED); packaged `--smoke` under `DPE_ENABLE_SPIKE_COMMANDS=1` → EXIT=0 (`smoke_packaged.log`); suite `925 passed / 367.77 s` (`pytest_head.log`). §5.1 board (**12 GREEN · 4 PARTIAL · 1 OPEN**) — the authoritative per-box record, refreshed with the run-2 walk on the installed `.app`:
+- [~] **M7-T5** **→ GATE MVP: every box of TESTING §5.1 green on packaged builds.** *Spec: TESTING §5.1; SECURITY §6.6; runbook `docs/M7_T3_INSTALLER_MATRIX.md` §1–§2.* **GATE NOT STAMPED.** Run 1 (2026-10-26, macOS dev box, HEAD `519914e`, working tree clean) = the smoke-provable subset only. Provenance: `dist/` rebuilt with `.venv/bin/python -m PyInstaller --clean --noconfirm data_profiling_engine.spec` (EXIT=0, 247 s, `.benchmarks/m7t5/pyinstaller_build.log`), `.app` @ 10:05, DMG re-cut @ 10:16 (45 335 447 B, `hdiutil verify` VALID, UNSIGNED); packaged `--smoke` under `DPE_ENABLE_SPIKE_COMMANDS=1` → EXIT=0 (`smoke_packaged.log`); suite `925 passed / 367.77 s` (`pytest_head.log`). §5.1 board (**14 GREEN · 2 PARTIAL · 1 OPEN**) — the authoritative per-box record, refreshed with the run-2 walk on the installed `.app`:
 
   | # | §5.1 box | Status | Evidence / gap |
   |---|---|---|---|
@@ -1905,7 +1917,7 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
   | 4 | rules run; PASS/FAIL/WARN/ERROR distinguished | **GREEN** | `deal_id_unique FAIL` / `value_not_null FAIL` / `stage_domain PASS`; UI scorecard `PASS 1 · FAIL 0 · WARN 0 · ERROR 0` on the small fixture |
   | 5 | findings carry evidence + metric/rule refs + `fingerprint` (ADR-016) | **GREEN** | 5 findings / 5 distinct `sha256` fingerprints, `metric:`+`rule:` `evidence_refs`, UI renders `fingerprint: sha256:6ede1d01…` + `column stage · 3 affected records` |
   | 6 | recommendations assert no unproven causes | **GREEN** | 5 recommendations with `do_not` guardrails; hypotheses stay `status=unverified` + `suggested_probe`, rendered apart from facts in the UI |
-  | 7 | method labels `exact/approximate/sampled` + seed (ADR-015) | PARTIAL | packaged run labels `exact` 35 + `not_computed` 1 (with a reason); a `sampled` value + recorded `seed` is still only exercised dev-mode (`degrade` benchmark case) |
+  | 7 | method labels `exact/approximate/sampled` + seed (ADR-015) | **GREEN** | packaged `sampled`+seed run `095f3987…` (2M rows, reservoir / window 100000 / seed 424242): 67 `exact` + 9 `sampled` + 1 `not_computed`(reason); every sampled leaf carries `{strategy: reservoir, sample_size: 100000, seed: 424242}`, `row_count` stays `exact` 2 000 000; UI shows `Sampling seed 424242` + `sampled` badges on all 8 Distinct cells against `exact` chart chips; head-to-head with the exact-mode run on the same fixture = **0 sampled values labelled exact**. The step-7 gap (bare `is_unique_candidate` derived from the sample) is FIXED and re-proven on the rebuilt binary `63257fbff18fba71`: packaged run `d6cf005a…` (20 000 rows, window **5000**, seed **424242**) = 48 `exact` + 6 `sampled` + 1 `not_computed`, and packaged run `0edba2e9…` (same fixture, sampling OFF, 20 000 > 10 000 ⇒ `approximate`) = 49 `exact` + 5 `approximate` + 1 `not_computed`; in BOTH, `is_unique_candidate` == independent DuckDB full-relation truth on every column (`box7_derived_probe.py`, `RESULT: PASS`) — incl. `id` **true** where the HLL said 20 234 ≠ 20 000 (the old bug's false negative) and `near_uniq` **false** where the 5 000-row sample alone would have claimed true. See "Run 2, step 7b" |
   | 8 | HTML + JSON from one result, CSV export, HTML self-contained | **GREEN** | `run 872fc949…`: `report.html` 4 839 726 B / `profile.json` 23 361 B / `issues.csv` 91 B (header only — 0 FAIL/WARN rows is correct, the CSV carries issue rows only) all from ONE result document; self-containment re-verified on the revealed file (0 `@import`, 0 `url(http…)`, only `src=""` + a `data:` URI); all three **`artifact.open` export clicks acked in the packaged UI** 2026-10-26 with the exact byte counts (`gui_box8_export_html|json|csv.png`) |
   | 9 | run_id, config version/hash, status, duration, error log, engine version | **GREEN** | run row carries run_id / config_hash `sha256:9e9c673c…` / config_version 3 / engine 0.1.0 / duckdb 2.0.0 / python 3.12.4 / duration_ms / status / started_at / finished_at |
   | 10 | worker (not UI thread), UI responsive, job observable + cancellable | **GREEN** | 3a cancel → CANCELLED **4.3 s** after the click, no run row, no artifact dir; 3b ladder `2/14 … 14/14 · 100 %` SUCCEEDED in 206.2 s |
@@ -1917,7 +1929,7 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
   | 16 | installer matrix both OS: install→launch→job→export→upgrade→uninstall | **PARTIAL** | macOS legs all verified on the installed `.app`: install (run-2 DMG), launch, one full job, export artifacts, upgrade (rows + `schema_migrations=2` preserved) and **uninstall (data preserved, 2026-10-26 — 21 files / 26 129 241 B byte-identical)**; still open: the Windows track (native Windows, BLUEPRINT Q4), codesign/notarize (0 Developer ID here) |
   | 17 | benchmarks documented with recorded baselines | PARTIAL | TESTING §4.3.1–§4.3.4 dev baselines + ADR-021 ceilings recorded, plus a **packaged** macOS peak (UI 256.0 MiB / worker 263.1 MiB / app 562.4 MiB, `psutil_sampled_peak`); Windows + a packaged ladder series still owed |
 
-  **Do NOT stamp GATE MVP on this evidence.** Next: a packaged `sampled`+seed run (box 7), box 11 (inject a worker crash into a packaged run), box 17 both-OS baselines — then M7-T3's blocked legs. SPEC DOC UNCHANGED: `docs/TESTING_BENCHMARKS.md` §5.1 checkboxes stay unticked (the gate is still open); this board is the evidence log.
+  **Do NOT stamp GATE MVP on this evidence.** Next: box 11 (inject a worker crash into a packaged run), box 17 both-OS baselines — then M7-T3's blocked legs. SPEC DOC UNCHANGED: `docs/TESTING_BENCHMARKS.md` §5.1 checkboxes stay unticked (the gate is still open); this board is the evidence log.
 
   **Run 2 (installed app, in progress).** Installed from the run-1 DMG to `/Applications` (copy, `spctl --assess` → **rejected**, ad-hoc signature only) and re-verified there: 6/6 §5.2 markers green incl. the new `SCHEMAS_SMOKE_RESULT` (`.benchmarks/m7t5/smoke_installed_run2b.log`) ⇒ boxes **13 + 14 GREEN on the installed artifact** (not just the bundle). The upgrade leg of box 16 is exercised (bundle re-copied over the install; `~/Library/Application Support/DataProfilingEngine` untouched, `schema_migrations=2`); the macOS **uninstall leg is done as step 4 below**, Windows + codesign/notarize still BLOCKED. Boxes 1–12 + 17 are walked on the installed app — started by the user, and now by the agent itself, since assistive access was granted mid-session (`System Events` reads the AX tree, types and `click at {x,y}`; every step is screenshot-verified, see the computer-use note at the top), with fixtures `sales_deals.csv` / `sales_deals.parquet` (40 rows) + `run2_big.csv` (2 M rows) staged under `.benchmarks/m7t5/fixtures/` and sha256-pinned for the box-12 "sources unmodified" check. The first walk attempt hit the schemas defect above — the packaged binary could not start ANY job, which is precisely what the packaged gate exists to catch.
 
@@ -2034,6 +2046,89 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
   on a non-key window and the reveal puts a viewer above the app, so mid-walk
   clicks silently did nothing until `cgui.py clickapp` (activate + click in one
   process) was used — a driver artifact, not an app defect.
+
+  **Run 2, step 7 — box 7 packaged `sampled`+seed run (2026-10-26).** Driven on
+  the installed `.app` (cgui.py): `run2_big.csv` (2M rows, 8 cols) → Sampling
+  ON (`reservoir`, size `100000`, seed `424242`) → `standard` → one rule
+  (`pk_id not_null`) → `job_3838af846188` → **SUCCEEDED 14/14 in 186.9 s**,
+  `run 095f3987-da80-4b5b-b2fa-075572389aa1`. Evidence
+  (`box7_probe.py`/`.log`, `box7_exact_vs_sampled.log`, `box7_1x_*.png`):
+  `run.sampling` = `{enabled, strategy=reservoir, sample_size=100000,
+  seed=424242}`; 77 metric leaves = 67 `exact` + 9 `sampled` + 1
+  `not_computed` (reason: no declared temporal range); **every** sampled leaf
+  carries seed+strategy+window (the probe fails the run otherwise);
+  `row_count` stays `exact` 2 000 000; head-to-head with the earlier exact-mode
+  run `b33f4455…` on the same fixture → **0 values labelled exact that came
+  from a sample**. UI: Overview `Total rows 2,000,000 (exact)` + `Sampling
+  seed 424242`, all 8 `Distinct` cells badged `sampled`, chart chips `exact`
+  (side-by-side contrast, `box7_16/17`). Fixture sha256 unchanged (box 12).
+  **Gate-class gap found, NOT fixed — needs a decision:** the planner allows
+  `sampled` for `requires_full_relation` metrics in standard/quick (only deep
+  refuses, ENGINE §2.2), and `profiler._view_for` then evaluates
+  `uniqueness.is_unique_candidate` on the SAMPLE while the §3.2 contract types
+  it as a bare `bool` — no `provenance` slot, so a sample-derived claim is
+  indistinguishable from a full-scale one (here `pk_id` → `true`, which DuckDB
+  confirms IS true at full scale: 2 000 000/2 000 000). The same slot inherits
+  approximation: the standard run derived `false` from the HLL estimate
+  (1 903 536) on a column that IS unique — a false negative. Options raised
+  with the user: (A) planner refuses `sampled` for `requires_full_relation` in
+  EVERY mode (no contract change; also loses the honest sampled
+  `temporal.gaps`), (B) give the derived surfaces a provenance carrier (§3.2 /
+  CONTRACTS change), (C) always compute them on the full relation (what
+  `_key_candidates` already does, costs one exact count(DISTINCT) per column).
+  No product code changed in step 7 (the fix landed in step 7b, below).
+
+  **Run 2, step 7b — derived bool moved to the full relation, box 7 GREEN
+  (2026-10-26).** User decision (asked per AGENTS §8): option **C, full-relation
+  derive** — no `CONTRACTS §3.2` shape change. Code: `engine/metrics/profiler.py`
+  Pass 2 now `continue`s for any `decision.method is not EXACT` (the profiler
+  abstains instead of claiming a sample/HLL-derived bool);
+  `orchestration/rollup.py` gained `DatasetMetrics.key_facts`,
+  `_full_relation_key_facts()` (ONE exact `count(DISTINCT col), count(col)` scan
+  on `handle.view_name` for all columns), `_key_candidates(facts)` and
+  `_apply_full_relation_uniqueness()` (patches an existing `uniqueness` block via
+  `model_copy`, leaves `distinct_count` untouched so a sampled cardinality stays
+  visibly `sampled`). Tests: +3 in `TestDerivedUniquenessIsFullRelation`
+  (one-row sample cannot make a duplicated column unique; HLL at 20 000 rows
+  cannot decide uniqueness; key candidates and the bool are one set), and the
+  legacy `test_is_unique_candidate_still_derives_from_hll_value` rewritten to
+  `…_is_not_derived_from_hll_value`. **947 passed / 277.87 s** full suite.
+  Rebuilt (`pyinstaller --clean` → `ditto` install, exe sha256 `63257fbff18fba71`,
+  13 schemas in bundle, packaged `--smoke` 6/6 incl.
+  `PORTS_SMOKE_RESULT: only_pywebview_loopback` + `SMOKE_OK`;
+  `.benchmarks/m7t5/smoke_installed_box7fix.log`). Packaged proof, new fixture
+  `.benchmarks/m7t5/fixtures/run4_near.csv` (20 000 rows: `id` unique,
+  `near_uniq` = i with rows 42+9000 both 5000 ⇒ 19 998 distinct, sha256
+  `a9223cc5…`, unchanged after both runs — box 12):
+  (a) **sampled** `job_e5f5015a3cc2` / `run d6cf005a…` (window 5000, seed 424242,
+  standard, rule `id not_null`) ⇒ 48 `exact` + 6 `sampled` + 1 `not_computed`,
+  `run.sampling = {enabled, reservoir, 5000, 424242}`, UI `Sampling seed 424242`
+  + `sampled 5,000` badges (`box7f_14/15`);
+  (b) **no sampling** `job_a0daddd73dd4` / `run 0edba2e9…` (standard mode, same
+  fixture) ⇒ 49 `exact` + 5 `approximate` + 1 `not_computed`, UI `≈ 20,234`
+  badges (`box7f_20/21`) — the exact bug scenario, since the old rule derived
+  `false` from `HLL 20 234 ≠ 20 000`.
+  `box7_derived_probe.py` recomputes truth with independent DuckDB exact counts:
+  **RESULT: PASS on both** — `id` true (was the false negative), `near_uniq`
+  false (a 5 000-row sample alone would have said true: 5 000 distinct = 5 000
+  non-null), `amount`/`status`/`event_date` false, and
+  `primary_key_candidates == {is_unique_candidate: true} == ['id']`
+  (`box7f_sampled_derived.log`, `box7f_nosample_derived.log`; ADR-015 walkers
+  `box7f_sampled_probe.log` + `box7f_nosample_probe.log` both `RESULT: PASS`).
+  GOTCHA (GUI): the packaged window comes up **800×600** (not the resized
+  1120×740 of run 2), so every click coordinate must be re-derived from a fresh
+  `winshot`; and the app header is NOT sticky — after any scroll the nav links
+  are off-screen, so scroll up first, then click `Run`/`Progress`/`Report`.
+  GOTCHA (shell): macOS `pgrep` has no `-c` (it prints a usage line and returns
+  nothing) — count with `pgrep -f … | wc -l` (fixed in
+  `rebuild_box7fix.sh`). GOTCHA (probe): `profile.json` is the
+  `result_document()` envelope — column facts live under `doc["profile"]`, not
+  at the top level.
+  **Follow-up (UI, not gate-blocking):** the Report per-column detail prints
+  `Unique candidate  yes|no` with no source hint, directly under
+  `Distinct count ≈ 20,234` — the bool is now a full-relation fact but a reader
+  cannot tell. Worth a one-line hint ("from a full-relation count") in
+  `frontend/src/pages/Report.tsx:888` next time that file is touched.
 
 ## Legend
 

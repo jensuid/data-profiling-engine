@@ -303,15 +303,22 @@ class TestHLLApproximate:
             mv = _by_name(res.profiles, col).uniqueness.distinct_count
             assert abs(int(mv.value) - truth) <= 5
 
-    def test_is_unique_candidate_still_derives_from_hll_value(self, con_h):
-        """Boolean has no provenance carrier (CONTRACTS §3.2) — honesty rides
-        on the underlying distinct_count MetricValue's method label."""
+    def test_is_unique_candidate_is_not_derived_from_hll_value(self, con_h):
+        """The boolean has no provenance carrier (CONTRACTS §3.2), so an
+        HLL-backed ``distinct_count`` must NOT decide it — an estimate would be
+        presented as a full-scale fact (ENGINE §2.2 / ADR-015). The profiler
+        abstains here; the exact full-relation value is stamped by
+        ``orchestration.rollup`` (independently reference-tested in
+        ``test_orchestration_modes_sampling.TestDerivedUniquenessIsFullRelation``
+        — where 20 000 rows of a unique column come back True even though the
+        same run labels the count ``approximate``)."""
         con, h = con_h
         res = _run(con, h, _config(), n_rows=LARGE_ROW_LIMIT + 1)
         id_uq = _by_name(res.profiles, "id").uniqueness
         assert id_uq.distinct_count.provenance.method == MetricMethod.APPROXIMATE.value
-        # exact 12 vs HLL 12 → True still
-        assert id_uq.is_unique_candidate is True
+        # exact 12 vs HLL 12 would agree by luck — the rule is "no exact count,
+        # no claim", not "the estimate happened to match".
+        assert id_uq.is_unique_candidate is False
 
 
 # ---------------------------------------------------------------------------

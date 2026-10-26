@@ -584,11 +584,13 @@ def execute_uniqueness_and_categorical(
       - ``approximate`` for a metric with an approx template (distinct_count
         → HLL) executes the sketch SQL; the label + ``algorithm`` ride in
         Provenance verbatim.
-      - ``approximate`` for a metric without an approx template (is_unique_candidate,
-        frequencies, rare_categories, label_inconsistencies) executes the
-        EXACT built SQL but keeps the planner's approximate label — the same
-        delegation M2-T4 established for stddev/quick (see module docstring
-        and gotcha entry).
+      - ``approximate`` for a metric without an approx template (frequencies,
+        rare_categories, label_inconsistencies) executes the EXACT built SQL but
+        keeps the planner's approximate label — the same delegation M2-T4
+        established for stddev/quick (see module docstring and gotcha entry).
+        ``is_unique_candidate`` is the exception: its §3.2 slot is a bare bool
+        with no provenance carrier, so it is claimed ONLY from an exact
+        full-relation count (the rollup supplies it; see Pass 2).
       - ``sampled`` decisions run the identical built SQL against the one
         shared bounded sample relation seeded by ``sampling.strategy/size/seed``.
       - ``duckdb.Error`` on any one task ⇒ :class:`RunErrorEntry`
@@ -676,14 +678,24 @@ def execute_uniqueness_and_categorical(
                 slot.distinct_count = _not_computed_value(reason)
 
     # ---------------------------------------------------------------------
-    # Pass 2: derive is_unique_candidate (distinct == non-null). Both sides
-    # are counted against the SAME scanned relation the planner targeted.
+    # Pass 2: derive is_unique_candidate (distinct == non-null) from an EXACT,
+    # full-relation count. Both sides are counted against the SAME scanned
+    # relation — but only when that relation IS the full one.
     # ---------------------------------------------------------------------
     for column, _cd, decision in uniqcat:
         spec = reg.get(decision.metric_id)
         if spec.family != "uniqueness" or decision.metric_id != "uniqueness.is_unique_candidate":
             continue
         if decision.method is MetricMethod.NOT_COMPUTED:
+            continue
+        if decision.method is not MetricMethod.EXACT:
+            # ADR-015: ``is_unique_candidate`` is a bare bool on CONTRACTS §3.2
+            # with NO provenance carrier, so a value derived from a sample (or
+            # an HLL estimate) would be a method-dependent claim presented as a
+            # full-scale fact. Leave the slot unclaimed here;
+            # ``orchestration.rollup`` derives it from the FULL relation with
+            # the exact per-column count(DISTINCT)/count(col) it already runs
+            # for ``schema.key_candidates`` (same predicate, no extra scan).
             continue
         slot = _slot(column)
         if slot.distinct_count is None:

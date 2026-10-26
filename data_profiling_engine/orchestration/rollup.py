@@ -26,6 +26,10 @@ Honesty carried through the rollup:
     only a key over the WHOLE relation), so it is verified against the full
     view; an un-plannable / not_computed decision yields an ABSENT candidate
     list, never a fabricated one (AGENTS §3).
+  - ``Uniqueness.is_unique_candidate`` is a bare §3.2 bool with no provenance
+    carrier, so it is stamped from the SAME exact full-relation counts — never
+    from a sampled or approximate relation, where it would be a
+    method-dependent claim dressed as a fact (ENGINE §2.2 / ADR-015).
   - the run status is the §6.2 terminal ``SUCCEEDED`` whenever the pipeline
     produced a result; per-task failures ride in ``error_log`` without
     demoting the run (§6.4 FAIL≠ERROR policy applied at run level).
@@ -108,6 +112,12 @@ class DatasetMetrics:
     row_count: Optional[MetricValue] = None
     column_count: Optional[int] = None
     primary_key_candidates: Optional[List[str]] = None
+    #: Per-column ``(distinct, non_null)`` counts measured on the FULL relation
+    #: (the same scan that resolves ``primary_key_candidates``). Used to derive
+    #: ``Uniqueness.is_unique_candidate`` — that §3.2 slot is a bare bool with no
+    #: provenance carrier, so a sampled/approximate derivation would present a
+    #: method-dependent claim as a full-scale fact (ADR-015).
+    key_facts: Dict[str, Tuple[int, int]] = field(default_factory=dict)
     errors: Tuple[RunErrorEntry, ...] = field(default_factory=tuple)
 
 
@@ -184,31 +194,83 @@ def _sample_view_for(
     )
 
 
-def _key_candidates(
+def _full_relation_key_facts(
     con: duckdb.DuckDBPyConnection,
     handle: RelationHandle,
     decision: Optional[PlanDecision],
-) -> Optional[List[str]]:
-    """Columns that uniquely identify rows over the FULL relation (distinct ==
-    non-null and non-null > 0). A key is only a key across the whole dataset, so
-    ``requires_full_relation`` pins this to the full view; an absent or
-    not_computed decision returns ``None`` so the field is omitted, never a
-    fabricated empty claim."""
+) -> Optional[Dict[str, Tuple[int, int]]]:
+    """Exact ``(distinct, non_null)`` per column over the FULL relation — the
+    one honest source for both key candidates and ``is_unique_candidate``.
+
+    A key is only a key across the whole dataset, so ``requires_full_relation``
+    pins this scan to the full view. An absent or ``not_computed`` decision
+    returns ``None`` so callers omit the claim instead of fabricating one
+    (AGENTS §3). A column whose count raises is simply absent from the map, so
+    neither surface claims anything about it."""
     if decision is None or decision.method is MetricMethod.NOT_COMPUTED:
         return None
     view = handle.view_name  # requires_full_relation=True on schema.key_candidates
-    candidates: List[str] = []
+    facts: Dict[str, Tuple[int, int]] = {}
     for name in handle.column_names:
         col = '"' + name.replace('"', '""') + '"'
         try:
             distinct, non_null = con.execute(
-                f"SELECT count(DISTINCT {col}), count({col}) FROM \"{view}\""
+                f'SELECT count(DISTINCT {col}), count({col}) FROM "{view}"'
             ).fetchone()
         except duckdb.Error:
-            continue  # per-column failure keeps the others; that column is not a candidate
-        if non_null and non_null > 0 and int(distinct) == int(non_null):
-            candidates.append(name)
-    return candidates
+            continue  # per-column failure keeps the others; no claim for this one
+        facts[name] = (int(distinct), int(non_null))
+    return facts
+
+
+def _key_candidates(facts: Optional[Dict[str, Tuple[int, int]]]) -> Optional[List[str]]:
+    """Columns that uniquely identify rows over the FULL relation (distinct ==
+    non-null and non-null > 0). An absent decision returns ``None`` so the field
+    is omitted, never a fabricated empty claim."""
+    if facts is None:
+        return None
+    return [
+        name
+        for name, (distinct, non_null) in facts.items()
+        if non_null > 0 and distinct == non_null
+    ]
+
+
+def _apply_full_relation_uniqueness(
+    columns: List[object], key_facts: Dict[str, Tuple[int, int]]
+) -> List[object]:
+    """Stamp ``Uniqueness.is_unique_candidate`` from the FULL-relation counts.
+
+    ``CONTRACTS §3.2`` types the field as a plain bool — there is nowhere to
+    record a ``method`` — so the only way to keep it honest is to compute it
+    from the full relation (ENGINE §2.2 "a sampled/approximate metric must never
+    be presented as exact"). Only an already-present ``uniqueness`` block is
+    patched: an absent block stays absent (no uniqueness compute happened), and
+    a column missing from ``key_facts`` keeps the profiler's value rather than
+    inventing one. The block's ``distinct_count`` MetricValue is left untouched,
+    so a sampled cardinality stays visibly ``sampled``."""
+    if not key_facts:
+        return columns
+    patched: List[object] = []
+    for column in columns:
+        uniq = getattr(column, "uniqueness", None)
+        facts = key_facts.get(getattr(column, "column", ""))
+        if uniq is None or facts is None:
+            patched.append(column)
+            continue
+        distinct, non_null = facts
+        patched.append(
+            column.model_copy(
+                update={
+                    "uniqueness": uniq.model_copy(
+                        update={
+                            "is_unique_candidate": bool(non_null > 0 and distinct == non_null)
+                        }
+                    )
+                }
+            )
+        )
+    return patched
 
 
 def execute_dataset_metrics(
@@ -236,12 +298,15 @@ def execute_dataset_metrics(
     if cc_decision is not None and cc_decision.method is not MetricMethod.NOT_COMPUTED:
         column_count = len(handle.column_names)
 
-    key_candidates = _key_candidates(con, handle, _decision_of(plan, "schema.key_candidates"))
+    key_facts = _full_relation_key_facts(
+        con, handle, _decision_of(plan, "schema.key_candidates")
+    )
 
     return DatasetMetrics(
         row_count=row_count,
         column_count=column_count,
-        primary_key_candidates=key_candidates,
+        primary_key_candidates=_key_candidates(key_facts),
+        key_facts=key_facts or {},
     )
 
 
@@ -291,7 +356,7 @@ def build_dataset_profile(
         primary_key_candidates=metrics.primary_key_candidates,
         temporal_coverage=_temporal_coverage(result),
         source_metadata=source_meta,
-        columns=list(result.columns),
+        columns=_apply_full_relation_uniqueness(list(result.columns), metrics.key_facts),
     )
 
 
