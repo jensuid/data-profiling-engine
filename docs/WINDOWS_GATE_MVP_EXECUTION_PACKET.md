@@ -88,7 +88,9 @@ baseline runs the larger tiers). From `WINDOWS_M7_T3_CHECKLIST.md` §0:
 - [ ] **Python 3.12** exactly — `uv python install 3.12` (parity with macOS; not
       another minor).
 - [ ] **NSIS 3.x** for `makensis` — `winget install GnuWin32.Nsis` (or equivalent);
-      confirm `makensis` is on PATH.
+      confirm `makensis` is on PATH. **GOTCHA (Windows-box run 2026-10-26):** NSIS
+      installs to `C:\Program Files (x86)\NSIS\makensis.exe` but often is **not on
+      PATH** — invoke it by full path if `makensis` is not found.
 - [ ] **WebView2 Evergreen runtime** (or Edge). If absent, `--smoke` prints
       `WEBVIEW2_SMOKE_FAILED` and the installer warns (§6.4) — record which, do
       not hide it.
@@ -112,6 +114,9 @@ python -m pytest data_profiling_engine/tests -q
 ```
 
 - [ ] `DEPS_OK …` line appears (missing `clr` → `uv pip install pythonnet pywin32 comtypes`).
+- [ ] **GOTCHA (Windows-box run 2026-10-26):** `comtypes` is **not** pulled
+      transitively by pywebview — install `pythonnet pywin32 comtypes` explicitly
+      (the `python -c` probe above fails on `clr`/`comtypes` until you do).
 - [ ] **Record the pytest pass count** vs the macOS baseline (macOS was 947
       after the UI follow-ups; earlier runs reported 866/925 — the current committed
       tip is what matters). Spawn-semantics differences surface first (ADR-006);
@@ -139,6 +144,13 @@ Run from **`cmd.exe`** so stdout is capturable. The `echo`/`worker_echo_job`
 probes are the M0 spike commands, registered **only** behind the env flag (spike
 is OFF in production by design — without it they correctly return
 `BRIDGE_COMMAND_UNKNOWN`):
+
+> [!WARNING] `set` MUST be on its own line (Windows-box gotcha, 2026-10-26)
+> Do **not** collapse this to `set DPE_ENABLE_SPIKE_COMMANDS=1 && …` — cmd hands
+> the value **`"1 "` with a trailing space**, and `facade._spike_enabled_from_env`
+> matches only `{"1","true","yes"}` exactly, so spike stays OFF and the probes
+> correctly return `BRIDGE_COMMAND_UNKNOWN` (looks like a `WORKER_SMOKE_FAILED`
+> gate-stop, but is an operator command-form error). Use the two-line form below.
 
 ```cmd
 set DPE_ENABLE_SPIKE_COMMANDS=1
@@ -203,8 +215,9 @@ Mirror the macOS byte-inventory method (`M7_T3_INSTALLER_MATRIX.md` §2a; the
 macOS leg used `.benchmarks/m7t5/box16_inventory.py pre|post`):
 
 - [ ] **Snapshot user-data before**: hash + count every file under
-      `%APPDATA%\Data Profiling Engine` (the storage default; see
-      `storage.paths`). Read the SQLite files from a **copy** (opening the live
+      `%APPDATA%\DataProfilingEngine` (the storage default — `DEFAULT_APP_NAME`
+      has **no spaces**, `storage.paths`; the *install* dir does use spaces, do
+      not conflate them). Read the SQLite files from a **copy** (opening the live
       `-wal` writes `-shm`).
 - [ ] **Upgrade**: reinstall with a bumped `/DPRODUCT_VERSION` over the existing
       `$INSTDIR`; confirm prior runs/exports remain present + readable; a
