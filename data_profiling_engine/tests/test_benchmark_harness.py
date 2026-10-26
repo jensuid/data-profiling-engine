@@ -288,3 +288,55 @@ def test_sampled_not_cheaper_flagged():
     exact = _case(5_000_000, 300.0, wall=10.0)
     degrade = _case(5_000_000, 150.0, wall=25.0)
     assert evaluate_sampled_cheaper(exact, degrade)["verdict"] == "not_cheaper"
+
+
+# ---- run_suite fixture-reuse path (M7-T5 box 17 packaged ladder) --------
+# The plain ladder regenerates every tier (generate_dataset unconditionally
+# unlinks its output); reuse_fixtures takes the documented measure_case reuse
+# path so a large-tier re-measure on a near-full volume profiles the retained
+# CSV as-is. These pin the wiring without a real profiling subprocess.
+
+def test_run_suite_reuse_fixtures_never_regenerates(tmp_path, monkeypatch):
+    seen = []
+
+    def _fake_measure(**kw):
+        seen.append(kw)
+        return _case(kw["spec"].rows, 100.0)
+
+    def _never_generate(*a, **k):  # ensure_fixture unlinks + rewrites — must not fire
+        raise AssertionError("ensure_fixture must not run when reuse_fixtures=True")
+
+    monkeypatch.setattr(harness, "measure_case", _fake_measure)
+    monkeypatch.setattr(harness, "ensure_fixture", _never_generate)
+    for rows in (1_000, 2_000):
+        inp, cfg = fixture_paths(f"csv_{rows}_std", "csv", tmp_path)
+        inp.write_text("x")
+        cfg.write_text("{}")
+
+    doc = harness.run_suite(
+        sizes=(1_000, 2_000), fmt="csv", workdir=tmp_path,
+        degrade_vs_exact=False, reuse_fixtures=True,
+    )
+    assert [c["label"] for c in seen] == ["csv_1000_std", "csv_2000_std"]
+    for rows, call in zip((1_000, 2_000), seen):
+        exp_in, _ = fixture_paths(f"csv_{rows}_std", "csv", tmp_path)
+        assert Path(call["input_path"]) == exp_in        # reused, not regenerated
+        assert call["base_config"] is not None
+    assert len(doc["cases"]) == 2
+
+
+def test_run_suite_reuse_fixtures_raises_on_missing_tier(tmp_path, monkeypatch):
+    # A missing tier raises rather than silently regenerating on the very volume
+    # the flag exists to protect.
+    monkeypatch.setattr(
+        harness, "ensure_fixture",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not regenerate")),
+    )
+    monkeypatch.setattr(harness, "measure_case", lambda **kw: _case(kw["spec"].rows, 1.0))
+    inp, _ = fixture_paths("csv_1000_std", "csv", tmp_path)
+    inp.write_text("x")  # base config deliberately absent
+    with pytest.raises(FileNotFoundError):
+        harness.run_suite(
+            sizes=(1_000,), fmt="csv", workdir=tmp_path,
+            degrade_vs_exact=False, reuse_fixtures=True,
+        )

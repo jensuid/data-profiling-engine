@@ -489,6 +489,7 @@ def run_suite(
     mode: str = "standard",
     workdir: "Path | str",
     degrade_vs_exact: bool = True,
+    reuse_fixtures: bool = False,
 ) -> Dict[str, object]:
     """Run a row-scaling series (§4.3 RSS curve) and, at the largest size, an
     exact-vs-sampled wall-clock pair. Returns a JSON-serialisable results doc
@@ -496,7 +497,16 @@ def run_suite(
     (TESTING §4.4: numbers + hardware are product evidence).
 
     ``sizes`` is the row-count ladder; keep them a small set — the heavy
-    10M–100M ladder is the scheduled/release run, invoked explicitly here."""
+    10M–100M ladder is the scheduled/release run, invoked explicitly here.
+
+    ``reuse_fixtures`` (M7-T5 box 17 packaged re-measure) takes the harness's
+    documented **reuse path**: instead of generating each tier it resolves the
+    deterministic :func:`fixture_paths` and profiles those files as-is. This
+    exists because ``generate_dataset`` unconditionally deletes + rewrites
+    its output, so a 100M re-measure on a near-full volume (the retained 6.2 GB
+    CSV) would churn the fixture it is supposed to reuse. It NEVER silently
+    falls back to regenerating — a missing fixture raises, because a silent
+    regenerate on the exact volume this flag protects is the hazard itself."""
     workdir = Path(workdir)
     cases: List[CaseResult] = []
     fixtures: Dict[int, Tuple[Path, Path]] = {}
@@ -507,7 +517,17 @@ def run_suite(
             missingness=missingness, distribution=distribution,
         )
         label = f"{fmt}_{rows}_std"
-        input_path, base_config = ensure_fixture(spec, label, workdir, fmt)
+        if reuse_fixtures:
+            input_path, base_config = fixture_paths(label, fmt, workdir)
+            if not (input_path.is_file() and base_config.is_file()):
+                raise FileNotFoundError(
+                    f"--reuse-fixtures requested but tier {rows} fixture is "
+                    f"missing at {input_path} (exists={input_path.is_file()}) or "
+                    f"its base config at {base_config} (exists={base_config.is_file()}); "
+                    f"generate it first or omit reuse_fixtures."
+                )
+        else:
+            input_path, base_config = ensure_fixture(spec, label, workdir, fmt)
         fixtures[rows] = (input_path, base_config)
         cases.append(measure_case(
             label=label, spec=spec, workdir=workdir,

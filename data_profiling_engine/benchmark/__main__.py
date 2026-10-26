@@ -88,6 +88,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-degrade", action="store_true",
         help="skip the exact-vs-sampled wall-clock pair (RSS scaling only)",
     )
+    base.add_argument(
+        "--reuse-fixtures", dest="reuse_fixtures", action="store_true",
+        help="reuse the existing fixture + base config at the deterministic "
+             "fixture_paths and NEVER regenerate (raise if absent). Required for "
+             "large-tier re-measures on a near-full volume where churning the "
+             "retained CSV is the hazard (M7-T5 box 17 packaged ladder).",
+    )
 
     guar = sub.add_parser(
         "guarantees",
@@ -148,6 +155,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             columns=args.columns, fmt=args.format, cardinality=args.cardinality,
             missingness=args.missingness, distribution=args.distribution,
             mode=args.mode, workdir=args.workdir, degrade_vs_exact=not args.no_degrade,
+            reuse_fixtures=args.reuse_fixtures,
         )
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
