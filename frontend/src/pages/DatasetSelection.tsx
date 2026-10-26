@@ -11,7 +11,7 @@
  * schema, metadata, and a sample preview so the user can confirm the right
  * file before proceeding.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BridgeError, bridgeSelectSourceFile } from "../bridge/api";
 import { useBridgeReady } from "../bridge/useBridgeReady";
 import { setSelectedDataset } from "../state/selection";
@@ -52,6 +52,11 @@ export default function DatasetSelection() {
   const [maskPii, setMaskPii] = useState(true);
   const [offset, setOffset] = useState(0);
   const [browsing, setBrowsing] = useState(false);
+  // GOTCHA (pywebview 6.2.1 / Cocoa): cancelling the native open dialog with
+  // Escape can leave the dialog.open_file promise unsettled, latching the
+  // button on "Opening…" forever. Bounded watchdog resets the flag; a late
+  // settle from the abandoned dialog is ignored via this epoch counter.
+  const browseEpoch = useRef(0);
 
   // Bridge availability check — outside the desktop shell the commands fail
   // gracefully; we show a banner rather than crashing.
@@ -124,15 +129,26 @@ export default function DatasetSelection() {
   // ADR-022: native open dialog through the bridge — the pick only fills the
   // path field; inspect/preview then run the ordinary allow-listed reads.
   const handleBrowse = useCallback(async () => {
+    const epoch = ++browseEpoch.current;
     setBrowsing(true);
+    // Cancel-hang watchdog (see browseEpoch comment): if the host never
+    // answers, unlock the button after 15 s. A genuine pick that lands after
+    // the watchdog still fills the path — harmless, the user just chose it.
+    const watchdog = window.setTimeout(
+      () => epoch === browseEpoch.current && setBrowsing(false),
+      15_000,
+    );
     try {
       const path = await bridgeSelectSourceFile();
+      if (epoch !== browseEpoch.current) return;
       if (path) setSourcePath(path);
     } catch (e) {
+      if (epoch !== browseEpoch.current) return;
       setInspectStatus("error");
       setInspectError(e instanceof BridgeError ? `${e.code}: ${e.message}` : String(e));
     } finally {
-      setBrowsing(false);
+      window.clearTimeout(watchdog);
+      if (epoch === browseEpoch.current) setBrowsing(false);
     }
   }, []);
 

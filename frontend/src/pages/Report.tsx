@@ -887,6 +887,13 @@ function ColumnDetail({ column }: { column: ColumnProfile }) {
             <dt>Unique candidate</dt>
             <dd>{column.uniqueness.is_unique_candidate ? "yes" : "no"}</dd>
           </dl>
+          {/* ADR-015 honesty: the bool is a full-relation fact even when the
+              distinct count above it is sampled (rollup stamps it). */}
+          <p className="hint">
+            Derived from an exact full-relation distinct/non-null count — not from
+            the sample above{column.uniqueness.distinct_count.provenance.method !== "exact" &&
+            ` (its method is "${column.uniqueness.distinct_count.provenance.method}")`}.
+          </p>
         </div>
       )}
 
