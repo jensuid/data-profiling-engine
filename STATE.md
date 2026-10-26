@@ -23,7 +23,11 @@ Milestone : M7 — Hardening & Release Gate — M6 UI screens COMPLETE
           dev-mode 2026-10-25 — T1 read commands + caps, T2 job manager +
           real profile.start worker, T3 §5.5 progress push; packaged
           bridge/worker verification on both OS deferred to M7/Phase-3)
-Task      : none in progress — **M6 COMPLETE; M7-T1 DONE; M7-T2 COMPLETE;
+Task      : **M7-T5 IN PROGRESS — run 1 (2026-10-26) = packaged macOS
+          rebuild + smoke markers GREEN; the interactive §5.1 matrix is NOT
+          walked, so GATE MVP is NOT stamped (M7-T3 Windows + notarize legs
+          still blocked). See the per-box board under the M7-T5 task line.**
+          M6 COMPLETE; M7-T1 DONE; M7-T2 COMPLETE;
           M7-T2c DONE; M7-T4 + M7-T4b DONE; M7-T6 DONE (ADR-023 Option A landed —
           packaged loopback static-file server allow-listed, pywebview pinned);
           M7-T3 macOS-track LANDED (unsigned) — Windows + codesign/
@@ -52,8 +56,17 @@ GATE M4   : reporting-layer tasks T1-T4 COMPLETE (706/706 pytest, tsc clean,
           golden byte-stable). MVP acceptance is on the PACKAGED build
           (BLUEPRINT §5 Phase-1 gate / §6), not dev mode — do not stamp M4
           "accepted" until the packaged run is verified in M7/Phase-3.
-NEXT      : M7-T5 — **GATE MVP: every box of TESTING §5.1 green on packaged
-          builds**. OPEN docs/TESTING_BENCHMARKS.md §5.1 (+ §5.4 results).
+NEXT      : M7-T5 run 2 — **GATE MVP: every box of TESTING §5.1 green on
+          packaged builds**. OPEN docs/TESTING_BENCHMARKS.md §5.1 (+ §5.4
+          results) and the per-box board under the M7-T5 task line.
+          RUN 1 (2026-10-26, this box) = packaged macOS smoke only: `dist/`
+          rebuilt at HEAD `519914e`, `--smoke` under
+          `DPE_ENABLE_SPIKE_COMMANDS=1` green on all five macOS markers
+          (`PORTS_SMOKE_RESULT: only_pywebview_loopback` 127.0.0.1:45054 +
+          `SMOKE_OK … _MEIPASS/frontend/dist/index.html`), 925 passed pytest.
+          Boxes 13/14/15 stamped from that run; boxes 1–12 (interactive
+          dataset→job→export walk on the INSTALLED app) and 17 (packaged RSS
+          baseline) still owed HERE; box 16 stays blocked on M7-T3.
           ADR-023 is now **Accepted (Option A)** — the §8.1 "no app-defined port
           bound" box can be stamped on the packaged build with that scoping
           (`--smoke` emits `PORTS_SMOKE_RESULT: only_pywebview_loopback host=127.0.0.1
@@ -102,6 +115,40 @@ GOTCHA (DuckDB 2.0.0): `duckdb_memory()` reports **live** buffers only (reads 0
           dir; and `median`/`quantile_cont` each need a fixed 128 MiB block, so a
           `memory_limit` below ~512 MB converts those metrics into ERRORs instead
           of shrinking the profile.
+Session notes: M7-T5 (run 1) — packaged macOS smoke evidence, GATE NOT stamped
+               2026-10-26 @ `519914e`, working tree clean (shipped binary ==
+               HEAD). `dist/` was rebuilt because the previous bundle was 03:05
+               while the engine changed at 09:46 (M7-T3 Windows commit touched
+               storage/reporting): `.venv/bin/python -m PyInstaller --clean
+               --noconfirm data_profiling_engine.spec` → EXIT=0 in 247 s (log
+               `.benchmarks/m7t5/pyinstaller_build.log`). Frontend reused from
+               `frontend/dist` (last `src` change 02:01 < dist 03:01) instead of
+               a full `npm ci` rebuild. DMG re-cut at 10:16
+               (45 335 447 B, `hdiutil verify` VALID) and is STILL UNSIGNED —
+               codesign/notarize belongs to `packaging/macos/sign_notarize.sh` in
+               a release env (0 Developer ID identities here).
+               Packaged `--smoke` under `DPE_ENABLE_SPIKE_COMMANDS=1` → EXIT=0,
+               all five macOS markers green (DUCKDB 2.0.0 rows=[(42,)] / WORKER
+               `status=SUCCEEDED` 4/4 / BRIDGE `status=ok` / PORTS
+               `only_pywebview_loopback` 127.0.0.1:45054 pids=[28870,28880] /
+               SMOKE_OK `file://` index) — log
+               `.benchmarks/m7t5/smoke_packaged.log`; `WEBVIEW2_SMOKE_*` is
+               Windows-only ⇒ N/A here.
+               Full suite at this HEAD: **925 passed in 367.77 s** (log
+               `.benchmarks/m7t5/pytest_head.log`; +5 over the 920 recorded after
+               M7-T6, from the two case-fixture commits).
+               §5.1 board = **3 GREEN · 2 PARTIAL · 12 OPEN**; GATE MVP NOT
+               stamped because the interactive walk on the INSTALLED app was not
+               run and M7-T3's Windows + notarize legs remain blocked.
+               GOTCHA (corrected): `hdiutil create/verify` DOES work in this agent
+               sandbox — what failed before was the `mktemp -d` staging dir in
+               `/var/folders` (a write outside the workspace). Stage the dmg
+               source INSIDE the repo (`packaging/macos/build_app_dmg.sh` still
+               uses `mktemp -d`, so it needs an unsandboxed shell).
+               GOTCHA (sandbox deletes): the 99 MB `.benchmarks/m7t5/dmg_stage`
+               copy used for the dmg survived `rm -rf` (deletes were refused in
+               this sandboxed shell) — remove it by hand; it is gitignored.
+
 Session notes: M7-T4b DONE — native open-file dialog on Dataset Selection
                (**ADR-022 / CONTRACTS §5.2 + §8 contract change**, user-approved
                before coding per AGENTS §8; the "revisit in M6-T2" text-input TODO
@@ -181,7 +228,27 @@ Session notes: M7-T2c helper — `benchmark watch --pass-name <name> --rows <N>`
                driver is never reported as finished), else not_started; exit 0/1/2
                like `watch_ladder`. Estimate = the SAME tier's measured wall-clock
                from the M7-T2a ladder (`csv_<N>_std.measure.json`), basis
-               `reference`; with no reference it prints `-`, never a fabricated %.
+               `referenc               driver is never reported as finished), else 
+               ⌘L
+               Add to Chat
+               Add to Chat
+               Explored
+               1 terminal
+               Thought · 1s
+               Thought · 2s
+               Thought · 6s
+               Thought · 2s
+               Explored
+               1 terminal
+               This command ran in the background. Its output appears in this card, not in the terminal panel.
+               Thought · 1s
+               This command ran in the background. Its output appears in this card, not in the terminal panel.
+               Thought · 1s
+               Explored
+               1 terminal
+               This command ran in the background. Its output appears in this card, not in the terminal panel.
+               Thought · 1s
+               e`; with no reference it prints `-`, never a fabricated %.
                It also prints the live size of the DuckDB scratch dir — the only
                direct signal that the ADR-021 ceiling is binding mid-run — and
                resolves that path WITHOUT creating it (a monitor must not change
@@ -1630,7 +1697,29 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
 - [~] **M7-T3** Both-OS installer matrix: install→job→export→upgrade→uninstall. *Spec: SECURITY §6; TESTING §5.1.* ✅ **macOS packaging track LANDED (dev box, UNSIGNED).** Repo-side tooling now in `packaging/` (a NEW top-level dir — ARCHITECTURE §3 covers only the engine package, so build scripts sit at repo root beside the `.spec`, matching `data_profiling_engine.spec`): `macos/build_app_dmg.sh` (PyInstaller → `hdiutil` `.dmg`, no 3rd-party dmg tool), `macos/sign_notarize.sh` (Developer-ID codesign+notarize, **credentials via env, never in repo** — AGENTS §7), `macos/entitlements.plist`, `windows/profiler.nsi` (NSIS, per-user `$LOCALAPPDATA`, uninstall preserves `%APPDATA%` data per §6.5, WebView2 detect §6.4), and the operator runbook `docs/M7_T3_INSTALLER_MATRIX.md` (§5.1 checklist + macOS/Windows tracks). **Spec rewrite:** the frozen app is now a **windowed (console=False) onedir `.app` on macOS** (`COLLECT`+`BUNDLE`) and **still a onefile console `.exe` on Windows** (unchanged from the M0 spike — a windowed Win exe can't capture `--smoke > smoke_win.txt`). Rebuilt `dist/` from current code (was the stale Oct-24 binary) and the packaged `--smoke` is **green on all four §5.2 markers**: DUCKDB 2.0.0 rows=[(42,)] / WORKER `status=SUCCEEDED` 4/4 (frozen **spawn** worker) / BRIDGE echo `status=ok` / `SMOKE_OK` `file://` from `…/Contents/Frameworks/frontend/dist/index.html`. Built + `hdiutil verify` VALID the unsigned `dist/DataProfilerEngine-0.1.0-macos.dmg` (45 MB). GOTCHA (spec): PyInstaller 6.22 `BUNDLE()` kwarg names are **`bundle_identifier=` / `info_plist=` / `version=`** — the old `id=`/`info=` are silently ignored and left CFBundleIdentifier=`DataProfilerEngine`/version 0.0.0 (caught by diffing Info.plist). GOTCHA (smoke): the `--smoke` probes use the M0 spike commands (`echo`/`worker_echo_job`) which the packaged facade registers ONLY behind `DPE_ENABLE_SPIKE_COMMANDS=1` (spike OFF in production is correct — a bare `--smoke` rejects them as `BRIDGE_COMMAND_UNKNOWN`); run the packaged smoke with that env set. GOTCHA (sandbox): `hdiutil create/verify` need disk arbitration → fail `Operation not permitted` inside the restrictive sandbox, run outside. ⛔ **BLOCKED — cannot close from this box:** (1) the whole **Windows** track (BLUEPRINT Q4 "physical/virtual Windows required, not optional") → handed to the §4 operator runbook; (2) macOS **codesign + notarization** — `security find-identity` shows **0** Developer ID identities here, and AGENTS §7 forbids handling creds → handed to §3 release env. **Follow-up (2nd M7-T3 commit):** persisted the Windows operator runbook `docs/WINDOWS_M7_T3_CHECKLIST.md` (mirrors `WINDOWS_M0_T5_CHECKLIST.md`, extended to the full §5.1 install→job→export→upgrade→uninstall matrix) and added the missing **Windows peak-RSS** path so §5.1 "benchmarks documented" produces a real number instead of a caveat: `benchmark/harness.py` now wraps the measured child in a `_RssPeakSampler` (**psutil** self-poll @ 50 ms, self+children) when POSIX `resource` is absent, labelling every case with `peak_rss_method ∈ {resource.ru_maxrss, psutil_sampled_peak, unavailable}` — a Windows **sampled** peak, never presented as the POSIX high-water (ADR-015). New optional dep `psutil>=6.0` in `requirements.txt` (benchmark tooling only; never bundled in the frozen app). +4 pure tests in `test_benchmark_harness.py` (label honesty + inert-without-psutil; the positive-peak test skips where psutil absent). This commit DID touch package code (`benchmark/harness.py`) + `requirements.txt` + docs — the earlier macOS-track commit was spec/packaging/docs only. 58 passed / 1 skipped across the benchmark test group 2026-10-26 (no engine/contract change; full suite unaffected). **→ NEXT: M7-T4** (security acceptance automation) unless a Windows box + Developer ID become available to finish M7-T3's two blocked legs.
 - [x] **M7-T4** Security acceptance automation. *Spec: SECURITY §8; TESTING §5.4.* ✅ New `tests/test_security_acceptance.py` — one class per §8 bullet (34 tests): §8.1 static no-server/no-bind scans over engine+frontend sources + a LIVE psutil process-tree listener scan during a real `profile.start` + stdlib-only `PORTS_SMOKE_RESULT`/`PORTS_SMOKE_FAILED` self-check now wired into `main.py --smoke` (lsof `-iTCP -sTCP:LISTEN` / `netstat -ano -p TCP` filtered to app pids — psutil stays OUT of the frozen bundle); marker lines added to `docs/M7_T3_INSTALLER_MATRIX.md` §1 + `docs/WINDOWS_M7_T3_CHECKLIST.md` §4 and TESTING §5.4 points at the module. §8.2 packaged-facade rejections (unknown cmd / bad schema / out-of-scope path both source+artifact-ref / oversized request AND response) with a `SECRET` no-echo assertion. §8.3 real-run default HTML+CSV+preview carry no raw PII. §8.4 credential-name walk of every schema/model, no-keyring-imports scan, credential-shaped config refused pre-dispatch, planted secret survives nowhere (documents, artifacts, error_log, raw SQLite bytes). §8.5 copytree-isolated upgrade-preserves-rows(+backup)/cleaners-never-touch-referenced-files/app-bundle-refusal/NSIS-uninstall-and-macOS-scripts-delete-no-user-data/forward-only-migrations. **The suite immediately caught TWO real SECURITY §4 bugs in `reporting/html_report.py`** (fixed here): the per-column detail loop never recomputed `pii` — it inherited the LAST header-table column's flag, so an email column's Categories rendered raw whenever a non-PII column came last; and `rare_categories` were emitted with NO masking at all. GOTCHA (discovery): pattern refinement samples DISTINCT values (`SAMPLE_DISTINCT_LIMIT=32` reservoir), so a column needs **≥3 distinct** pattern-matching values before email/phone tagging fires — a 2-distinct phone column stays `categorical_nominal` (test fixture widened to 3 distinct phones accordingly; ENGINE §4.1 "≥3 to avoid single-value false hits", by design). GOTCHA (venv): `.venv` is uv-managed — no pip inside; use `uv pip install --python .venv/bin/python <pkg>` (psutil 7.2.2 now installed so the live §8.1 + peak-RSS tests run instead of skipping). 904/904 pytest green (0 skipped) 2026-10-26; no frontend/contract change. **→ NEXT: M7-T5 (GATE MVP) — but it CANNOT pass until M7-T3's Windows + codesign/notarize legs run green on packaged builds; rebuild `dist/` first so the new PORTS marker is in the shipped binary.**
 - [x] **M7-T6** ADR-023 — pywebview loopback HTTP server vs SECURITY §8.1 (escalated finding → Accepted Option A). *Spec: ADR-005/023; SECURITY §8; TESTING §5.1.* ✅ The macOS installer rebuild's packaged `--smoke` printed `PORTS_SMOKE_FAILED: 1 listening socket(s) … 127.0.0.1:<ephem> (LISTEN)`. Root cause verified against the installed pywebview 6.2.1 / bottle 0.13.4 (not assumed): `webview.start()` auto-fires its bottle server on `http_server or has_local_urls` because the SPA loads from `file://` (ADR-010/013), even with the default `http_server=False`; the server binds `127.0.0.1` only, serves ONLY the bundle's static files, and carries NO data/bridge traffic (macOS js_api rides the native `jsBridge` WKScriptMessageHandler; the bottle `/js_api` POST route is inert — `js_callback` is init'd `{}` and never populated). Escalated per AGENTS §8, user chose **Option A** (bound & document, no load-path change) over Option B (eliminate the server via a custom-scheme load — re-risks the packaged content-load path at the release gate; kept as post-1.0 cleanup). `main._run_ports_smoke` refactored into pure, unit-testable helpers (`_LOOPBACK_HOSTS`, `_split_host_port`, `_parse_listener_lines`, `_pywebview_loopback_endpoint`, `_select_port_offenders`) that allow-list EXACTLY pywebview's live loopback `(host,port)` — a second loopback socket, a non-loopback/LAN bind, or any our-pid socket when no server runs still FAILs. New `tests/test_ports_smoke.py` (+10: parsing, offender selection, loopback-gated endpoint derivation, and a guard asserting the adapter default bind is `127.0.0.1` + `BottleServer.js_callback=={}` — the inert-HTTP precondition). `requirements.txt` pins `pywebview>=6.2,<7` (an upgrade that flips the binding invariants fails the suite instead of silently exposing a listener). Docs: ADR-023 → Accepted (Option A), ADR-005 clarified, decision-matrix row updated, SECURITY §8 + §1 + TESTING §5.1 amended to "no **app-defined** port" scoping, both installer runbooks' PORTS line now expects `PORTS_SMOKE_RESULT: only_pywebview_loopback`. **CORRECTED misstatement:** the `--smoke` `echo`/`worker_echo_job`/`job.get_status` probes are NOT stale — intentional M0 spike commands gated behind `DPE_ENABLE_SPIKE_COMMANDS=1`; left UNTOUCHED (only the ports check needed the fix). 920/920 pytest (910 + 10) + packaged rebuild `--smoke` with spike env → `PORTS_SMOKE_RESULT: only_pywebview_loopback …` + `SMOKE_OK` 2026-10-26. **→ NEXT: M7-T5 (GATE MVP).**
-- [ ] **M7-T5** **→ GATE MVP: every box of TESTING §5.1 green on packaged builds.**
+- [~] **M7-T5** **→ GATE MVP: every box of TESTING §5.1 green on packaged builds.** *Spec: TESTING §5.1; SECURITY §6.6; runbook `docs/M7_T3_INSTALLER_MATRIX.md` §1–§2.* **GATE NOT STAMPED.** Run 1 (2026-10-26, macOS dev box, HEAD `519914e`, working tree clean) = the smoke-provable subset only. Provenance: `dist/` rebuilt with `.venv/bin/python -m PyInstaller --clean --noconfirm data_profiling_engine.spec` (EXIT=0, 247 s, `.benchmarks/m7t5/pyinstaller_build.log`), `.app` @ 10:05, DMG re-cut @ 10:16 (45 335 447 B, `hdiutil verify` VALID, UNSIGNED); packaged `--smoke` under `DPE_ENABLE_SPIKE_COMMANDS=1` → EXIT=0 (`smoke_packaged.log`); suite `925 passed / 367.77 s` (`pytest_head.log`). §5.1 board (**3 GREEN · 2 PARTIAL · 12 OPEN**) — the authoritative per-box record:
+
+  | # | §5.1 box | Status | Evidence / gap |
+  |---|---|---|---|
+  | 1 | CSV **and** Parquet load, no other connector (ADR-011) | OPEN | interactive UI flow not walked (code-wise only the 2 connectors exist) |
+  | 2 | summary + schema profile, physical vs logical types | OPEN | interactive UI flow not walked |
+  | 3 | statistics + distributions + missingness + uniqueness | OPEN | interactive UI flow not walked |
+  | 4 | rules run; PASS/FAIL/WARN/ERROR distinguished | OPEN | interactive UI flow not walked |
+  | 5 | findings carry evidence + metric/rule refs + `fingerprint` (ADR-016) | OPEN | interactive UI flow not walked |
+  | 6 | recommendations assert no unproven causes | OPEN | interactive UI flow not walked |
+  | 7 | method labels `exact/approximate/sampled` + seed (ADR-015) | OPEN | not read out of a packaged run |
+  | 8 | HTML + JSON from one result, CSV export, HTML self-contained | OPEN | export not run from the packaged app |
+  | 9 | run_id, config version/hash, status, duration, error log, engine version | OPEN | not read out of a packaged run |
+  | 10 | worker (not UI thread), UI responsive, job observable + cancellable | PARTIAL | frozen **spawn** worker round-trip `SUCCEEDED 4/4` inside the packaged binary; responsiveness/cancel not exercised |
+  | 11 | worker crash does not corrupt store; recovery on restart | OPEN | dev-mode automated only (`test_worker_job` / SECURITY §8.5) |
+  | 12 | sources never modified | OPEN | before/after checksum not run on a packaged job |
+  | 13 | bridge-only, **no app-defined port** (ADR-005/023) + HashRouter over local files (ADR-013) | **GREEN** | `PORTS_SMOKE_RESULT: only_pywebview_loopback host=127.0.0.1 port=45054 pids=[28870, 28880]` + `SMOKE_OK … _MEIPASS/frontend/dist/index.html` |
+  | 14 | no local dev server required for the packaged run | **GREEN** | packaged load is `file://` from the bundle; no vite/dev server in the run |
+  | 15 | unit + integration tests green; `sales_deals` yields known findings | **GREEN (dev env)** | `925 passed in 367.77 s` @ `519914e`; the M4-T1 golden harness pins the `sales_deals` findings — the packaged-env execution folds into box 16 |
+  | 16 | installer matrix both OS: install→launch→job→export→upgrade→uninstall | **BLOCKED** | Windows track needs native Windows (BLUEPRINT Q4); macOS install/upgrade/uninstall + codesign/notarize not run (0 Developer ID here) |
+  | 17 | benchmarks documented with recorded baselines | PARTIAL | TESTING §4.3.1–§4.3.4 dev baselines + ADR-021 ceilings recorded; packaged macOS/Windows baselines still owed |
+
+  **Do NOT stamp GATE MVP on this evidence.** Next: boxes 1–12 + 17 on the *installed* `.app` (runbook §2), then M7-T3's blocked legs. SPEC DOC UNCHANGED: `docs/TESTING_BENCHMARKS.md` §5.1 checkboxes stay unticked (the gate is still open); this board is the evidence log.
 
 ## Legend
 
