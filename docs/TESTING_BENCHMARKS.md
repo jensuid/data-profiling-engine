@@ -153,12 +153,17 @@ Structural verdicts (binding, no numeric wall-clock target per §4.3 "No
 universal time limit is set before baseline benchmarks"):
 
 - **Bounded cancellation** — verdict `bounded` iff the RUNNING worker reaches
-  `CANCELLED` with `steps_completed < PROFILING_TOTAL_STEPS (6)`, i.e. the
+  `CANCELLED` with `steps_completed < PROFILING_TOTAL_STEPS`, i.e. the
   flag is observed at a step boundary, not only at job end. The
   `latency_s` field records the wall time from `cancel_job(…)` to the
-  terminal transition; on MVP it is bounded by the still-executing DuckDB
-  step because `profile_job.py` cannot interrupt an active query (§6.5
-  Phase-3 depth item). A `at_job_end` verdict is a regression signal.
+  terminal transition. Since M7-T5 that latency is bounded by the cancel
+  plumbing (0.2 s flag poll) rather than by the running pass: the worker's
+  watchdog calls `DuckDBPyConnection.interrupt()` on its connection, which is
+  §6.5's "for DuckDB interrupts the active query" and aborts a running query
+  in ~20 ms. `PROFILING_TOTAL_STEPS` is the worker ladder (14 boundaries:
+  10 engine stages + reporting + persist), so a frozen bar or a multi-minute
+  cancel is no longer possible by construction. A `at_job_end` verdict is a
+  regression signal.
 - **Consistent recovery** — verdict `consistent` iff (a) the live manager
   surfaces `FAILED` + `WORKER_CRASHED` on a hard-killed worker (SIGKILL,
   not `terminate()`, so the graceful path is *not* what is exercised), (b)

@@ -16,14 +16,17 @@ argument is a picklable primitive (strings / dict / list / a
 (:func:`profile_dataset` opens one) and never touches the WebView or host-only
 state.
 
-Cancellation follows CONTRACTS §6.5: the flag is checked at the step boundaries
-this process controls — before the compute begins (so a not-yet-started job
-stops cheaply) and after it returns (before any artifact/persist side-effect, so
-a cancelled run writes nothing durable). Interrupting the *active* DuckDB query
-mid-pipeline is a Phase-3 depth item, not MVP (§6.5 "for DuckDB interrupts the
-active query"); the heavy pass runs as one bounded call, so a cancel issued while
-it executes is observed at the next boundary — a real limitation, recorded in
-STATE, never silently glossed over.
+Cancellation follows CONTRACTS §6.5 on both of its halves. Between stages the
+engine spine calls back into this module at every boundary (stage checkpoints),
+so a cancel stops the run before the next pass starts and before any
+artifact/persist side-effect (a cancelled run writes nothing durable). During a
+long pass a watchdog thread calls ``DuckDBPyConnection.interrupt()`` on the
+connection this process owns, which aborts the *active* query in ~20 ms and
+surfaces as ``duckdb.InterruptException`` in the compute thread — mapped to
+``CANCELLED``, never to ``WORKER_CRASHED``. Both halves are needed: a checkpoint
+alone waits out the running pass (the packaged build showed a 4 min 18 s cancel
+latency on a 2 M-row source, M7-T5 run 2), an interrupt alone cannot stop a job
+that is between queries.
 
 Failures map to the CONTRACTS §8 registry: an unreadable/forbidden source
 (:class:`ConnectorError`), an unwritable artifact (:class:`ArtifactStoreError`)
@@ -35,6 +38,7 @@ worker failure surfaced as ``WORKER_CRASHED`` — the job FAILED, the host survi
 from __future__ import annotations
 
 import copy
+import threading
 from multiprocessing.synchronize import Event as BaseEvent
 from multiprocessing.queues import Queue
 from pathlib import Path
@@ -43,19 +47,60 @@ from typing import Any, Dict, List, Optional
 from .events import ProgressEvent, TerminalEvent
 from .models import JobState
 
-#: Number of observable step boundaries a profiling job reports (§5.5 poll —
-#: coarse, because the engine spine is one bounded compute call).
-PROFILING_TOTAL_STEPS = 6
-
+#: Number of observable step boundaries a profiling job reports (§5.5 poll).
+#: These are the engine's stage checkpoints plus the worker-owned
+#: reporting/persist steps, so the bar advances at every real boundary. It used
+#: to hold a single ``profiling:metrics`` entry for the whole compute pass,
+#: which on a 2 M-row source left the packaged UI frozen at ``1/6 · 17 %`` for
+#: ~4 minutes (M7-T5 run 2 — "job observable", TESTING §5.1).
 # Step labels use the ``<phase>:<task>`` convention of the CONTRACTS §5.3 status
 # sample (``profiling:distributions``); they are progress narration, not a
 # contract enum.
 _STEP_VALIDATE = "profiling:validate_config"
-_STEP_METRICS = "profiling:metrics"
+_STEP_DISCOVER = "profiling:discover"
+_STEP_PLAN = "profiling:plan"
+_STEP_STATS = "profiling:statistics_missingness"
+_STEP_UNIQUENESS = "profiling:uniqueness_categorical"
+_STEP_DISTRIBUTION = "profiling:distributions_temporal"
+_STEP_QUALITY = "quality:rules"
+_STEP_FINDINGS = "findings:build"
+_STEP_RECOMMENDATIONS = "recommendations:build"
+_STEP_DATASET_METRICS = "profiling:dataset_metrics"
 _STEP_JSON = "reporting:json"
 _STEP_HTML = "reporting:html"
 _STEP_CSV = "reporting:csv"
 _STEP_PERSIST = "persist:metadata"
+
+#: Ordered ladder every emitted label must come from; the engine emits the
+#: middle nine (``orchestration.run_profiling_pipeline`` /
+#: ``rollup.profile_dataset`` call the checkpoint with exactly these strings).
+_STAGE_LADDER = (
+    _STEP_VALIDATE,
+    _STEP_DISCOVER,
+    _STEP_PLAN,
+    _STEP_STATS,
+    _STEP_UNIQUENESS,
+    _STEP_DISTRIBUTION,
+    _STEP_QUALITY,
+    _STEP_FINDINGS,
+    _STEP_RECOMMENDATIONS,
+    _STEP_DATASET_METRICS,
+    _STEP_JSON,
+    _STEP_HTML,
+    _STEP_CSV,
+    _STEP_PERSIST,
+)
+
+PROFILING_TOTAL_STEPS = len(_STAGE_LADDER)
+_STEP_INDEX = {label: i + 1 for i, label in enumerate(_STAGE_LADDER)}
+
+#: How often the cancel watchdog re-checks the flag. The interrupt itself is
+#: immediate; this only bounds how long after ``profile.cancel`` it fires.
+_CANCEL_POLL_SECONDS = 0.2
+
+
+class _JobCancelled(Exception):
+    """Internal control flow: a checkpoint saw a pending cancel and stopped."""
 
 
 class ProfileJobFailed(Exception):
@@ -65,6 +110,56 @@ class ProfileJobFailed(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+def _start_interrupt_watch(
+    con: Any, cancel_event: BaseEvent, stop_event: threading.Event
+) -> threading.Thread:
+    """Keep aborting the worker's DuckDB query for as long as a cancel is pending.
+
+    CONTRACTS §6.5 asks the worker to interrupt the running query, not merely to
+    notice the flag at the next boundary, and the packaged build showed why: a
+    cancel issued during the 2 M-row pass waited 4 min 18 s for that pass to
+    finish. ``DuckDBPyConnection.interrupt()`` aborts the running query from
+    another thread (~20 ms). Between queries the call is harmless, which is why
+    the stage checkpoints remain the precise mechanism there.
+
+    The interrupt is RE-ARMED rather than fired once: ``interrupt()`` cancels the
+    query running at that instant, and the metric loop treats an interrupted query
+    as one ``METRIC_NOT_COMPUTED`` row and carries on to the next one
+    (``engine/metrics/profiler.py`` catches ``duckdb.Error`` per metric). A single
+    shot therefore stops exactly one metric — measured on the 2 M-row fixture: the
+    pass still ran 114 s to completion before the next checkpoint noticed. While
+    the cancel stands, every following query aborts in milliseconds, so the pass
+    unwinds instead of finishing.
+    """
+
+    def watch() -> None:
+        while not stop_event.is_set():
+            if not cancel_event.wait(_CANCEL_POLL_SECONDS):
+                continue
+            try:
+                con.interrupt()
+            except Exception:  # noqa: BLE001 — best effort: the checkpoints still stop the job
+                return
+
+    thread = threading.Thread(target=watch, name="profile-cancel-watch", daemon=True)
+    thread.start()
+    return thread
+
+
+def _interrupted_by_cancel(exc: BaseException, cancel_event: BaseEvent) -> bool:
+    """True when an exception is DuckDB's answer to our own cancel request.
+
+    Both conditions are required, so an unrelated DuckDB failure that happens to
+    race a cancel is still reported as FAILED rather than silently excused.
+    Imported lazily: the worker module stays cheap for the spawn parent.
+    """
+    if not cancel_event.is_set():
+        return False
+    import duckdb
+
+    return isinstance(exc, duckdb.InterruptException)
 
 
 def _load_config(config_document: Dict[str, Any], profile_mode: Optional[str]):
@@ -139,18 +234,29 @@ def run_profile_job(
             )
         )
 
-    def _cancelled() -> bool:
-        if cancel_event.is_set():
-            event_queue.put(TerminalEvent(job_id=job_id, status=JobState.CANCELLED))
-            return True
-        return False
+    position = {"step": 0}
 
+    def _advance(label: str) -> None:
+        """Publish one stage boundary, then stop if a cancel is pending.
+
+        This is both the engine checkpoint (``profile_dataset`` calls it before
+        every pass) and the local emitter for the steps this function owns, so
+        one monotonic ladder feeds the UI. An unknown label keeps the previous
+        step: progress can never overshoot ``total_steps`` if the engine grows a
+        stage the ladder has not learned yet.
+        """
+        step = _STEP_INDEX.get(label, position["step"])
+        position["step"] = step
+        _progress(step, label)
+        if cancel_event.is_set():
+            raise _JobCancelled()
+
+    con = None
+    watch_stop = threading.Event()
     try:
         # 1. Config (defensive re-validation; the facade validated it first).
         config = _load_config(config_document, profile_mode)
-        _progress(1, _STEP_VALIDATE)
-        if _cancelled():
-            return
+        _advance(_STEP_VALIDATE)
 
         # The host allow-list arrives as strings; a job with no roots keeps the
         # connector's own default policy (None), exactly like the CLI.
@@ -164,30 +270,38 @@ def run_profile_job(
             for kind in ("profile_json", "html_report", "issue_csv")
         }
 
-        # 2. The engine spine — open source (read-only, path-allow-listed) +
+        # 2-10. The engine spine — open source (read-only, path-allow-listed) +
         #    discover/plan/profile/quality/findings/recommendations + rollup.
+        #    The connection is opened HERE so the cancel watchdog can interrupt
+        #    the active query (§6.5); the engine applies the same ADR-021
+        #    ceilings because it is the same ``duckdb_session.connect``.
+        from data_profiling_engine import duckdb_session
+
+        con = duckdb_session.connect()
+        _start_interrupt_watch(con, cancel_event, watch_stop)
         bundle = profile_dataset(
             dataset_id, source_path, config, run_id,
-            allowed_roots=roots, result_refs=refs, job_id=job_id,
+            con=con, allowed_roots=roots, result_refs=refs, job_id=job_id,
+            checkpoint=_advance,
         )
-        _progress(2, _STEP_METRICS)
-        if _cancelled():
-            return
 
-        # 3-5. Write the M4 reporting artifacts through the store.
+        # 11-13. Write the M4 reporting artifacts through the store.
+        _advance(_STEP_JSON)
         store.write_document(run_id, "profile_json", result_document(bundle))
-        _progress(3, _STEP_JSON)
+        _advance(_STEP_HTML)
         emit_html_report_artifact(bundle, store)
-        _progress(4, _STEP_HTML)
+        _advance(_STEP_CSV)
         emit_issue_csv_artifact(bundle, store)
-        _progress(5, _STEP_CSV)
-        if _cancelled():
-            return
 
-        # 6. Persist the run + child rows in one atomic transaction (the host
+        # 14. Persist the run + child rows in one atomic transaction (the host
         #    already created the ``jobs`` row, so ``runs.job_id`` resolves).
+        #    Reported AFTER the write, so a job sitting at ``total_steps`` always
+        #    has durable metadata behind it. Without it the last progress event
+        #    stayed at the previous step and a SUCCEEDED job advertised less than
+        #    100 % forever (caught on the packaged build, M7-T5 run 2).
         metadata = MetadataStore(data_root=data_root)
         metadata.save_run(bundle, config=config)
+        _progress(_STEP_INDEX[_STEP_PERSIST], _STEP_PERSIST)
 
         event_queue.put(
             TerminalEvent(
@@ -196,14 +310,27 @@ def run_profile_job(
                 result=_bounded_result(bundle, refs),
             )
         )
+    except _JobCancelled:
+        # The checkpoint already published the boundary that stopped us; the
+        # cancel itself is confirmed here, so the bar and the state agree.
+        event_queue.put(TerminalEvent(job_id=job_id, status=JobState.CANCELLED))
     except Exception as exc:  # noqa: BLE001 — boundary: never leak a traceback
-        event_queue.put(
-            TerminalEvent(
-                job_id=job_id,
-                status=JobState.FAILED,
-                error_code=_error_code(exc),
+        if _interrupted_by_cancel(exc, cancel_event):
+            # §6.5: a cancel that landed mid-query is a CANCELLED job, not a
+            # worker failure. Nothing durable was written (persist is last).
+            event_queue.put(TerminalEvent(job_id=job_id, status=JobState.CANCELLED))
+        else:
+            event_queue.put(
+                TerminalEvent(
+                    job_id=job_id,
+                    status=JobState.FAILED,
+                    error_code=_error_code(exc),
+                )
             )
-        )
+    finally:
+        watch_stop.set()
+        if con is not None:
+            con.close()
 
 
 def _bounded_result(bundle: Any, refs: Dict[str, str]) -> Dict[str, Any]:

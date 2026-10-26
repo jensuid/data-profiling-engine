@@ -151,6 +151,28 @@ def test_profile_start_runs_engine_and_persists(facade: BridgeFacade, data_root:
     assert set(refs.values()) <= artifact_rows
 
 
+def test_succeeded_job_reports_every_step(facade: BridgeFacade, data_root: Path) -> None:
+    """A terminal SUCCEEDED must not leave progress short of total.
+
+    The 6th boundary (``persist:metadata``) is the last thing a job does, and it
+    used to be unreported: the packaged UI showed a finished job as
+    ``SUCCEEDED 5/6 (83 %)`` forever (M7-T5 run 2, TESTING §5.1 "job
+    observable"). Progress and terminal state must agree."""
+    from data_profiling_engine.bridge.worker.profile_job import PROFILING_TOTAL_STEPS
+
+    job_id = _start(facade, config=_base_config(), data_root=data_root)
+    result = _poll_terminal(facade, job_id)
+
+    assert result["status"] == "SUCCEEDED"
+    assert result["progress"]["total_steps"] == PROFILING_TOTAL_STEPS
+    assert result["progress"]["completed_steps"] == PROFILING_TOTAL_STEPS, result["progress"]
+    assert result["progress"]["current_step"] == "persist:metadata"
+
+    # The store mirror (what a restarted host reads) agrees with the live slot.
+    store = MetadataStore(data_root=data_root)
+    assert store.get_job(job_id)["progress_completed"] == PROFILING_TOTAL_STEPS
+
+
 def test_profile_json_artifact_is_the_canonical_document(
     facade: BridgeFacade, data_root: Path
 ) -> None:

@@ -70,6 +70,7 @@ dist\DataProfilerEngine.exe --smoke > smoke_win.txt 2>&1
 A window opens on the Home page from `file://`, then auto-closes (≤ ~15 s). Paste back **all** marker lines from `smoke_win.txt`:
 - [ ] `WEBVIEW2_SMOKE_RESULT: runtime_found pv=<version>` (SECURITY §6.4)
 - [ ] `DUCKDB_SMOKE_RESULT: version=... rows=[(42,)]` (native `_duckdb.pyd` collected — ADR-009 top risk)
+- [ ] `SCHEMAS_SMOKE_RESULT: count=13 required=13 probe_errors=<n>` (CONTRACTS §1 JSON Schemas collected **and** applied; `SCHEMAS_SMOKE_FAILED: missing required schema(s) …` means they were not bundled and `profile.start` dies with `handler failed: KeyError` — SECURITY §6.2)
 - [ ] `WORKER_SMOKE_RESULT: job=... status=SUCCEEDED progress=...` (frozen **spawn** worker — the Windows-specific proof)
 - [ ] `BRIDGE_SMOKE_RESULT: {...'echo'...'ping'...}` (JS↔Python bridge round-trip)
 - [ ] `PORTS_SMOKE_RESULT: only_pywebview_loopback host=127.0.0.1 port=<n> pids=[...]` (SECURITY §8.1 automated no-port check via `netstat -ano -p TCP`). Per **ADR-023 (Option A)** the sole permitted listener is pywebview's internal loopback static-file server (no data/bridge crosses it); a run with no webview server may instead print `PORTS_SMOKE_RESULT: no_listening_sockets`. `PORTS_SMOKE_FAILED` = any other listening socket on app pids (second loopback, non-loopback/LAN, or a socket when no server runs) — stop, record, escalate; ADR-005/§8.1.

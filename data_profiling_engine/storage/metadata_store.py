@@ -43,7 +43,11 @@ all its child rows appear atomically (a crashed worker cannot leave a run
 without findings — the store half of "worker crash does not corrupt the
 metadata store"). ``journal_mode=WAL`` + ``busy_timeout`` let a reader query
 while a writer commits, which is the ADR's "concurrent read during run". Each
-thread/process opens its own :class:`MetadataStore`.
+*process* opens its own :class:`MetadataStore`; inside one process the
+host-side singleton (``bridge.runtime.get_metadata_store``) is reached from
+several threads — the ``js_api`` dispatch that serves the WebView, the job
+manager's monitor, and test threads — so the single connection is opened
+thread-agnostic and every statement is serialised by ``self._lock``.
 """
 from __future__ import annotations
 
@@ -340,7 +344,14 @@ class MetadataStore:
             ensure_outside_app_bundle(path, label="metadata database")
         self.db_path = path
         self._lock = threading.RLock()
-        self._conn = sqlite3.connect(str(path), timeout=busy_timeout_ms / 1000.0)
+        # sqlite3 binds a connection to its creating thread by default; the one
+        # process-wide store is legitimately used from the bridge dispatch
+        # thread, the job-manager monitor and test threads (ADR-005/006). Every
+        # statement goes through ``_query``/``_write_tx`` under ``self._lock``,
+        # so sharing the handle across threads stays serialised.
+        self._conn = sqlite3.connect(
+            str(path), timeout=busy_timeout_ms / 1000.0, check_same_thread=False
+        )
         self._conn.row_factory = sqlite3.Row
         # Explicit transaction control only: the legacy implicit mode commits
         # around DDL/BEGIN and would break the atomic-per-operation promise.
@@ -405,10 +416,12 @@ class MetadataStore:
         return self._conn
 
     def schema_version(self) -> int:
-        return current_version(self._conn)
+        with self._lock:
+            return current_version(self._conn)
 
     def migration_history(self) -> List[Dict[str, Any]]:
-        return applied_migrations(self._conn)
+        with self._lock:
+            return applied_migrations(self._conn)
 
     def close(self) -> None:
         with self._lock:

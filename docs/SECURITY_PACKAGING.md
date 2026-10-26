@@ -83,6 +83,7 @@ MVP file-only sources need no credentials, but the contract is set now so Phase-
 | Slow startup / large installer | measure; consider on-demand imports |
 | WebView2 absent (Win) | bootstrapper detection/install or graceful error |
 | macOS Gatekeeper | codesign + notarization |
+| JSON Schemas (`schemas/*.schema.json`) not collected | **Observed in M7-T5 run 2**: `RAW_SCHEMAS` is built by globbing the package directory, so an uncollected `schemas/` left it empty and the first `S.validate(...)` raised `KeyError`, surfacing as `BRIDGE_REQUEST_INVALID: handler failed: KeyError` at `profile.start` — dev mode and the suite stay green. Fixed by naming the package data in the spec as a **literal directory mapping** (`schemas_assets`, the same shape as `reporting_assets`): the first fix used `collect_data_files("data_profiling_engine.schemas", …)`, which resolves the module through the analysis interpreter and, on a clean build, logged `WARNING: collect_data_files - skipping data collection for module … as it is not a package` and collected **nothing** — reinstating the exact failure (`SCHEMAS_SMOKE_FAILED` in the packaged smoke caught it). A path mapping cannot silently resolve to nothing. Guard = `tests/test_packaging_assets.py` (every runtime package-asset dir must appear in `data_profiling_engine.spec`) + the `SCHEMAS_SMOKE_RESULT` smoke marker + `schemas_in_bundle` count after install |
 
 ### 6.3 macOS specifics
 

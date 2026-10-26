@@ -31,7 +31,7 @@ from .. import errors
 from .events import ProgressEvent, TerminalEvent
 from .models import JobProgress, JobState, JobStatus
 from .process import run_echo_job
-from .profile_job import run_profile_job
+from .profile_job import PROFILING_TOTAL_STEPS, run_profile_job
 
 # Spike defaults; per-mode timeouts are wired in M2-T10/M5-T2.
 DEFAULT_JOB_TIMEOUT_SECONDS = 300.0
@@ -160,7 +160,7 @@ class JobManager:
         profile_mode: str | None = None,
         allowed_roots: list[str] | None = None,
         data_root: str | None = None,
-        total_steps: int = 6,
+        total_steps: int = PROFILING_TOTAL_STEPS,
     ) -> str:
         """Register + spawn a REAL profiling job (M5-T2; the §5.2 ``profile.start``).
 

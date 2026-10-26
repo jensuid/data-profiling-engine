@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import duckdb
 
@@ -177,6 +177,16 @@ def _merge_profiles(
     return tuple(merged)
 
 
+#: Stage checkpoint callback (CONTRACTS §5.3 narration + §6.5 cancellation).
+#: The pipeline calls it at every stage boundary with a ``<phase>:<task>``
+#: label such as ``profiling:distributions_temporal``; the caller may raise to
+#: abort the run there. The worker uses exactly that to publish observable
+#: progress and to stop a cancelled job between passes instead of waiting out a
+#: multi-minute scan (the packaged UI froze at step 1 for the whole compute
+#: pass before this existed — M7-T5 run 2).
+StageCheckpoint = Callable[[str], None]
+
+
 def run_profiling_pipeline(
     con: duckdb.DuckDBPyConnection,
     handle: RelationHandle,
@@ -184,6 +194,7 @@ def run_profiling_pipeline(
     run_id: str,
     registry: Optional[MetricRegistry] = None,
     executed_at: Optional[str] = None,
+    checkpoint: Optional[StageCheckpoint] = None,
 ) -> ProfilingPipelineResult:
     """Run the whole engine path for one already-bound relation, honouring
     ``config.profiling.mode`` + ``.sampling`` + ``.sections`` end-to-end.
@@ -195,7 +206,15 @@ def run_profiling_pipeline(
     ``method_params.seed`` onto every affected metric (ADR-015). Quality rules
     (§5.1) run against the full relation regardless of mode; findings and
     recommendations interpret/act on the assembled evidence.
+
+    ``checkpoint`` is called *before* each stage runs, so the label always names
+    the work in flight; raising from it aborts the pipeline at that boundary.
     """
+
+    def _stage(label: str) -> None:
+        if checkpoint is not None:
+            checkpoint(label)
+
     reg = registry if registry is not None else default_registry()
     profiling = config.profiling
     # ``mode`` is a plain str under use_enum_values (STATE gotcha M2-T2);
@@ -204,7 +223,9 @@ def run_profiling_pipeline(
     sampling = profiling.sampling
     n_rows = _full_row_count(con, handle.view_name)
 
+    _stage("profiling:discover")
     report = discover(con, handle, config=config)
+    _stage("profiling:plan")
     plan = plan_execution(
         report,
         mode=mode,
@@ -216,15 +237,20 @@ def run_profiling_pipeline(
 
     # The three family-scoped passes run against the SAME report + plan; each
     # starts from the discovery base, so we merge their disjoint blocks below.
+    _stage("profiling:statistics_missingness")
     pass_t4 = execute_stat_and_missingness(con, handle, report, plan, config, reg)
+    _stage("profiling:uniqueness_categorical")
     pass_t5 = execute_uniqueness_and_categorical(con, handle, report, plan, config, reg)
+    _stage("profiling:distributions_temporal")
     pass_t6 = execute_distribution_and_temporal(con, handle, report, plan, config, reg)
     columns = _merge_profiles(report, (pass_t4, pass_t5, pass_t6))
 
+    _stage("quality:rules")
     quality = run_quality_checks(
         con, handle, config, run_id, discovery=report, executed_at=executed_at
     )
 
+    _stage("findings:build")
     findings_result = build_findings(
         dataset_id=handle.dataset_id,
         run_id=run_id,
@@ -238,6 +264,7 @@ def run_profiling_pipeline(
     # recommendation_ids wired — those are the persisted findings, not the raw
     # M2-T8 set. ``config.language`` (ADR-018 / BLUEPRINT Q1, default "en")
     # selects the narrative template language only — the shape is unchanged.
+    _stage("recommendations:build")
     recs = build_recommendations(findings_result.findings, language=config.language)
 
     errors: Tuple[RunErrorEntry, ...] = (
@@ -271,6 +298,7 @@ def run_dataset_profiling(
     allowed_roots: "Optional[List[Path]]" = None,
     registry: Optional[MetricRegistry] = None,
     executed_at: Optional[str] = None,
+    checkpoint: Optional[StageCheckpoint] = None,
 ) -> ProfilingPipelineResult:
     """Convenience wrapper: open a CSV/Parquet source, then run the pipeline.
     M2-T11's ``profiler-cli`` calls this and folds the result into the §3.1 /
@@ -279,12 +307,14 @@ def run_dataset_profiling(
         dataset_id, path, con=con, connector=connector, allowed_roots=allowed_roots
     )
     return run_profiling_pipeline(
-        con, handle, config, run_id, registry=registry, executed_at=executed_at
+        con, handle, config, run_id, registry=registry, executed_at=executed_at,
+        checkpoint=checkpoint,
     )
 
 
 __all__ = [
     "ProfilingPipelineResult",
+    "StageCheckpoint",
     "open_source",
     "run_profiling_pipeline",
     "run_dataset_profiling",

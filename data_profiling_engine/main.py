@@ -123,6 +123,43 @@ def _run_duckdb_smoke() -> None:
         print(f"DUCKDB_SMOKE_FAILED: {type(exc).__name__}: {exc}")
 
 
+def _run_schemas_smoke() -> None:
+    """M7-T5: prove the CONTRACTS §1 JSON Schemas shipped in the frozen bundle.
+
+    ``schemas.RAW_SCHEMAS`` is built by globbing the *package directory*, so a
+    ``schemas/`` that PyInstaller did not collect leaves it empty and every
+    ``S.validate(...)`` raises ``KeyError`` — which the bridge reports as
+    ``BRIDGE_REQUEST_INVALID: handler failed: KeyError`` at ``profile.start``.
+    Dev mode never reproduces it, hence a marker here (SECURITY §6.2): presence
+    of every required file **and** one real validation that must actually
+    reject an empty document (a present-but-unused registry would pass
+    ``count`` alone).
+    """
+    try:
+        from data_profiling_engine import schemas as S
+
+        missing = [name for name in S.REQUIRED_SCHEMAS if name not in S.RAW_SCHEMAS]
+        if missing:
+            print(
+                "SCHEMAS_SMOKE_FAILED: missing required schema(s) "
+                f"{missing} (package data not collected — see spec ``schemas_datas``)"
+            )
+            return
+        probe_errors = S.validate("dataset_config.schema.json", {})
+        if not probe_errors:
+            print(
+                "SCHEMAS_SMOKE_FAILED: dataset_config.schema.json accepted an "
+                "empty document (schema loaded but not applied)"
+            )
+            return
+        print(
+            f"SCHEMAS_SMOKE_RESULT: count={len(S.RAW_SCHEMAS)} "
+            f"required={len(S.REQUIRED_SCHEMAS)} probe_errors={len(probe_errors)}"
+        )
+    except Exception as exc:  # noqa: BLE001 — spike diagnostic
+        print(f"SCHEMAS_SMOKE_FAILED: {type(exc).__name__}: {exc}")
+
+
 #: Hosts that are loopback-only (never reachable off-box). A listener bound to
 #: anything else (``0.0.0.0``/``*``/a LAN address) is a §8.1 violation.
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "[::1]", "::ffff:127.0.0.1"})
@@ -309,6 +346,7 @@ def main(argv: list[str] | None = None) -> int:
         # collection failure is visible even if the GUI path stalls.
         _run_webview2_smoke()
         _run_duckdb_smoke()
+        _run_schemas_smoke()
     facade = BridgeFacade()
     window = webview.create_window(APP_TITLE, str(index), js_api=facade)
     # Optional §5.5 progress push: every status transition is also handed to the

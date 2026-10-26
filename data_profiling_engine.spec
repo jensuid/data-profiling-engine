@@ -66,6 +66,23 @@ reporting_assets = (
     "data_profiling_engine/reporting/assets",
 )
 
+# M7-T5: same class of package data for the JSON Schemas (CONTRACTS §1). The
+# frozen app builds :data:`schemas.RAW_SCHEMAS` by globbing the package
+# directory, so an uncollected ``schemas/`` left it EMPTY and every
+# ``S.validate(...)`` raised ``KeyError`` — surfacing at ``profile.start`` as
+# ``BRIDGE_REQUEST_INVALID: handler failed: KeyError`` while dev mode and the
+# automated suite stayed green (SECURITY §6.2; guarded by
+# ``tests/test_packaging_assets.py``). Named by PATH like ``reporting_assets``:
+# ``collect_data_files`` resolves the package through the analysis
+# interpreter's import system and, on a clean build, answered "skipping data
+# collection … as it is not a package" — i.e. collected NOTHING, reinstating
+# exactly the failure this entry exists to prevent. A literal directory mapping
+# cannot silently resolve to nothing.
+schemas_assets = (
+    str(PROJECT_ROOT / "data_profiling_engine" / "schemas"),
+    "data_profiling_engine/schemas",
+)
+
 # WebView backend is selected per OS at runtime by dynamic import, so the
 # platform's backend module must be named explicitly (ADR-003: WKWebView on
 # macOS, WebView2/WinForms via pythonnet ``clr`` on Windows; the WinForms and
@@ -88,7 +105,9 @@ a = Analysis(
     [str(PROJECT_ROOT / "data_profiling_engine" / "main.py")],
     pathex=[str(PROJECT_ROOT)],
     binaries=duckdb_binaries + webview_binaries,
-    datas=[(str(FRONTEND_DIST), "frontend/dist"), reporting_assets] + duckdb_datas + webview_datas,
+    datas=[(str(FRONTEND_DIST), "frontend/dist"), reporting_assets, schemas_assets]
+    + duckdb_datas
+    + webview_datas,
     hiddenimports=[
         # Entry imports these via chains PyInstaller can follow, but the
         # spawn-method worker re-imports the target module in a fresh

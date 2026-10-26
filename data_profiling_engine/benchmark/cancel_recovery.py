@@ -180,11 +180,12 @@ def measure_cancellation_latency(
     which is the case §4.3 actually binds. A pre-RUNNING cancel would be
     trivially bounded by the QUEUED→CANCELLED fast path in ``_launch``.
 
-    The measured latency is an *upper bound* on MVP cancel cost —
-    ``profile_job.py`` documents that MVP does not interrupt an active DuckDB
-    query mid-flight (§6.5 "for DuckDB interrupts the active query" is Phase
-    3); the wall time from ``cancel_job`` to CANCELLED is therefore the
-    remaining compute of the step that was already executing.
+    The measured latency is now dominated by the cancel plumbing itself:
+    ``profile_job.py`` runs a watchdog that calls
+    ``DuckDBPyConnection.interrupt()`` on the worker's connection (§6.5 "for
+    DuckDB interrupts the active query"), so an in-flight query aborts in
+    milliseconds instead of finishing. The number stays an upper bound
+    (scheduling + the 0.2 s flag poll), never a promise of instant stop.
     """
     job_id = manager.start_profile_job(
         dataset_id=dataset_id,

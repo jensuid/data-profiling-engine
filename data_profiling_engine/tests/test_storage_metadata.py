@@ -991,6 +991,36 @@ class TestPersistedEngineRun:
         with MetadataStore(db) as check:
             assert len(check.list_runs("ds_syn")) == total
 
+    def test_one_store_serves_calls_from_another_thread(self, tmp_path):
+        """The host-side singleton (``bridge.runtime.get_metadata_store``) is
+        reached from the bridge dispatch thread *and* the job-manager monitor,
+        so one handle must not be thread-bound.
+
+        Packaged symptom (M7-T5 run 2): the Report page answered
+        ``BRIDGE_REQUEST_INVALID: handler failed: ProgrammingError`` because the
+        store had been opened first on a different thread — sqlite3 refuses
+        cross-thread use unless told otherwise. The single connection is shared
+        here, with every statement serialised by the store's own RLock."""
+        db = tmp_path / "metadata.sqlite3"
+        store = MetadataStore(db)  # opened on this thread
+        errors: List[BaseException] = []
+
+        def other_thread() -> None:
+            try:
+                store.save_run(_bundle(run=_run_doc(run_id="run-001")))
+                assert [r["run_id"] for r in store.list_runs("ds_syn")] == ["run-001"]
+            except BaseException as exc:  # pragma: no cover - surfaced below
+                errors.append(exc)
+
+        thread = threading.Thread(target=other_thread)
+        thread.start()
+        thread.join(timeout=60)
+        assert not thread.is_alive()
+        assert errors == []
+        # the opening thread keeps using the same handle afterwards
+        assert [r["run_id"] for r in store.list_runs("ds_syn")] == ["run-001"]
+        store.close()
+
     def test_using_a_closed_store_is_refused(self, tmp_path):
         db = tmp_path / "metadata.sqlite3"
         st = MetadataStore(db)

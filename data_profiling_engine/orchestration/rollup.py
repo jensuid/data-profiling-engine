@@ -372,6 +372,7 @@ def profile_dataset(
     registry: Optional[MetricRegistry] = None,
     result_refs: Optional[Dict[str, str]] = None,
     job_id: Optional[str] = None,
+    checkpoint: Optional["StageCheckpoint"] = None,
 ) -> ProfileBundle:
     """Open a CSV/Parquet source, run the full engine path (M2-T10), then fold
     the result + dataset-scope metrics into the §3.1 / §2 contract rollups. This
@@ -385,6 +386,11 @@ def profile_dataset(
     produced it — set by the M5 bridge job manager (``profile.start``) so
     ``MetadataStore.save_run`` can resolve the ``runs.job_id`` foreign key; the
     headless CLI leaves it ``None`` (absent on the §2 record, per contract).
+
+    ``checkpoint`` (see :data:`~data_profiling_engine.orchestration.StageCheckpoint`)
+    is forwarded to the pipeline so the worker can narrate progress and stop a
+    cancelled job between passes; it also covers the dataset-scope metric pass
+    that runs here rather than in the pipeline.
     """
     from data_profiling_engine.orchestration import run_dataset_profiling
 
@@ -393,8 +399,11 @@ def profile_dataset(
     result = run_dataset_profiling(
         dataset_id, path, config, run_id,
         con=con, connector=connector, allowed_roots=allowed_roots, registry=registry,
+        checkpoint=checkpoint,
     )
     finished_at = datetime.now(timezone.utc)
+    if checkpoint is not None:
+        checkpoint("profiling:dataset_metrics")
     profile = build_dataset_profile(con, result, config, registry=registry)
     run = build_profiling_run(
         result, config, started_at, finished_at,
