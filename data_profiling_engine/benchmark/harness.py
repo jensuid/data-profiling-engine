@@ -584,8 +584,10 @@ def _total_ram_gb() -> Optional[float]:
     """Best-effort total physical RAM in GiB for the machine-context block.
 
     macOS does not expose ``SC_PHYS_PAGES`` via ``os.sysconf``, so try ``sysctl
-    hw.memsize`` (bytes) there; fall back to ``/proc/meminfo`` on Linux; ``None``
-    when neither is available (never a guessed number)."""
+    hw.memsize`` (bytes) there; Windows has neither ``sysctl`` nor ``/proc``, so
+    use the already-required ``psutil`` (the Windows RSS sampler); fall back to
+    ``/proc/meminfo`` on Linux; ``None`` when none is available (never a guessed
+    number)."""
     try:
         if sys.platform == "darwin":
             raw = subprocess.run(
@@ -593,6 +595,8 @@ def _total_ram_gb() -> Optional[float]:
             ).stdout.strip()
             if raw.isdigit():
                 return round(int(raw) / 1_073_741_824, 1)
+        elif sys.platform == "win32" and _psutil is not None:
+            return round(_psutil.virtual_memory().total / 1_073_741_824, 1)
         else:
             with open("/proc/meminfo") as fh:
                 for line in fh:
