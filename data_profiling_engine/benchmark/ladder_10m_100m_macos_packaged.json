@@ -1,0 +1,110 @@
+{
+  "machine": {
+    "system": "Darwin",
+    "release": "22.6.0",
+    "machine": "x86_64",
+    "python": "3.12.4",
+    "cpu_count": 4,
+    "total_ram_gb": 16.0,
+    "rss_measurement": "resource.ru_maxrss"
+  },
+  "workload": {
+    "fmt": "csv",
+    "columns": 8,
+    "cardinality": "high",
+    "missingness": 0.12,
+    "distribution": "skewed",
+    "sizes": [
+      10000000,
+      100000000
+    ],
+    "sampling": {
+      "enabled": true,
+      "strategy": "reservoir",
+      "size": 200000,
+      "seed": 1337
+    }
+  },
+  "cases": [
+    {
+      "label": "csv_10000000_std",
+      "spec": {
+        "rows": 10000000,
+        "columns": 8,
+        "cardinality": "high",
+        "missingness": 0.12,
+        "distribution": "skewed",
+        "seed": 42
+      },
+      "fmt": "csv",
+      "mode": "standard",
+      "sampled": false,
+      "wall_clock_s": 687.6722,
+      "peak_rss_bytes": 710356992,
+      "peak_rss_mb": 677.4,
+      "source_bytes": 642140909,
+      "source_mb": 612.4,
+      "row_count": 10000000,
+      "column_count": 8,
+      "n_errors": 0,
+      "extra": {
+        "parent_wall_clock_s": 690.5858,
+        "process_startup_overhead_s": 2.9136,
+        "run_status": "SUCCEEDED",
+        "planner_sampling_enabled": false,
+        "peak_rss_method": "resource.ru_maxrss"
+      }
+    },
+    {
+      "label": "csv_100000000_std",
+      "spec": {
+        "rows": 100000000,
+        "columns": 8,
+        "cardinality": "high",
+        "missingness": 0.12,
+        "distribution": "skewed",
+        "seed": 42
+      },
+      "fmt": "csv",
+      "mode": "standard",
+      "sampled": false,
+      "wall_clock_s": 7824.6396,
+      "peak_rss_bytes": 4053295104,
+      "peak_rss_mb": 3865.5,
+      "source_bytes": 6521145657,
+      "source_mb": 6219.0,
+      "row_count": 100000000,
+      "column_count": 8,
+      "n_errors": 0,
+      "extra": {
+        "parent_wall_clock_s": 7828.98,
+        "process_startup_overhead_s": 4.3404,
+        "run_status": "SUCCEEDED",
+        "planner_sampling_enabled": false,
+        "peak_rss_method": "resource.ru_maxrss"
+      }
+    }
+  ],
+  "guarantees": {
+    "rss_boundedness": {
+      "verdict": "bounded",
+      "rows_small": 10000000,
+      "rows_large": 100000000,
+      "row_ratio": 10.0,
+      "rss_mb_small": 677.4,
+      "rss_mb_large": 3865.5,
+      "rss_ratio": 5.706
+    },
+    "rss_plateau": {
+      "verdict": "growing",
+      "n": 2,
+      "growth_exponent": 0.756,
+      "max_exponent": 0.25,
+      "rss_multiplier_per_decade": 5.706,
+      "rss_mb_smallest": 677.4,
+      "rss_mb_largest": 3865.5,
+      "forecast_rss_gib_at_1b_rows": 21.54,
+      "ceiling_mb": 4096.0
+    }
+  }
+}

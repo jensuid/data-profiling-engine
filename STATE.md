@@ -29,8 +29,9 @@ Task      : **M7-T5 IN PROGRESS — run 2 (2026-10-26) walked the installed
           gate-class defect found while driving it: the packaged shell showed
           "Desktop bridge not detected" because readiness was a one-shot
           render-time snapshot taken before pywebview's async injection.
-          GATE MVP is NOT stamped: M7-T3's Windows + notarize legs are still
-          blocked and boxes 16/17 remain partial. See the per-box board
+          GATE MVP is NOT stamped: the SOLE remaining blocker is the macOS
+          codesign/notarize leg (Developer ID) — the Windows leg is VERIFIED green
+          and box 17 is now GREEN on both OS. See the per-box board
           under the M7-T5 task line.**
           M6 COMPLETE; M7-T1 DONE; M7-T2 COMPLETE;
           M7-T2c DONE; M7-T4 + M7-T4b DONE; M7-T6 DONE (ADR-023 Option A landed —
@@ -62,7 +63,9 @@ GATE M4   : reporting-layer tasks T1-T4 COMPLETE (706/706 pytest, tsc clean,
           (BLUEPRINT §5 Phase-1 gate / §6), not dev mode — do not stamp M4
           "accepted" until the packaged run is verified in M7/Phase-3.
 NEXT      : M7-T5 run 2 — **GATE MVP: every box of TESTING §5.1 green on
-          packaged builds**. OPEN docs/TESTING_BENCHMARKS.md §5.1 (+ §5.4
+          packaged builds**. Boxes 1–15 + 17 GREEN; **only box 16's macOS
+          codesign/notarize leg remains (Developer ID — blocked on this box)**.
+          OPEN docs/TESTING_BENCHMARKS.md §5.1 (+ §5.4
           results) and the per-box board under the M7-T5 task line.
           RUN 1 (2026-10-26, this box) = packaged macOS smoke only: `dist/`
           rebuilt at HEAD `519914e`, `--smoke` under
@@ -109,9 +112,10 @@ NEXT      : M7-T5 run 2 — **GATE MVP: every box of TESTING §5.1 green on
           NSIS + the byte-identical golden, and the **box-16 GUI screenshot
           addendum closed the last visual caveat** (13 live installed-GUI captures,
           see the box-16 row). The ONLY things still gating MVP now:
-          (1) **box 17's 10M→100M packaged ladder** to confirm the ADR-021 plateau
-          — the one runnable-here action (long, check `df -h` first; reuse the
-          retained `.benchmarks/ladder` fixtures via `fixture_paths`); and
+          (1) **box 17's 10M→100M packaged ladder is DONE — GREEN on both OS**
+          (macOS packaged ladder ran `bounded` ratio 5.706 < 10, plateau growing
+          0.756, promoted to `benchmark/ladder_10m_100m_macos_packaged.json`);
+          the SOLE thing still gating MVP is
           (2) **macOS codesign + notarization** (Developer ID — blocked on this
           box). GOTCHA (F-1, box 2, resolved — do NOT re-open as a defect):
           `dataset.inspect` emits `physical_type` only pre-run and joins
@@ -124,8 +128,8 @@ NEXT      : M7-T5 run 2 — **GATE MVP: every box of TESTING §5.1 green on
           `recover_interrupted_jobs` is lazy — restarting the app alone does
           NOT flip an orphan RUNNING row until the first bridge call that
           materialises the manager (e.g. next `profile.start`).
-          Still owed: Windows track, codesign/notarize, box 17 both-OS
-          baselines. Non-gate UI follow-ups (user-logged 2026-10-26) —
+          Still owed: macOS codesign/notarize only (Windows track + box 17
+          both-OS baselines now DONE). Non-gate UI follow-ups (user-logged 2026-10-26) —
           BOTH CLOSED 2026-10-26: (a) Report `Unique candidate yes|no` now
           carries a source hint ("exact full-relation …", names the sampled
           distinct_count's method) under the Uniqueness block in `Report.tsx`;
@@ -162,17 +166,20 @@ NEXT      : M7-T5 run 2 — **GATE MVP: every box of TESTING §5.1 green on
           positive bridge+worker round-trip with that env set (STATE's earlier
           "retarget/retire the probes" note was wrong).
           ⛔ The gate CANNOT pass from this box yet: the Windows installer matrix
-          + GUI walk are now VERIFIED green (2026-10-26, `fe70bbe`, incl. the 13-
-          shot screenshot addendum), but macOS **codesign + notarization** is still
-          blocked (Developer ID identity required — BLUEPRINT Q4, AGENTS §7), and
-          box 17's 10M→100M packaged ladder is still owed (runnable here, long).
+          + GUI walk are VERIFIED green (2026-10-26, `fe70bbe`, incl. the 13-
+          shot screenshot addendum) and **box 17 is GREEN on both OS** (the
+          packaged 10M→100M macOS ladder ran `bounded`, promoted to
+          `benchmark/ladder_10m_100m_macos_packaged.json`); the SOLE remaining
+          blocker is macOS **codesign + notarization** (Developer ID identity required
+          — BLUEPRINT Q4, AGENTS §7).
           The Windows box already rebuilds `dist/` from the checkout (`fe70bbe`), so
           the PORTS marker is in the shipped Windows binary; the macOS distributable
           still needs the sign/notarize legs per `docs/M7_T3_INSTALLER_MATRIX.md`
           §3. Test: .venv/bin/python -m pytest data_profiling_engine/tests -q
-Blocked by: macOS codesign/notarization needs a Developer ID (the Windows M7-T3
-          leg is VERIFIED green 2026-10-26); box 17's 10M→100M packaged ladder is
-          still owed. Do NOT stamp M7-T5/GATE MVP before those run. GOTCHA (disk): volume sits at 97 % full — a 100M CSV is 6.2 GB
+Blocked by: macOS codesign/notarization needs a Developer ID — the ONLY
+          remaining gate item (Windows M7-T3 leg VERIFIED green 2026-10-26; box 17
+          GREEN on both OS 2026-10-27). Do NOT stamp M7-T5/GATE MVP before codesign
+          lands. GOTCHA (disk): volume sits at 97 % full — a 100M CSV is 6.2 GB
           and DuckDB spill needs room on the SAME volume. The ladder fixtures
           (`.benchmarks/ladder/csv_10000000_std.csv` + `csv_100000000_std.csv`,
           6.8 GB, gitignored) are **deliberately RETAINED for the M7-T2c
@@ -1981,9 +1988,9 @@ Session notes: M2-T2 delivered data_profiling_engine/discovery/
   | 14 | no local dev server required for the packaged run | **GREEN** | packaged load is `file://` from the bundle; no vite/dev server in the run |
   | 15 | unit + integration tests green; `sales_deals` yields known findings | **GREEN (dev env)** | `925 passed in 367.77 s` @ `519914e`; the M4-T1 golden harness pins the `sales_deals` findings — the packaged-env execution folds into box 16 |
   | 16 | installer matrix both OS: install→launch→job→export→upgrade→uninstall | **PARTIAL** | macOS legs all verified on the installed `.app`: install (run-2 DMG), launch, one full job, export artifacts, upgrade (rows + `schema_migrations=2` preserved) and **uninstall (data preserved, 2026-10-26 — 21 files / 26 129 241 B byte-identical)**. Windows leg **REPORTED GREEN 2026-10-26** (`fe70bbe` build, Win 11 25H2 x64, 947/947 parity, golden byte-identical): install→launch→job→export→upgrade(0.1.0→0.1.1)→uninstall, user data `%APPDATA%\DataProfilingEngine` byte-identical across all three snapshots (2 files / 269,243 B, `metadata.sqlite3 621d1a72e94a`+artifact `7aaec173d45b`, rows 1/5/3/5/1 preserved, `user_version 2→2`). **GUI screenshot addendum DONE on the installed GUI 2026-10-26** (13 live WebView2-window captures under `_gate_evidence_win\gui\`): box 2 post-run schema (logical populated: string/temporal_date/categorical_nominal/numeric_currency) + box 3 column detail, box 5 `fingerprint: sha256:91c4e1e88b8a…`, box 6 red "Do not assume the duplicates are errors…" guardrail + separate HYPOTHESES, box 7 exact `(exact)` tag AND sampled run (8 `sampled` badges + `Sampling: seed 20261024`), box 8 three export acks + `gui_box08_pii_masked.png` (email/phone 🔒 masked, "Masked columns: email, phone"), box 10 mid-run `RUNNING 10/14 · 71%` with title-bar-drag+nav responsive, box 13 live `netstat` = single `127.0.0.1` pywebview loopback. Bridge banner ABSENT (useBridgeReady confirmed on Windows). GUI-line caveat from the automated leg is now CLOSED. Non-defect findings logged: F-1 physical-vs-logical lives in the per-column detail header (see GOTCHA below), F-2 exact is unbadged by design, F-3 window-automation quirk, F-4 ids are `job_<hex>`. **Now the ONLY open sub-item on this row is the macOS codesign/notarize distributable (0 Developer ID here) — the installer matrix itself is proven on both OS.** |
-  | 17 | benchmarks documented with recorded baselines | PARTIAL | TESTING §4.3.1–§4.3.4 dev baselines + ADR-021 ceilings recorded, plus a **packaged** macOS peak (UI 256.0 MiB / worker 263.1 MiB / app 562.4 MiB, `psutil_sampled_peak`). **Windows packaged baseline GREEN, REFRESHED 2026-10-27 at `3f767cf`** (box ff-pulled `fe70bbe→3f767cf`, so `de70d6e`'s win32 `psutil` RAM probe is active): `machine.total_ram_gb` now **7.9** (was `None` on the `fe70bbe` run — the whole point of the refresh), every case carries an honest `peak_rss_method: psutil_sampled_peak`, Win 11 AMD64 / 8 cores / py3.12.15; matched `[200k,500k,1M]`+degrade → `rss_boundedness: bounded` ratio **1.943** (`rss_mb` 102.3→198.8, row_ratio 5.0), `rss_plateau: growing` exp 0.408, `sampled_cheaper_than_exact: cheaper` 1.01, 5/5 `SUCCEEDED` / 0 err. Supersedes the earlier `fe70bbe` figures (ratio 2.127, `total_ram_gb=None`, `cheaper` 1.14); `guarantees` cancel 0.765 s bounded + crash-recovery 0.046 s consistent unchanged. NOTE: `de70d6e`/`7f8754c`/`3f767cf` are benchmark-module + docs only (NOT app/runtime code, and the benchmark module isn't in the frozen exe), so the shipped `fe70bbe` build + installers stay representative — no rebuild required. **Windows GATE-MVP evidence pack ARCHIVED 2026-10-27** (Part A): `gate_mvp_win_evidence_20261027-001439.zip` top-level sha256 `57D2AF2B38D801C99110B53F1224E777BEE391D6856FD8A268484B2EC5679635` — bundles `_gate_evidence_win/` (§6a byte inventories + 13 GUI shots + the refreshed `baseline_win.json` 5319 B + `guarantees_win.json` 1034 B + a corrected 33-line `SHA256MANIFEST.txt` with `_gate_evidence_win\` prefixes, all verified present) + the run logs; the two `.exe` installers are recorded **hash-only** (bytes left on the box, reproducible from `fe70bbe`); nothing committed from the Windows box per packet §8. Two earlier superseded archives (`…233040.zip`, `…235809.zip`, pre-fix manifest) exist on the box — `001439` is authoritative. **macOS packaged 10M→100M ladder RUNNING 2026-10-26 22:23** (`nohup bash .benchmarks/ladder/run_packaged.sh`, parent pid 78112, out `.benchmarks/ladder/packaged_10m_100m_macos.json`, ETA ~3.1 h ≈ 1310 s + 9844 s): the packaged `.app` has no benchmark entry (spec Analysis entry = `main.py` only), so per TESTING §4.3.3 the packaged baseline IS the module `baseline`/`guarantees` run on the OS — same method the Windows leg used. New `--reuse-fixtures` flag profiles the RETAINED `csv_{10m,100m}_std.csv` as-is (verified: child cmd is `measure --input …std.csv`, fixture mtimes stay 2026-10-25, no regeneration on the 97%-full volume). **NEXT on this box: when the JSON appears, verify verdict `bounded` + copy to `benchmark/ladder_10m_100m_macos_packaged.json`, then box 17 = GREEN on both OS; still owed after that is only the macOS codesign/notarize leg.** CAUTION: `benchmark watch` reads the RETAINED `csv_100000000_std.measure.json` from the 2026-10-25 dev run and will falsely report the 100M tier as `done`/overall `RUN COMPLETE` until this ladder's own 100M pass unlinks + rewrites it (`measure_case` unlinks its emit at tier start); trust the appearance of `packaged_10m_100m_macos.json`, not watch, for completion. |
+  | 17 | benchmarks documented with recorded baselines | **GREEN (both OS)** | TESTING §4.3.1–§4.3.4 dev baselines + ADR-021 ceilings recorded, plus a **packaged** macOS peak (UI 256.0 MiB / worker 263.1 MiB / app 562.4 MiB, `psutil_sampled_peak`). **Windows packaged baseline GREEN, REFRESHED 2026-10-27 at `3f767cf`** (box ff-pulled `fe70bbe→3f767cf`, so `de70d6e`'s win32 `psutil` RAM probe is active): `machine.total_ram_gb` now **7.9** (was `None` on the `fe70bbe` run — the whole point of the refresh), every case carries an honest `peak_rss_method: psutil_sampled_peak`, Win 11 AMD64 / 8 cores / py3.12.15; matched `[200k,500k,1M]`+degrade → `rss_boundedness: bounded` ratio **1.943** (`rss_mb` 102.3→198.8, row_ratio 5.0), `rss_plateau: growing` exp 0.408, `sampled_cheaper_than_exact: cheaper` 1.01, 5/5 `SUCCEEDED` / 0 err. Supersedes the earlier `fe70bbe` figures (ratio 2.127, `total_ram_gb=None`, `cheaper` 1.14); `guarantees` cancel 0.765 s bounded + crash-recovery 0.046 s consistent unchanged. NOTE: `de70d6e`/`7f8754c`/`3f767cf` are benchmark-module + docs only (NOT app/runtime code, and the benchmark module isn't in the frozen exe), so the shipped `fe70bbe` build + installers stay representative — no rebuild required. **Windows GATE-MVP evidence pack ARCHIVED 2026-10-27** (Part A): `gate_mvp_win_evidence_20261027-001439.zip` top-level sha256 `57D2AF2B38D801C99110B53F1224E777BEE391D6856FD8A268484B2EC5679635` — bundles `_gate_evidence_win/` (§6a byte inventories + 13 GUI shots + the refreshed `baseline_win.json` 5319 B + `guarantees_win.json` 1034 B + a corrected 33-line `SHA256MANIFEST.txt` with `_gate_evidence_win\` prefixes, all verified present) + the run logs; the two `.exe` installers are recorded **hash-only** (bytes left on the box, reproducible from `fe70bbe`); nothing committed from the Windows box per packet §8. Two earlier superseded archives (`…233040.zip`, `…235809.zip`, pre-fix manifest) exist on the box — `001439` is authoritative. **macOS packaged 10M→100M ladder RUN COMPLETE 2026-10-27 00:49** (`nohup bash .benchmarks/ladder/run_packaged.sh`; module `baseline --reuse-fixtures` per TESTING §4.3.3 — the packaged `.app` has no benchmark entry (spec Analysis=`main.py` only), same method the Windows leg used; `--reuse-fixtures` profiled the RETAINED `csv_{10m,100m}_std.csv` as-is, no regeneration on the 97%-full volume): `machine` Darwin 22.6.0 x86_64 / py3.12.4 / 4 cores / 16.0 GB, `rss_measurement: resource.ru_maxrss`; **10M** wall=687.7 s / 677.4 MiB, **100M** wall=7824.6 s / 3865.5 MiB, both `SUCCEEDED` / 0 err; **`rss_boundedness: bounded` ratio 5.706 < row_ratio 10.0**; `rss_plateau: growing` exp **0.756** (dev reference `ladder_10m_100m_macos_dev.json` was 0.766 / RSS 677.0→3948.2 MiB / ratio 5.832 — packaged run near-identical RSS, wall ~2× faster on warm cache, same bounded/growing verdict → ADR-021 plateau guarantee holds on the packaged build). Promoted to the committed reference `data_profiling_engine/benchmark/ladder_10m_100m_macos_packaged.json`. **⇒ Box 17 GREEN on BOTH OS.** Only remaining §4.3.3 nicety (NOT a box-17 gate item, M7-T3 diagnostic, deferred): a forced ceiling BELOW the 100M working set for the direct plateau-FLATTENING demo — forecast 21.54 GiB at 1 B rows > the 4 GiB ceiling, so the ceiling binds somewhere above ~300 M rows. |
 
-  **Do NOT stamp GATE MVP on this evidence yet.** The Windows legs of boxes 16 + 17 are now **verified green by this macOS session** (report claims cross-checked against `facade.py`/`Report.tsx`/NSIS + the byte-identical golden; the GUI screenshot addendum closed the box-16 visual caveat). Boxes 16/17 still stay PARTIAL pending only: (a) the **macOS codesign/notarize** distributable (needs a Developer ID — still blocked on this box), and (b) box 17's **10M→100M packaged ladder** to confirm the ADR-021 plateau (runnable here, long). SPEC DOC UNCHANGED: `docs/TESTING_BENCHMARKS.md` §5.1 checkboxes stay unticked (the gate is still open); this board is the evidence log.
+  **GATE MVP status (2026-10-27).** **Box 17 is now GREEN on BOTH OS** — the macOS packaged 10M→100M ladder finished `bounded` (ratio 5.706 < 10, plateau growing 0.756) and is promoted to `benchmark/ladder_10m_100m_macos_packaged.json`; the Windows packaged baseline is refreshed at `3f767cf` and its evidence pack archived. Boxes 1–15 + 17 are green. **The ONLY remaining gate item is box 16's macOS codesign/notarize distributable** (needs a Developer ID — still blocked on this box; the installer matrix itself is proven on both OS). SPEC DOC: `docs/TESTING_BENCHMARKS.md` §5.1 — box 17 is now independently satisfied; box 16 + the overall gate stay open until codesign lands.
 
   **Run 2 (installed app, in progress).** Installed from the run-1 DMG to `/Applications` (copy, `spctl --assess` → **rejected**, ad-hoc signature only) and re-verified there: 6/6 §5.2 markers green incl. the new `SCHEMAS_SMOKE_RESULT` (`.benchmarks/m7t5/smoke_installed_run2b.log`) ⇒ boxes **13 + 14 GREEN on the installed artifact** (not just the bundle). The upgrade leg of box 16 is exercised (bundle re-copied over the install; `~/Library/Application Support/DataProfilingEngine` untouched, `schema_migrations=2`); the macOS **uninstall leg is done as step 4 below**, Windows + codesign/notarize still BLOCKED. Boxes 1–12 + 17 are walked on the installed app — started by the user, and now by the agent itself, since assistive access was granted mid-session (`System Events` reads the AX tree, types and `click at {x,y}`; every step is screenshot-verified, see the computer-use note at the top), with fixtures `sales_deals.csv` / `sales_deals.parquet` (40 rows) + `run2_big.csv` (2 M rows) staged under `.benchmarks/m7t5/fixtures/` and sha256-pinned for the box-12 "sources unmodified" check. The first walk attempt hit the schemas defect above — the packaged binary could not start ANY job, which is precisely what the packaged gate exists to catch.
 
