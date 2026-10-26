@@ -1,0 +1,42 @@
+{
+  "config_version": 3,
+  "dataset": {
+    "name": "sampled_events",
+    "grain": "one_row_per_analytics_event",
+    "primary_key": ["event_id"]
+  },
+  "profiling": {
+    "mode": "standard",
+    "sampling": {
+      "enabled": true,
+      "strategy": "reservoir",
+      "size": 40,
+      "seed": 123
+    }
+  },
+  "language": "en",
+  "quality_checks": [
+    {
+      "id": "event_id_unique",
+      "rule": "unique",
+      "column": "event_id",
+      "dimension": "uniqueness",
+      "severity": "critical"
+    },
+    {
+      "id": "user_email_present",
+      "rule": "not_null",
+      "column": "user_email",
+      "dimension": "completeness",
+      "severity": "high"
+    },
+    {
+      "id": "duration_rate_ok",
+      "rule": "missing_rate_max",
+      "column": "duration_ms",
+      "dimension": "completeness",
+      "severity": "medium",
+      "value": 0.05
+    }
+  ]
+}

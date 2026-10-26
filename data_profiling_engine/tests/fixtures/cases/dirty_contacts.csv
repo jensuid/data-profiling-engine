@@ -1,0 +1,26 @@
+contact_id,email,phone,company,region,source,notes
+CT-01,ana.raju@example.com,+62 812-3456-7801,Acme Corp,East,webform,Partner referral initial contact captured during outbound campaign
+CT-02,budi.santoso@acme.co,+62 812-3456-7802,Acme Corp,West,webform,Inbound enquiry from the pricing page follow-up pending
+CT-03,,+62 812-3456-7803,Acme Corp,,webform,Cold lead imported from the legacy CRM export batch
+CT-04,dewi.lestari@mail.io,+62 812-3456-7804,Acme Corp,N/A,webform,Requested a product demo and a written quotation
+CT-05,ego.prasetyo@example.com,,Acme Corp,,webform,Attended the webinar and downloaded the whitepaper
+CT-06,fitri.handayani@acme.co,+62 812-3456-7806,Acme Corp,,webform,Negotiating an annual enterprise licence renewal
+CT-07,gde.nurhaeri@mail.io,+62 812-3456-7807,Beta LLC,,webform,Switched vendor after the pilot evaluation period ended
+CT-08,hendra.wijaya@example.com,+62 812-3456-7808,Acme Corp,,webform,Asked about data residency and compliance guarantees
+CT-09,,+62 812-3456-7809,Acme Corp,,webform,Referred by an existing customer in the retail segment
+CT-10,indah.permata@acme.co,+62 812-3456-7810,Acme Corp,,webform,Wants integration with the internal reporting stack
+CT-11,joko.susilo@mail.io,,Acme Corp,N/A,webform,Follow-up scheduled after the trade-show first meeting
+CT-12,kartika.dewi@example.com,+62 812-3456-7812,Acme Corp,,webform,Requested a trial extension before the procurement review
+CT-13,lintang.amara@acme.co,+62 812-3456-7813,Acme Corp,N/A,webform,Comparing pricing tiers against a competing proposal
+CT-14,made.wiryawan@mail.io,+62 812-3456-7814,Acme Corp,,webform,Referred a colleague who also signed up for the trial
+CT-15,,+62 812-3456-7815,Acme Corp,,webform,Contacted through the support channel about onboarding
+CT-16,nadia.putri@acme.co,+62 812-3456-7816,Acme Corp,,webform,Asked for the security questionnaire and audit logs
+CT-17,oye.abubakar@mail.io,+62 812-3456-7817,Acme Corp,,webform,Evaluating the tool for the analytics team rollout
+CT-18,putu.mastra@example.com,+62 812-3456-7818,Acme Corp,,webform,Renewal risk flagged after a long support ticket backlog
+CT-19,putri.ayu@acme.co,,Acme Corp,,webform,Signed the pilot and requested the training workshop
+CT-20,raditya.kara@mail.io,,Acme Corp,,webform,Wants volume pricing for more than two hundred seats
+CT-21,,+62 812-3456-7821,Acme Corp,,webform,Imported from the marketing list after the newsletter signup
+CT-22,sari.hapsari@acme.co,+62 812-3456-7822,Acme Corp,,webform,Needs SSO and role-based access before purchase
+CT-23,toni.silalahi@mail.io,+62 812-3456-7823,Acme Corp,,webform,Asked about offline deployment and air-gapped installs
+CT-24,uma.watubun@example.com,+62 812-3456-7824,Acme Corp,,webform,Evaluating against the incumbent profiling platform
+CT-25,wahyu.trenggono@acme.co,+62 812-3456-7825,Acme Corp,,webform,Requested references from customers in the same region

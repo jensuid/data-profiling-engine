@@ -1,0 +1,54 @@
+{
+  "config_version": 3,
+  "dataset": {
+    "name": "dirty_contacts",
+    "grain": "one_row_per_contact",
+    "primary_key": ["contact_id"]
+  },
+  "profiling": {
+    "mode": "standard",
+    "missing": {
+      "sentinel_values": ["N/A", "-"]
+    }
+  },
+  "language": "id",
+  "quality_checks": [
+    {
+      "id": "contact_id_unique",
+      "rule": "unique",
+      "column": "contact_id",
+      "dimension": "uniqueness",
+      "severity": "critical"
+    },
+    {
+      "id": "email_present",
+      "rule": "not_null",
+      "column": "email",
+      "dimension": "completeness",
+      "severity": "critical"
+    },
+    {
+      "id": "phone_present",
+      "rule": "not_null",
+      "column": "phone",
+      "dimension": "completeness",
+      "severity": "medium"
+    },
+    {
+      "id": "region_complete",
+      "rule": "missing_rate_max",
+      "column": "region",
+      "dimension": "completeness",
+      "severity": "high",
+      "value": 0.05
+    },
+    {
+      "id": "source_domain",
+      "rule": "valid_domain",
+      "column": "source",
+      "dimension": "validity",
+      "severity": "warning",
+      "value": ["webform", "referral", "outbound"]
+    }
+  ]
+}

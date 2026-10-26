@@ -1,0 +1,51 @@
+{
+  "config_version": 3,
+  "dataset": {
+    "name": "outliers_spend",
+    "grain": "one_row_per_transaction",
+    "primary_key": ["txn_id"]
+  },
+  "profiling": {
+    "mode": "standard"
+  },
+  "language": "en",
+  "quality_checks": [
+    {
+      "id": "txn_id_unique",
+      "rule": "unique",
+      "column": "txn_id",
+      "dimension": "uniqueness",
+      "severity": "critical"
+    },
+    {
+      "id": "gross_non_negative",
+      "rule": "greater_than_or_equal",
+      "column": "gross",
+      "dimension": "validity",
+      "severity": "critical",
+      "value": 0,
+      "business_note": "A negative gross may be a legitimate refund if has_refund is true; review against source intent."
+    },
+    {
+      "id": "gross_outliers",
+      "rule": "outlier_scan",
+      "column": "gross",
+      "dimension": "accuracy_flagged",
+      "severity": "warning"
+    },
+    {
+      "id": "amount_present",
+      "rule": "not_null",
+      "column": "amount_usd",
+      "dimension": "completeness",
+      "severity": "high"
+    },
+    {
+      "id": "gross_integer_type",
+      "rule": "type_valid",
+      "column": "gross",
+      "dimension": "validity",
+      "severity": "medium"
+    }
+  ]
+}

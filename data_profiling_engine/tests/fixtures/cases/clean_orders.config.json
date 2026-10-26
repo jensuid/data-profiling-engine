@@ -1,0 +1,55 @@
+{
+  "config_version": 3,
+  "dataset": {
+    "name": "clean_orders",
+    "grain": "one_row_per_order",
+    "primary_key": ["order_id"],
+    "units": {
+      "unit_price": { "status": "known", "currency": "USD" }
+    }
+  },
+  "profiling": {
+    "mode": "standard"
+  },
+  "language": "en",
+  "quality_checks": [
+    {
+      "id": "order_id_unique",
+      "rule": "unique",
+      "column": "order_id",
+      "dimension": "uniqueness",
+      "severity": "critical"
+    },
+    {
+      "id": "quantity_not_null",
+      "rule": "not_null",
+      "column": "quantity",
+      "dimension": "completeness",
+      "severity": "high"
+    },
+    {
+      "id": "status_domain",
+      "rule": "valid_domain",
+      "column": "status",
+      "dimension": "validity",
+      "severity": "warning",
+      "value": ["New", "Shipped", "Delivered"]
+    },
+    {
+      "id": "quantity_range",
+      "rule": "range",
+      "column": "quantity",
+      "dimension": "validity",
+      "severity": "medium",
+      "value": [1, 100]
+    },
+    {
+      "id": "unit_price_positive",
+      "rule": "greater_than_or_equal",
+      "column": "unit_price",
+      "dimension": "validity",
+      "severity": "high",
+      "value": 0
+    }
+  ]
+}
